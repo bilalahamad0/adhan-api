@@ -5,22 +5,24 @@ const calendarId = "935383561398511b358450192df350a2c06b35a08065ee6636e53f91eb73
 
 export default async function handler(req, res) {
     try {
-        console.log("Starting Google Calendar update...");
+        console.log("🔍 Debug: Checking environment variables...");
+        console.log("GOOGLE_SERVICE_KEY exists:", !!process.env.GOOGLE_SERVICE_KEY);
 
-        // Load Google API credentials from Vercel environment variables
         if (!process.env.GOOGLE_SERVICE_KEY) {
-            throw new Error("Missing GOOGLE_SERVICE_KEY in Vercel Environment Variables");
+            throw new Error("❌ Missing GOOGLE_SERVICE_KEY in Vercel Environment Variables");
         }
 
-        // Decode base64 JSON from env variable
+        // Decode Base64 JSON from env variable
         const credentials = JSON.parse(Buffer.from(process.env.GOOGLE_SERVICE_KEY, "base64").toString("utf8"));
+
+        console.log("✅ Successfully loaded Google API Credentials.");
 
         const auth = new google.auth.GoogleAuth({
             credentials,
             scopes: ["https://www.googleapis.com/auth/calendar"],
         });
 
-        console.log("Google API Authentication Successful!");
+        console.log("✅ Google API Authentication Successful!");
 
         const calendar = google.calendar({ version: "v3", auth });
 
@@ -29,10 +31,10 @@ export default async function handler(req, res) {
         const response = await axios.get("https://adhan-api-mauve.vercel.app/api/prayerTimes");
         const prayerTimes = response.data.all_prayers;
 
-        console.log("Prayer times received:", prayerTimes);
+        console.log("✅ Prayer Times Received:", prayerTimes);
 
-        // Delete old prayer events
-        console.log("Deleting old prayer times...");
+        // Delete old events
+        console.log("Deleting old prayer events...");
         const existingEvents = await calendar.events.list({
             calendarId,
             timeMin: new Date().toISOString(),
@@ -41,13 +43,13 @@ export default async function handler(req, res) {
 
         for (const event of existingEvents.data.items) {
             if (["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"].includes(event.summary)) {
-                console.log(`Deleting event: ${event.summary}`);
+                console.log(`🗑️ Deleting event: ${event.summary}`);
                 await calendar.events.delete({ calendarId, eventId: event.id });
             }
         }
 
         // Insert new prayer times
-        console.log("Adding new prayer events...");
+        console.log("📅 Inserting new prayer events...");
         for (const [name, time] of Object.entries(prayerTimes)) {
             const [hour, minute] = time.split(":").map(Number);
             const eventStart = new Date();
@@ -55,7 +57,7 @@ export default async function handler(req, res) {
 
             const eventEnd = new Date(eventStart.getTime() + 5 * 60 * 1000);
 
-            console.log(`Adding event: ${name} at ${eventStart}`);
+            console.log(`📌 Adding event: ${name} at ${eventStart}`);
 
             await calendar.events.insert({
                 calendarId,
