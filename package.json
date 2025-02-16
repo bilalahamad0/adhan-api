@@ -2,6 +2,7 @@
   "type": "module",
   "dependencies": {
     "axios": "^1.7.9",
-    "googleapis": "^144.0.0"
+    "googleapis": "^144.0.0",
+    "luxon": "^3.5.0"
   }
 }

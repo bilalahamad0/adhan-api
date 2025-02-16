@@ -1,51 +1,50 @@
 import axios from "axios";
-
-const calendarId = "935383561398511b358450192df350a2c06b35a08065ee6636e53f91eb73d992@group.calendar.google.com"
+import { DateTime } from "luxon";
 
 export default async function handler(req, res) {
     try {
-        const city = req.query.city || "Sunnyvale";
-        const country = req.query.country || "USA";
+        const { country, city } = req.query;
+        const apiUrl = `http://api.aladhan.com/v1/timingsByCity?country=${country}&city=${city}&method=2`;
 
-        const url = `http://api.aladhan.com/v1/timingsByCity?city=${city}&country=${country}&method=2`;
-        const response = await axios.get(url);
-
-        if (!response.data || !response.data.data || !response.data.data.timings) {
-            return res.status(500).json({ error: "Invalid response from Aladhan API" });
-        }
-
+        const response = await axios.get(apiUrl);
         const timings = response.data.data.timings;
 
+        // Convert prayer times from string to actual DateTime objects (PST)
+        const timezone = "America/Los_Angeles";  // Ensure Pacific Time (PST/PDT)
+        const now = DateTime.now().setZone(timezone);
+
         const prayerTimes = {
-            "Fajr": timings.Fajr,
-            "Dhuhr": timings.Dhuhr,
-            "Asr": timings.Asr,
-            "Maghrib": timings.Maghrib,
-            "Isha": timings.Isha
+            Fajr: DateTime.fromFormat(timings.Fajr, "HH:mm", { zone: timezone }),
+            Dhuhr: DateTime.fromFormat(timings.Dhuhr, "HH:mm", { zone: timezone }),
+            Asr: DateTime.fromFormat(timings.Asr, "HH:mm", { zone: timezone }),
+            Maghrib: DateTime.fromFormat(timings.Maghrib, "HH:mm", { zone: timezone }),
+            Isha: DateTime.fromFormat(timings.Isha, "HH:mm", { zone: timezone }),
         };
 
+        // Determine the next prayer time based on current time
+        let nextPrayer = null;
+        for (const [name, time] of Object.entries(prayerTimes)) {
+            if (time > now) {
+                nextPrayer = { name, time: time.toFormat("hh:mm a") };
+                break;
+            }
+        }
+
+        // If no future prayers today, set next to tomorrow's Fajr
+        if (!nextPrayer) {
+            nextPrayer = { name: "Fajr", time: prayerTimes.Fajr.plus({ days: 1 }).toFormat("hh:mm a") };
+        }
+
         res.status(200).json({
-            all_prayers: prayerTimes,
-            next_prayer: getNextPrayer(prayerTimes)
+            all_prayers: Object.fromEntries(
+                Object.entries(prayerTimes).map(([name, time]) => [name, time.toFormat("hh:mm a")])
+            ),
+            next_prayer: nextPrayer
         });
 
     } catch (error) {
-        console.error("Error fetching prayer times:", error.message);
-        res.status(500).json({ error: "Internal Server Error", details: error.message });
+        console.error("Error fetching prayer times:", error);
+        res.status(500).json({ error: "Failed to fetch prayer times" });
     }
-}
-
-function getNextPrayer(prayerTimes) {
-    const now = new Date();
-    const currentHour = now.getHours();
-    const currentMinute = now.getMinutes();
-
-    for (let [name, time] of Object.entries(prayerTimes)) {
-        const [hour, minute] = time.split(":").map(Number);
-        if (hour > currentHour || (hour === currentHour && minute > currentMinute)) {
-            return { name, time };
-        }
-    }
-    return { name: "Fajr", time: prayerTimes["Fajr"] };
 }
 
