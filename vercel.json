@@ -1,0 +1,25 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "api/prayerTimes.js",
+      "use": "@vercel/node"
+    },
+    {
+      "src": "api/updateCalendar.js",
+      "use": "@vercel/node"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/api/prayerTimes",
+      "dest": "/api/prayerTimes.js"
+    },
+    {
+      "src": "/api/updateCalendar",
+      "dest": "/api/updateCalendar.js"
+    }
+  ],
+  "alias": "adhan-api-mauve.vercel.app"
+}
+
