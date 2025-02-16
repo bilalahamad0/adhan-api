@@ -1,28 +1,26 @@
 import { google } from "googleapis";
 import axios from "axios";
-import fs from "fs";
 
-// Load Google Service Account Key
-const KEY_PATH = "./google-service-key.json"; // Path to your Google Service Account JSON key
+const calendarId = "935383561398511b358450192df350a2c06b35a08065ee6636e53f91eb73d992@group.calendar.google.com"; // Replace with your Adhan Calendar ID
 
 export default async function handler(req, res) {
     try {
+        // Load Google Auth Credentials from ENV
+        const credentials = JSON.parse(Buffer.from(process.env.GOOGLE_SERVICE_KEY, "base64").toString("utf8"));
+        //const prayerTimesApiUrl = "https://adhan-api-mauve.vercel.app/api/prayerTimes"; // FIXED URL
+
         const auth = new google.auth.GoogleAuth({
-            keyFile: KEY_PATH,
+            credentials,
             scopes: ["https://www.googleapis.com/auth/calendar"],
         });
 
         const calendar = google.calendar({ version: "v3", auth });
 
-        // Use the new fixed API URL
-        const prayerTimesApiUrl = "https://adhan-api-mauve.vercel.app/api/prayerTimes"; // FIXED URL
-        const response = await axios.get(prayerTimesApiUrl);
+        // Fetch prayer times
+        const response = await axios.get("https://adhan-api-mauve.vercel.app/api/prayerTimes");
         const prayerTimes = response.data.all_prayers;
 
-        // Use the correct Calendar ID for "Adhan"
-        const calendarId = "935383561398511b358450192df350a2c06b35a08065ee6636e53f91eb73d992@group.calendar.google.com"; // Replace with your Adhan Calendar ID
-
-        // Delete old prayer times to avoid duplication
+        // Delete old events
         const existingEvents = await calendar.events.list({
             calendarId,
             timeMin: new Date().toISOString(),
@@ -31,25 +29,22 @@ export default async function handler(req, res) {
 
         for (const event of existingEvents.data.items) {
             if (["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"].includes(event.summary)) {
-                await calendar.events.delete({
-                    calendarId,
-                    eventId: event.id,
-                });
+                await calendar.events.delete({ calendarId, eventId: event.id });
             }
         }
 
-        // Add new prayer times for today
+        // Insert new prayer times
         for (const [name, time] of Object.entries(prayerTimes)) {
             const [hour, minute] = time.split(":").map(Number);
             const eventStart = new Date();
             eventStart.setHours(hour, minute, 0);
 
-            const eventEnd = new Date(eventStart.getTime() + 5 * 60 * 1000); // 5 min duration
+            const eventEnd = new Date(eventStart.getTime() + 5 * 60 * 1000);
 
             await calendar.events.insert({
                 calendarId,
                 resource: {
-                    summary: name, // Fajr, Dhuhr, etc.
+                    summary: name,
                     start: { dateTime: eventStart.toISOString(), timeZone: "America/Los_Angeles" },
                     end: { dateTime: eventEnd.toISOString(), timeZone: "America/Los_Angeles" },
                     reminders: { useDefault: true },
