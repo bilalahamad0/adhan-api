@@ -20,6 +20,6 @@
       "dest": "/api/updateCalendar.js"
     }
   ],
-  "alias": "adhan-api-mauve.vercel.app"
+  "alias": ["adhan-api-mauve.vercel.app"]
 }
 
