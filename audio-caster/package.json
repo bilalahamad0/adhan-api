@@ -13,6 +13,7 @@
     "axios": "^1.13.2",
     "body-parser": "^2.2.1",
     "chromecast-api": "^0.4.2",
+    "dotenv": "^17.2.3",
     "express": "^5.2.1",
     "luxon": "^3.7.2",
     "node-schedule": "^2.1.1",

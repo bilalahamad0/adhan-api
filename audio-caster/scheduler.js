@@ -9,17 +9,18 @@ const os = require('os');
 const { promisify } = require('util');
 const stream = require('stream');
 const pipeline = promisify(stream.pipeline);
+require('dotenv').config();
 
 // --- CONFIGURATION ---
 const CONFIG = {
     location: {
-        city: 'Sunnyvale',
-        country: 'US',
-        method: 2, // ISNA
-        school: 1  // Hanafi
+        city: process.env.LOCATION_CITY || 'Sunnyvale',
+        country: process.env.LOCATION_COUNTRY || 'US',
+        method: parseInt(process.env.LOCATION_METHOD || 2), // ISNA
+        school: parseInt(process.env.LOCATION_SCHOOL || 1)  // Hanafi
     },
     device: {
-        name: 'Google Display',
+        name: process.env.DEVICE_NAME || 'Google Display',
         targetVolume: 0.5 // "Set volume level to 5" (0.5 out of 1.0)
     },
     audio: {
@@ -38,8 +39,8 @@ const CONFIG = {
             generic_4: "https://www.islamcan.com/audio/adhan/azan7.mp3", // Generic / Deep
         }
     },
-    timezone: 'America/Los_Angeles',
-    serverPort: 3001 // Dedicated port for serving audio
+    timezone: process.env.TIMEZONE || 'America/Los_Angeles',
+    serverPort: parseInt(process.env.SERVER_PORT || 3001) // Dedicated port for serving audio
 };
 
 const SCHEDULE_FILE = path.join(__dirname, 'annual_schedule.json');
@@ -122,7 +123,7 @@ function executePreFlightAndCast(prayerName, audioFileName) {
     let tvDevice = null;
 
     // --- ADB TV CONTROL (Android Debug Bridge) ---
-    const TV_IP = '10.0.0.80';
+    const TV_IP = process.env.TV_IP || '127.0.0.1';
     const { exec } = require('child_process');
 
     function adbCommand(cmd) {
