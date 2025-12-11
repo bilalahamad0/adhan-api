@@ -11,6 +11,8 @@ const stream = require('stream');
 const pipeline = promisify(stream.pipeline);
 require('dotenv').config();
 
+const ffmpeg = require('fluent-ffmpeg');
+
 // --- CONFIGURATION ---
 const CONFIG = {
     location: {
@@ -21,7 +23,7 @@ const CONFIG = {
     },
     device: {
         name: process.env.DEVICE_NAME || 'Google Display',
-        targetVolume: 0.5 // "Set volume level to 5" (0.5 out of 1.0)
+        targetVolume: 0.3 // Updated to 0.3 (Level 3) as requested
     },
     audio: {
         // Active Selections
@@ -45,6 +47,7 @@ const CONFIG = {
 
 const SCHEDULE_FILE = path.join(__dirname, 'annual_schedule.json');
 const AUDIO_DIR = path.join(__dirname, 'audio_cache');
+const IMAGES_DIR = path.join(__dirname, '../images');
 
 // --- UTILS ---
 function log(msg) {
@@ -93,30 +96,140 @@ async function ensureAudioCache() {
     }
 }
 
+const VisualGenerator = require('./visual_generator');
+const visualGen = new VisualGenerator(CONFIG);
+
 // --- STATIC SERVER ---
 const app = express();
 app.use('/audio', express.static(AUDIO_DIR));
+app.use('/images', express.static(IMAGES_DIR));
+
+// Dynamic Dashboard Endpoint
+app.get('/dashboard/:prayer', async (req, res) => {
+    try {
+        const prayerName = req.params.prayer;
+        // Basic fallback time if manually triggered, otherwise use actual
+        // Ideally we pass context, but for now we generate "Current Time" type view
+        const today = DateTime.now().setZone(CONFIG.timezone);
+        const buffer = await visualGen.generateDashboard(
+            prayerName.charAt(0).toUpperCase() + prayerName.slice(1),
+            today.toFormat('h:mm a'),
+            null // Hijri date will be enhanced later via Aladhan data integration
+        );
+        res.set('Content-Type', 'image/jpeg');
+        res.send(buffer);
+    } catch (e) {
+        console.error("Dashboard Error:", e);
+        res.status(500).send("Error generating dashboard");
+    }
+});
+
+// --- VIDEO GENERATOR (Pre-flight) ---
+function generateVideoFile(prayerName, audioFileName) {
+    return new Promise(async (resolve, reject) => {
+        const audioPath = path.join(AUDIO_DIR, audioFileName);
+        const outputVideoPath = path.join(IMAGES_DIR, 'generated', `${prayerName.toLowerCase()}.mp4`);
+
+        // 1. Generate Image
+        const imgPath = path.join(IMAGES_DIR, 'generated', 'current_dashboard.jpg');
+        // Ensure dir exists
+        if (!fs.existsSync(path.dirname(imgPath))) fs.mkdirSync(path.dirname(imgPath), { recursive: true });
+
+        const today = DateTime.now().setZone(CONFIG.timezone);
+
+        // Hijri/Holiday Context
+        let hijriDate = null;
+        let holidays = [];
+        try {
+            if (fs.existsSync(SCHEDULE_FILE)) {
+                const annualData = JSON.parse(fs.readFileSync(SCHEDULE_FILE));
+                const m = today.month.toString();
+                const d = today.day;
+                if (annualData.data && annualData.data[m] && annualData.data[m][d - 1]) {
+                    const h = annualData.data[m][d - 1].date.hijri;
+                    hijriDate = `${h.day} ${h.month.en} ${h.year}`;
+                    holidays = h.holidays || [];
+                }
+            }
+        } catch (e) { console.error(e); }
+
+        const isFriday = today.weekday === 5;
+
+        try {
+            const imgBuffer = await visualGen.generateDashboard(
+                prayerName.charAt(0).toUpperCase() + prayerName.slice(1),
+                today.toFormat('h:mm a'), // Not used visually anymore but passed
+                hijriDate,
+                { holidays, isFriday }
+            );
+            fs.writeFileSync(imgPath, imgBuffer);
+        } catch (e) {
+            return reject(e);
+        }
+
+        // 2. Encode Video
+        log(`🎬 Encoding ${prayerName} video (this takes ~60s)...`);
+
+        ffmpeg()
+            .input(imgPath)
+            .inputOptions(['-loop 1']) // Correct way to loop image indefinitely
+            .input(audioPath)
+            .videoCodec('libx264')
+            .audioCodec('aac')
+            .audioFrequency(44100)
+            .outputOptions([
+                '-pix_fmt yuv420p',
+                '-preset faster',
+                '-profile:v main',
+                '-level 3.1',
+                '-movflags +faststart', // Optimized for web playback
+                '-shortest' // Stop when audio ends
+            ])
+            .save(outputVideoPath) // Save to disk
+            .on('end', () => {
+                log(`✅ Video Ready: ${outputVideoPath}`);
+                resolve(outputVideoPath);
+            })
+            .on('error', (err) => {
+                log(`❌ Encoding Error: ${err.message}`);
+                reject(err);
+            });
+    });
+}
+
 app.listen(CONFIG.serverPort, () => {
     log(`🔊 Local Audio Server running at http://${getLocalIp()}:${CONFIG.serverPort}/audio/`);
 });
 
 
 // --- CASTING ENGINE WITH VOLUME CONTROL & TV SYNC ---
-function executePreFlightAndCast(prayerName, audioFileName) {
-    log(`🚀 TRIGGER: ${prayerName} Time! Starting Pre-flight sequence...`);
+// --- CASTING ENGINE WITH VOLUME CONTROL & TV SYNC ---
+async function executePreFlightAndCast(prayerName, audioFileName, targetTimeObj) {
+    log(`🚀 TRIGGER: ${prayerName} Time! Starting sequence...`);
 
-    // 1. Verify Audio Exists
-    const filePath = path.join(AUDIO_DIR, audioFileName);
-    if (!fs.existsSync(filePath)) {
-        log(`❌ Pre-flight Fail: Audio file ${audioFileName} missing. Attempting emergency download...`);
-        ensureAudioCache();
-        return;
+    // 1. Pre-Generate Video (The Heavy Lift - takes ~1 min)
+    // We do this BEFORE messing with the TV or Speaker
+    try {
+        await generateVideoFile(prayerName, audioFileName);
+    } catch (e) {
+        log(`❌ Video Generation Failed: ${e.message}`);
+        return; // Abort
     }
 
-    // 2. Construct Local LAN URL
+    // 1b. Precision Wait
+    // If we finished generation early (during the buffer), wait for the exact second.
+    if (targetTimeObj) {
+        const delay = targetTimeObj.toMillis() - Date.now();
+        if (delay > 0) {
+            log(`⏳ Video Ready. Waiting ${Math.round(delay / 1000)}s for precise prayer time...`);
+            await new Promise(resolve => setTimeout(resolve, delay));
+        }
+    }
+
     const localIp = getLocalIp();
-    const castUrl = `http://${localIp}:${CONFIG.serverPort}/audio/${audioFileName}`;
-    log(`📡 Prepared Audio Stream: ${castUrl}`);
+    // Static File URL (Instant Playback)
+    const castUrl = `http://${localIp}:${CONFIG.serverPort}/images/generated/${prayerName.toLowerCase()}.mp4?t=${Date.now()}`;
+    log(`📡 Ready to Cast: ${castUrl}`);
 
     // Track devices
     let adhanDevice = null;
@@ -146,234 +259,137 @@ function executePreFlightAndCast(prayerName, audioFileName) {
 
     async function checkTvMediaState() {
         try {
-            // 1. Primary Check: Media Sessions
-            // Native apps (YouTube, Netflix, Spotify) usually register here.
             const sessionOutput = await adbCommand('shell dumpsys media_session');
+            if (sessionOutput && (sessionOutput.includes('state=3') || sessionOutput.includes('state=Playing'))) return MEDIA_PLAYING;
+            if (sessionOutput && (sessionOutput.includes('state=2') || sessionOutput.includes('state=Paused'))) return MEDIA_PAUSED;
 
-            // Check for specific states
-            if (sessionOutput.includes('state=3') || sessionOutput.includes('state=Playing')) {
-                return MEDIA_PLAYING;
-            }
-            // Explicitly check for Paused. If paused, we don't want to mute.
-            if (sessionOutput.includes('state=2') || sessionOutput.includes('state=Paused')) {
-                return MEDIA_PAUSED;
-            }
-
-            // 2. Fallback Check: Raw Audio Output (for IPTV / niche apps)
-            // We parse "dumpsys audio" to find active players, ignoring system sounds.
             const audioOutput = await adbCommand('shell dumpsys audio');
-
-            // We look for the "players:" section in PlaybackActivityMonitor
-            // And ensure we ignore the "Audio event log:" section (history).
-            const playersSection = audioOutput.split('Audio event log:')[0];
-
-            // Regex to find active media players:
-            // Must have 'usage=USAGE_MEDIA' or 'usage=USAGE_GAME' AND 'state:started'
-            // This avoids matching system sounds (USAGE_ASSISTANCE_SONIFICATION).
+            const playersSection = audioOutput ? audioOutput.split('Audio event log:')[0] : '';
             const hasActiveMedia = playersSection.split('\n').some(line => {
-                const match = (line.includes('usage=USAGE_MEDIA') || line.includes('usage=USAGE_GAME')) &&
-                    line.includes('state:started');
-                return match;
+                return (line.includes('usage=USAGE_MEDIA') || line.includes('usage=USAGE_GAME')) && line.includes('state:started');
             });
 
-            if (hasActiveMedia) {
-                console.log("🔊 Detected active raw audio stream (USAGE_MEDIA).");
-                return MEDIA_PLAYING;
-            }
-
+            if (hasActiveMedia) return MEDIA_PLAYING;
             return MEDIA_STOPPED;
         } catch (err) {
-            console.error("⚠️ Error checking TV state:", err.message);
-            return MEDIA_STOPPED; // Fail safe: Assume nothing is playing.
+            return MEDIA_STOPPED;
         }
     }
-
-    // --- EXECUTION FLOW ---
 
     let tvWasInterrupted = false;
     let tvWasMuted = false;
 
-    // Global Resume Helper
     const resumeTvSafely = async () => {
         if (tvWasMuted) {
-            log(`🔊  Unmuting TV (ADB Key 164)...`);
+            log(`🔊  Unmuting TV...`);
             tvWasMuted = false;
             tvWasInterrupted = false;
-            await adbCommand(`shell input keyevent 164`); // MUTE (Toggle)
-        } else if (tvWasInterrupted) {
-            log(`▶️  Resuming TV (ADB Key 126)...`);
+            await adbCommand('shell input keyevent 164');
+            return;
+        }
+        if (tvWasInterrupted) {
+            log(`▶️  Resuming TV...`);
             tvWasInterrupted = false;
-            await adbCommand(`shell input keyevent 126`); // PLAY
+            await adbCommand('shell input keyevent 126');
         }
     };
 
-    process.on('uncaughtException', async (err) => {
-        log(`💥 Uncaught Exception: ${err.message}`);
-        await resumeTvSafely();
-        process.exit(1);
-    });
-
-    // Helper: Find Speaker with Timeout
-    function findAdhanSpeaker(client, name) {
-        return new Promise((resolve, reject) => {
-            const timeout = setTimeout(() => {
-                client.removeListener('device', onDevice);
-                reject(new Error(`Speaker '${name}' not found within 10s`));
-            }, 10000);
-
-            const onDevice = (device) => {
-                if (device.friendlyName.includes(name) || device.friendlyName === name) {
-                    clearTimeout(timeout);
-                    client.removeListener('device', onDevice);
-                    resolve(device);
-                }
-            };
-            client.on('device', onDevice);
-        });
+    // 2. Control TV (Pause/Mute) - Just before casting
+    const tvState = await checkTvMediaState();
+    if (tvState === MEDIA_PLAYING) {
+        log(`📺 TV is PLAYING. Sending PAUSE...`);
+        await adbCommand('shell input keyevent 127');
+        await new Promise(r => setTimeout(r, 1000));
+        const newState = await checkTvMediaState();
+        if (newState === MEDIA_PLAYING) {
+            log(`⚠️ TV ignored PAUSE. Muting...`);
+            await adbCommand('shell input keyevent 164');
+            tvWasMuted = true;
+        } else {
+            tvWasInterrupted = true;
+        }
     }
 
-    // Helper: Play Adhan & Monitor
-    function playAdhanSequence(device, client) {
-        log(`✅ Connected to Adhan Speaker: ${device.friendlyName}`);
+    // 3. Connect & Cast
+    findAdhanSpeaker();
 
-        device.getVolume((err, volume) => {
-            const originalVolume = (volume && !err) ? volume.level : 0.5;
-            log(`🔊 Speaker Volume: ${Math.round(originalVolume * 100)}%. Target: ${CONFIG.device.targetVolume * 100}%.`);
+    function findAdhanSpeaker() {
+        const Client = new ChromecastAPI();
+        let isCleanedUp = false;
+        let safetyTimer = null;
 
-            // CLEANUP (Idempotent)
-            let isCleanedUp = false;
-            const cleanup = () => {
-                if (isCleanedUp) return;
-                isCleanedUp = true;
-                log(`🔄 Playback Ended/Stopped. restoring...`);
-                resumeTvSafely(); // 1. Resume TV
+        const cleanup = () => {
+            if (isCleanedUp) return;
+            isCleanedUp = true;
+            log(`🔄 Playback Ended. Restoring...`);
+            resumeTvSafely();
+            if (adhanDevice) adhanDevice.close();
+            if (safetyTimer) clearTimeout(safetyTimer);
+            if (Client) Client.destroy();
+        };
 
-                try {
-                    device.setVolume(originalVolume, (err) => { // 2. Restore Volume
-                        if (!err) log(`✅ Volume Restored.`);
-                        log(`🏁 All Done. Disconnecting.`);
-                        try { client.destroy(); } catch (e) { }
-                        // Exit Process if Testing (Clean Exit)
-                        if (process.argv.includes('--test')) {
-                            setTimeout(() => process.exit(0), 500);
+        const client = Client.on('device', function (device) {
+            if (device.friendlyName === CONFIG.device.name) {
+                adhanDevice = device;
+                log(`✅ Connected to Adhan Speaker: ${device.friendlyName}`);
+
+                device.setVolume(CONFIG.device.targetVolume, (err) => {
+                    const dashboardUrl = `http://${localIp}:${CONFIG.serverPort}/images/generated/current_dashboard.jpg?t=${Date.now()}`;
+
+                    var media = {
+                        url: castUrl,
+                        contentType: 'video/mp4',
+                        metadata: {
+                            type: 1,
+                            metadataType: 0,
+                            title: `${prayerName} Adhan`,
+                            images: [{ url: dashboardUrl }]
+                        }
+                    };
+                    device.play(media, function (err) {
+                        if (err) {
+                            log(`❌ Playback Error: ${err.message}`);
+                            cleanup();
+                        } else {
+                            log(`🎶 Playback Started!`);
+                            // Safety Timer (Max 5 mins or Audio Length + Buffer)
+                            // We rely on video ending naturally via -shortest
+                            safetyTimer = setTimeout(cleanup, 360000);
+
+                            // Monitor Loop
+                            let lastStatusTime = Date.now();
+                            const checkInterval = setInterval(() => {
+                                if (isCleanedUp) {
+                                    clearInterval(checkInterval);
+                                    return;
+                                }
+                                if (Date.now() - lastStatusTime > 15000) {
+                                    log(`⚠️ Monitor Timeout. Cleanup.`);
+                                    clearInterval(checkInterval);
+                                    cleanup();
+                                    return;
+                                }
+                                try {
+                                    device.getStatus((err, status) => {
+                                        lastStatusTime = Date.now();
+                                        if (err) { cleanup(); return; }
+                                        if (!status || status.playerState === 'IDLE') {
+                                            log(`⏹️  Adhan Finished.`);
+                                            clearInterval(checkInterval);
+                                            cleanup();
+                                        }
+                                    });
+                                } catch (e) { cleanup(); }
+                            }, 1000);
                         }
                     });
-                } catch (e) {
-                    log(`⚠️ Volume Restore Failed: ${e.message}`);
-                    if (process.argv.includes('--test')) process.exit(0);
-                }
-            };
-
-            const safetyTimer = setTimeout(() => {
-                log(`⏰ Safety Timeout Reached.`);
-                cleanup();
-            }, 300000);
-
-            device.on('close', () => {
-                log(`⚠️ Device Connection Closed.`);
-                cleanup();
-            });
-
-            device.setVolume(CONFIG.device.targetVolume, (err) => {
-                var media = { url: castUrl, contentType: 'audio/mp3' };
-                device.play(media, function (err) {
-                    if (err) {
-                        log(`❌ Playback Error: ${err.message}`);
-                        cleanup();
-                    } else {
-                        log(`🎶 Playback Started. Monitoring status...`);
-
-                        // Monitor Loop
-                        let lastStatusTime = Date.now();
-                        const checkInterval = setInterval(() => {
-                            if (isCleanedUp) {
-                                clearInterval(checkInterval);
-                                clearTimeout(safetyTimer);
-                                return;
-                            }
-
-                            // Watchdog: Tighter timeout (2.5s) for faster reaction
-                            if (Date.now() - lastStatusTime > 2500) {
-                                log(`⚠️ Monitor Watchdog Timeout. Assuming Stopped.`);
-                                clearInterval(checkInterval);
-                                clearTimeout(safetyTimer);
-                                cleanup();
-                                return;
-                            }
-
-                            try {
-                                device.getStatus((err, status) => {
-                                    lastStatusTime = Date.now();
-                                    if (status) log(`🔍 Monitor Status: ${status.playerState}`);
-
-                                    if (err) {
-                                        log(`⚠️ Monitor Error: ${err.message}`);
-                                        clearInterval(checkInterval);
-                                        clearTimeout(safetyTimer);
-                                        cleanup();
-                                        return;
-                                    }
-                                    // If IDLE or PAUSED -> CLEANUP
-                                    if (!status || status.playerState === 'IDLE' || status.playerState === 'PAUSED') {
-                                        log(`⏹️  Status is ${status ? status.playerState : 'Unknown'}. Adhan Finished/Stopped.`);
-                                        clearInterval(checkInterval);
-                                        clearTimeout(safetyTimer);
-                                        cleanup();
-                                    }
-                                });
-                            } catch (e) {
-                                log(`💥 Monitor Exception: ${e.message}`);
-                                cleanup();
-                            }
-                        }, 500); // Check every 500ms
-                    }
                 });
-            });
+            }
         });
     }
-
-    // MAIN EXECUTION
-    const client = new ChromecastAPI();
-
-    // Step 1: Find Speaker
-    findAdhanSpeaker(client, CONFIG.device.name)
-        .then(async (device) => {
-            // Step 2: Found! Now Check TV
-            // Step 2: Found! Now Check TV
-            try {
-                const tvState = await checkTvMediaState();
-
-                if (tvState === MEDIA_PLAYING) {
-                    log(`📺 TV is PLAYING. Sending PAUSE (ADB Key 127)...`);
-                    tvWasInterrupted = true;
-                    await adbCommand(`shell input keyevent 127`);
-
-                    // Verification / Fallback (Wait 1s)
-                    await new Promise(r => setTimeout(r, 1000));
-                    const newState = await checkTvMediaState();
-
-                    if (newState === MEDIA_PLAYING) {
-                        log(`⚠️ Pause ineffective. Sending MUTE (ADB Key 164)...`);
-                        tvWasMuted = true;
-                        // tvWasInterrupted remains true to track "we did something"
-                        await adbCommand(`shell input keyevent 164`);
-                    }
-                } else {
-                    log(`ℹ️  TV State is ${tvState}. No action.`);
-                }
-            } catch (tvErr) {
-                log(`⚠️ TV Check Skipped/Failed: ${tvErr.message}`);
-            }
-
-            // Step 3: Play Adhan
-            playAdhanSequence(device, client);
-        })
-        .catch((err) => {
-            log(`❌ Pre-flight Aborted: ${err.message}`);
-            client.destroy();
-            if (process.argv.includes('--test')) process.exit(1);
-        });
 }
+
+
 
 // --- SCHEDULER ENGINE ---
 async function scheduleToday() {
@@ -432,17 +448,28 @@ async function scheduleToday() {
         const [hours, minutes] = timeStr.split(':');
         const scheduleTime = today.set({ hour: parseInt(hours), minute: parseInt(minutes), second: 0 });
 
+        const PREP_BUFFER_MINUTES = 2; // Start generating 2 mins early
+
+        // Skip if the actual Prayer Time has already passed
         if (scheduleTime < DateTime.now().setZone(CONFIG.timezone)) {
-            return; // Passed
+            return;
         }
 
         const audioFile = prayer === 'Fajr' ? 'fajr.mp3' : 'adhan.mp3';
 
-        schedule.scheduleJob(scheduleTime.toJSDate(), function () {
-            executePreFlightAndCast(prayer, audioFile);
+        // Calculate Trigger Time (Pre-flight)
+        let triggerTime = scheduleTime.minus({ minutes: PREP_BUFFER_MINUTES });
+
+        // If system started within the buffer window (e.g. 1 min before), run immediately
+        if (triggerTime < DateTime.now().setZone(CONFIG.timezone)) {
+            triggerTime = DateTime.now().setZone(CONFIG.timezone).plus({ seconds: 2 }); // Give enough tick for job
+        }
+
+        schedule.scheduleJob(triggerTime.toJSDate(), function () {
+            executePreFlightAndCast(prayer, audioFile, scheduleTime);
         });
 
-        log(`   - ${prayer}: ${timeStr}`);
+        log(`   - ${prayer}: ${timeStr} (Trigger: ${triggerTime.toFormat('h:mm:ss a')})`);
     });
 }
 
@@ -458,7 +485,7 @@ if (process.argv.includes('--test')) {
     log("🧪 TEST TRIGGERED");
     const isFajr = process.argv.includes('--fajr');
     const testAudio = isFajr ? "fajr.mp3" : "adhan.mp3";
-    const testName = isFajr ? "TEST_FAJR" : "TEST_PRAYER";
+    const testName = isFajr ? "Fajr" : "Isha";
 
     setTimeout(async () => {
         await ensureAudioCache(); // Make sure we have files

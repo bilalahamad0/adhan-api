@@ -9,8 +9,8 @@ export default async function handler(req, res) {
         const response = await axios.get(apiUrl);
         const timings = response.data.data.timings;
 
-        // Convert prayer times from string to actual DateTime objects (PST)
-        const timezone = "America/Los_Angeles";  // Ensure Pacific Time (PST/PDT)
+        // Convert prayer times from string to actual DateTime objects
+        const timezone = process.env.ADHAN_TIMEZONE || "America/Los_Angeles";
         const now = DateTime.now().setZone(timezone);
 
         const prayerTimes = {

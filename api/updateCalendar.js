@@ -2,7 +2,12 @@ import { google } from "googleapis";
 import axios from "axios";
 import { DateTime } from "luxon";
 
-const calendarId = "935383561398511b358450192df350a2c06b35a08065ee6636e53f91eb73d992@group.calendar.google.com"; // Replace with your Adhan Calendar ID
+const calendarId = process.env.GOOGLE_CALENDAR_ID;
+
+if (!calendarId) {
+    throw new Error("❌ Missing GOOGLE_CALENDAR_ID in Environment Variables");
+}
+
 
 export default async function handler(req, res) {
     try {
@@ -25,7 +30,18 @@ export default async function handler(req, res) {
 
         // Fetch prayer times
         console.log("🔄 Fetching prayer times...");
-        const response = await axios.get("https://adhan-api-mauve.vercel.app/api/prayerTimes?country=USA&city=Sunnyvale");
+        // Fetch prayer times
+        console.log("🔄 Fetching prayer times...");
+        // Use local API path or full URL if needed. For Vercel, internal helper function is better, 
+        // but sticking to axios call requires the base URL.
+        // Assuming this runs as a Vercel function, we can just import the logic or use the deployed URL.
+        // For now, let's keep the axios pattern but dynamic.
+        const baseUrl = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000';
+
+        const country = process.env.ADHAN_COUNTRY || "USA";
+        const city = process.env.ADHAN_CITY || "Sunnyvale";
+
+        const response = await axios.get(`${baseUrl}/api/prayerTimes?country=${country}&city=${city}`);
 
         if (!response.data || !response.data.all_prayers) {
             throw new Error("❌ Invalid response from prayer times API");
@@ -34,7 +50,7 @@ export default async function handler(req, res) {
         console.log("✅ Prayer Times Received:", response.data.all_prayers);
         const prayerTimes = response.data.all_prayers;
 
-        const timezone = "America/Los_Angeles";
+        const timezone = process.env.ADHAN_TIMEZONE || "America/Los_Angeles";
         const today = DateTime.now().setZone(timezone).toISODate();
 
         // Delete old prayer events

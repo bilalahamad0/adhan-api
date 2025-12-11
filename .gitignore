@@ -1,1 +1,9 @@
 .vercel
+*.log
+node_modules/
+
+# Secrets
+fit-sanctum*.json
+credentials.json
+token.json
+
