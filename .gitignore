@@ -7,3 +7,10 @@ fit-sanctum*.json
 credentials.json
 token.json
 
+
+# Generated Media
+audio-caster/audio_cache/*.mp3
+!audio-caster/audio_cache/.keep
+images/generated/*
+!images/generated/.keep
+images/previews/*

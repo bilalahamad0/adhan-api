@@ -23,22 +23,22 @@ const CONFIG = {
     },
     device: {
         name: process.env.DEVICE_NAME || 'Google Display',
-        targetVolume: 0.3 // Updated to 0.3 (Level 3) as requested
+        targetVolume: 0.5 // Level 5 (Range 0.0-1.0)
     },
     audio: {
         // Active Selections
-        fajrSource: "https://raw.githubusercontent.com/AalianKhan/adhans/master/adhan_fajr.mp3",
-        regularSource: "https://www.islamcan.com/audio/adhan/azan1.mp3",
+        fajrCurrent: "fajr", // references options key
+        regularCurrent: "generic_3", // references options key
 
-        // Available Options (Swappable)
+        // Available Options (Source Map)
         options: {
-            fajr: "https://raw.githubusercontent.com/AalianKhan/adhans/master/adhan_fajr.mp3", // "Assalatu Khairum Minan Naum"
-            mecca_1: "https://www.islamcan.com/audio/adhan/azan1.mp3", // Makkah (Standard)
-            mecca_2: "https://www.islamcan.com/audio/adhan/azan3.mp3", // Makkah (Alternative)
-            generic_1: "https://www.islamcan.com/audio/adhan/azan4.mp3", // Generic / Soft
-            generic_2: "https://www.islamcan.com/audio/adhan/azan5.mp3", // Generic / Echo
-            generic_3: "https://www.islamcan.com/audio/adhan/azan6.mp3", // Generic / Melodic
-            generic_4: "https://www.islamcan.com/audio/adhan/azan7.mp3", // Generic / Deep
+            fajr: "https://raw.githubusercontent.com/AalianKhan/adhans/master/adhan_fajr.mp3",
+            mecca_1: "https://www.islamcan.com/audio/adhan/azan1.mp3",
+            mecca_2: "https://www.islamcan.com/audio/adhan/azan3.mp3",
+            generic_1: "https://www.islamcan.com/audio/adhan/azan4.mp3",
+            generic_2: "https://www.islamcan.com/audio/adhan/azan5.mp3",
+            generic_3: "https://www.islamcan.com/audio/adhan/azan6.mp3",
+            generic_4: "https://www.islamcan.com/audio/adhan/azan7.mp3",
         }
     },
     timezone: process.env.TIMEZONE || 'America/Los_Angeles',
@@ -70,13 +70,11 @@ function getLocalIp() {
 async function ensureAudioCache() {
     if (!fs.existsSync(AUDIO_DIR)) fs.mkdirSync(AUDIO_DIR);
 
-    // Downloads: Map active sources + all options to local files
-    const downloads = [
-        { name: 'fajr.mp3', url: CONFIG.audio.fajrSource },
-        { name: 'adhan.mp3', url: CONFIG.audio.regularSource },
-    ];
+    // Downloads: Only download the named options.
+    // 'adhan.mp3' is no longer a physical file, but a logical selection.
+    const downloads = [];
 
-    // Also cache all options for easy swapping
+    // Cache all options
     Object.keys(CONFIG.audio.options).forEach(key => {
         downloads.push({ name: `${key}.mp3`, url: CONFIG.audio.options[key] });
     });
@@ -125,7 +123,7 @@ app.get('/dashboard/:prayer', async (req, res) => {
 });
 
 // --- VIDEO GENERATOR (Pre-flight) ---
-function generateVideoFile(prayerName, audioFileName) {
+function generateVideoFile(prayerName, audioFileName, prayerTime) {
     return new Promise(async (resolve, reject) => {
         const audioPath = path.join(AUDIO_DIR, audioFileName);
         const outputVideoPath = path.join(IMAGES_DIR, 'generated', `${prayerName.toLowerCase()}.mp4`);
@@ -136,6 +134,8 @@ function generateVideoFile(prayerName, audioFileName) {
         if (!fs.existsSync(path.dirname(imgPath))) fs.mkdirSync(path.dirname(imgPath), { recursive: true });
 
         const today = DateTime.now().setZone(CONFIG.timezone);
+        // Use Scheduled Time for Display, or fallback to Now (e.g. Test Mode)
+        const displayTime = prayerTime ? prayerTime.toFormat('h:mm a') : today.toFormat('h:mm a');
 
         // Hijri/Holiday Context
         let hijriDate = null;
@@ -158,7 +158,7 @@ function generateVideoFile(prayerName, audioFileName) {
         try {
             const imgBuffer = await visualGen.generateDashboard(
                 prayerName.charAt(0).toUpperCase() + prayerName.slice(1),
-                today.toFormat('h:mm a'), // Not used visually anymore but passed
+                displayTime,
                 hijriDate,
                 { holidays, isFriday }
             );
@@ -210,7 +210,7 @@ async function executePreFlightAndCast(prayerName, audioFileName, targetTimeObj)
     // 1. Pre-Generate Video (The Heavy Lift - takes ~1 min)
     // We do this BEFORE messing with the TV or Speaker
     try {
-        await generateVideoFile(prayerName, audioFileName);
+        await generateVideoFile(prayerName, audioFileName, targetTimeObj);
     } catch (e) {
         log(`❌ Video Generation Failed: ${e.message}`);
         return; // Abort
@@ -455,7 +455,8 @@ async function scheduleToday() {
             return;
         }
 
-        const audioFile = prayer === 'Fajr' ? 'fajr.mp3' : 'adhan.mp3';
+        const audioKey = prayer === 'Fajr' ? CONFIG.audio.fajrCurrent : CONFIG.audio.regularCurrent;
+        const audioFile = `${audioKey}.mp3`;
 
         // Calculate Trigger Time (Pre-flight)
         let triggerTime = scheduleTime.minus({ minutes: PREP_BUFFER_MINUTES });
@@ -484,11 +485,13 @@ schedule.scheduleJob('0 1 * * *', scheduleToday);
 if (process.argv.includes('--test')) {
     log("🧪 TEST TRIGGERED");
     const isFajr = process.argv.includes('--fajr');
-    const testAudio = isFajr ? "fajr.mp3" : "adhan.mp3";
+    const testKey = isFajr ? CONFIG.audio.fajrCurrent : CONFIG.audio.regularCurrent;
+    const testAudio = `${testKey}.mp3`;
     const testName = isFajr ? "Fajr" : "Isha";
 
     setTimeout(async () => {
         await ensureAudioCache(); // Make sure we have files
-        executePreFlightAndCast(testName, testAudio);
+        // Mock target time as 'Now' for test
+        executePreFlightAndCast(testName, testAudio, null);
     }, 2000);
 }
