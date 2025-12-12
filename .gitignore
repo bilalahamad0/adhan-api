@@ -3,6 +3,7 @@
 node_modules/
 
 # Secrets
+.env
 fit-sanctum*.json
 credentials.json
 token.json

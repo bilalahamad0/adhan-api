@@ -7,11 +7,14 @@ const { DateTime } = require('luxon');
 class VisualGenerator {
     constructor(config) {
         this.config = config;
-        this.width = 1920;
-        this.height = 1080;
+        // Adjusted for Google Nest Hub Max (16:10 Aspect Ratio) to remove black bars
+        this.width = 1280;
+        this.height = 800;
         this.cacheDir = path.join(__dirname, 'audio_cache'); // For generated outputs (served by Express)
         this.bgPath = path.join(__dirname, '../images/default.jpg'); // Source default background
     }
+
+    // ... (methods remain same) use lines from original file for context ... 
 
     async init() {
         // Ensure cache dir exists for outputs
@@ -93,6 +96,7 @@ class VisualGenerator {
         console.log(`🖼️ Selected Background: ${picked}`);
         return path.join(imagesDir, picked);
     }
+
     async getWeather() {
         try {
             // Open-Meteo for Sunnyvale (Celsius) + is_day
@@ -113,27 +117,30 @@ class VisualGenerator {
     getWeatherIcon(code, isDay) {
         // Night overwrites for clear/partly cloudy
         if (isDay === 0) {
-            if (code === 0) return '🌙'; // Clear Night
-            if (code === 1 || code === 2) return '☁️'; // Partly Cloud Night (Generic cloud works or 🌥️)
-            // Keep rain/snow/storm same as they are generic
+            if (code === 0) return '☾'; // Basic Crescent Moon (Safe U+263E) - Kept per user request
+            if (code === 1 || code === 2) return '☁️'; // Cloud (Emoji)
         }
 
         // WMO Weather interpretation codes (WW)
+        // Reverted to Emojis for "Beautiful" look (Sun/Cloud), except Moon
         const icons = {
             0: '☀️', 1: '🌤️', 2: '⛅', 3: '☁️',
             45: '🌫️', 48: '🌫️',
-            51: 'DRIZZLE', 53: 'DRIZZLE', 55: 'DRIZZLE',
+            51: '☔', 53: '☔', 55: '☔',
             61: '🌧️', 63: '🌧️', 65: '🌧️',
             71: '❄️', 73: '❄️', 75: '❄️',
             80: '🌦️', 81: '🌦️', 82: '🌧️',
             95: '⛈️', 96: '⛈️', 99: '⛈️'
         };
+
         // Simplify logic
-        if (code >= 51 && code <= 57) return '🌧️';
+        if (code >= 51 && code <= 57) return '☔'; // Drizzle -> Umbrella (Rain without heavy cloud)
         if (code >= 61 && code <= 67) return '🌧️';
         if (code >= 71 && code <= 77) return '❄️';
+
         return icons[code] || '🌡️';
     }
+
     async generateDashboard(prayerName, prayerTime, hijriDate, context = {}) {
         await this.init();
 
@@ -154,7 +161,8 @@ class VisualGenerator {
         }
 
         // Draw image covering canvas (cover compliant)
-        const scale = Math.max(this.width / image.width, this.height / image.height);
+        // Add 0.01 to scale to prevent sub-pixel rounding errors causing black lines
+        const scale = Math.max(this.width / image.width, this.height / image.height) + 0.001;
         const x = (this.width / 2) - (image.width / 2) * scale;
         const y = (this.height / 2) - (image.height / 2) * scale;
         ctx.drawImage(image, x, y, image.width * scale, image.height * scale);
@@ -171,43 +179,43 @@ class VisualGenerator {
         ctx.fillStyle = '#FFFFFF';
         ctx.textAlign = 'center';
 
-        // -- Main Content (Middle) - Scaled 90%
+        // -- Main Content (Middle) - Scaled for 1280x800
         ctx.shadowColor = "rgba(0,0,0,0.9)";
         ctx.shadowBlur = 20;
         ctx.shadowOffsetX = 3;
         ctx.shadowOffsetY = 3;
 
-        // Prayer Name (350 * 0.9 = 315px)
-        // Move closer to center (baseline lower)
-        ctx.font = 'bold 315px Georgia, "Times New Roman", serif';
-        ctx.fillText(prayerName, this.width / 2, this.height / 2 - 50);
+        // Prayer Name
+        // Moved UP to fix overlap with time
+        ctx.font = 'bold 210px Georgia, "Times New Roman", serif';
+        ctx.fillText(prayerName, this.width / 2, this.height / 2 - 60);
 
-        // Prayer Time (180 * 0.9 = 162 => 160px)
-        // Move closer to center (baseline higher)
-        ctx.font = '160px Georgia, "Times New Roman", serif';
-        ctx.fillText(prayerTime, this.width / 2, this.height / 2 + 130);
+        // Prayer Time
+        // Moved DOWN to create gap
+        ctx.font = '110px Georgia, "Times New Roman", serif';
+        ctx.fillText(prayerTime, this.width / 2, this.height / 2 + 100);
 
         // -- Footer Info (Bottom) - Symmetrical Layout
         ctx.textAlign = 'left';
-        const PADDING = 60;
+        const PADDING = 40;
 
         // Baselines
-        const BOTTOM_BASE = this.height - 60;   // Hijri & City
-        const TOP_BASE = this.height - 175;     // Date & Temp (Aligned)
+        const BOTTOM_BASE = this.height - 40;   // Hijri & City
+        const TOP_BASE = this.height - 110;     // Date & Temp (Aligned)
 
         // Date (Bottom Left - Primary)
         const now = DateTime.now().setZone(this.config.timezone);
         const dateStr = now.toFormat('EEEE, MMMM d');
 
-        // Match Temp Size (110px)
-        ctx.font = '110px sans-serif';
+        // Match Temp Size
+        ctx.font = '75px sans-serif';
         ctx.fillText(dateStr, PADDING, TOP_BASE);
 
         // Hijri (Bottom Left - Secondary)
         if (hijriDate) {
             ctx.fillStyle = '#E0E0E0';
-            // Match City Size (60px)
-            ctx.font = 'italic 60px serif';
+            // Match City Size
+            ctx.font = 'italic 40px serif';
             ctx.fillText(hijriDate, PADDING, BOTTOM_BASE);
         }
 
@@ -219,19 +227,21 @@ class VisualGenerator {
         ctx.textAlign = 'right';
 
         // Temp (Moved Down)
-        ctx.font = '110px sans-serif';
+        ctx.font = '75px sans-serif';
         const tempText = weather.temp;
         ctx.fillText(tempText, this.width - PADDING, TOP_BASE);
 
-        // Icon (70px) - Draw to left of Temp
+        // Icon - Draw to left of Temp
         const tempWidth = ctx.measureText(tempText).width;
         ctx.textAlign = 'right';
-        ctx.font = '70px sans-serif';
-        // Draw icon at: EndX - TempWidth - Gap (60px)
-        ctx.fillText(icon, this.width - PADDING - tempWidth - 60, TOP_BASE);
+
+        ctx.font = '50px sans-serif';
+
+        // Reduced gap from 60 to 25 to bring closer
+        ctx.fillText(icon, this.width - PADDING - tempWidth - 25, TOP_BASE);
 
         // City (Matched with Hijri)
-        ctx.font = '60px sans-serif';
+        ctx.font = '40px sans-serif';
         ctx.fillText(this.config.location.city, this.width - PADDING, BOTTOM_BASE);
 
         return canvas.toBuffer('image/jpeg', { quality: 0.95 });
