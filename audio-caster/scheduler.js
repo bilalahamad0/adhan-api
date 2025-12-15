@@ -348,6 +348,7 @@ async function executePreFlightAndCast(prayerName, audioFileName, targetTimeObj)
 
         const setDeviceVolume = (vol, cb) => {
             if (!adhanDevice || !adhanDevice.client) {
+                // If client isn't ready (pre-flight often hits this), fail gracefully
                 return cb(new Error("Device client not ready"));
             }
 
@@ -355,11 +356,15 @@ async function executePreFlightAndCast(prayerName, audioFileName, targetTimeObj)
             adhanDevice.setVolume(vol, (err, newVol) => {
                 if (!err) return cb(null, newVol);
 
-                // Fallback: Try RAW client method if wrapper fails
-                try {
-                    adhanDevice.client.setVolume({ level: vol }, cb);
-                } catch (e) {
-                    cb(e);
+                // Fallback: Try RAW client method
+                if (adhanDevice.client) {
+                    try {
+                        adhanDevice.client.setVolume({ level: vol }, cb);
+                    } catch (e) {
+                        cb(e);
+                    }
+                } else {
+                    cb(err);
                 }
             });
         };
@@ -375,7 +380,10 @@ async function executePreFlightAndCast(prayerName, audioFileName, targetTimeObj)
                 try {
                     if (adhanDevice) {
                         // Suppress 'disconnect' error on already closed socket
-                        try { adhanDevice.close(); } catch (e) { }
+                        try {
+                            if (adhanDevice.client) adhanDevice.client.close();
+                            adhanDevice.close();
+                        } catch (e) { }
                     }
                 } catch (e) { console.error("Error closing device:", e.message); }
 
@@ -383,7 +391,7 @@ async function executePreFlightAndCast(prayerName, audioFileName, targetTimeObj)
 
                 try {
                     if (Client) Client.destroy();
-                } catch (e) { console.error("Error destroying client:", e.message); }
+                } catch (e) { } // Ignore destroy errors
 
                 // If running in TEST mode, exit process to prevent hang
                 if (process.argv.includes('--test')) {
