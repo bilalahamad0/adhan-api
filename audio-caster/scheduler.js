@@ -29,7 +29,7 @@ const CONFIG = {
     },
     device: {
         name: process.env.DEVICE_NAME || 'Google Display',
-        targetVolume: 0.6 // Level 6 (Range 0.0-1.0)
+        targetVolume: 0.5 // Level 5 (Range 0.0-1.0)
     },
     audio: {
         // Active Selections
