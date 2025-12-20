@@ -321,22 +321,6 @@ async function executePreFlightAndCast(prayerName, audioFileName, targetTimeObj)
         }
     };
 
-    // 2. Control TV (Pause/Mute) - Just before casting
-    const tvState = await checkTvMediaState();
-    if (tvState === MEDIA_PLAYING) {
-        log(`📺 TV is PLAYING. Sending PAUSE...`);
-        await adbCommand('shell input keyevent 127');
-        await new Promise(r => setTimeout(r, 1000));
-        const newState = await checkTvMediaState();
-        if (newState === MEDIA_PLAYING) {
-            log(`⚠️ TV ignored PAUSE. Muting...`);
-            await adbCommand('shell input keyevent 164');
-            tvWasMuted = true;
-        } else {
-            tvWasInterrupted = true;
-        }
-    }
-
     // 3. Connect & Cast
     findAdhanSpeaker();
 
@@ -429,150 +413,180 @@ async function executePreFlightAndCast(prayerName, audioFileName, targetTimeObj)
 
                 log(`✅ Connected to Adhan Speaker: ${device.friendlyName}`);
 
-                // 1. Get Current Status (Receiver Status, not App Status)
-                device.getReceiverStatus((err, status) => {
-                    if (!err && status && status.volume) {
-                        originalVolume = status.volume.level;
-                        log(`📊 Current Volume: ${(originalVolume * 100).toFixed(0)}% (Saved for restore)`);
+                // --- OPTIMIZED: Control TV HERE, right after we found the speaker ---
+                // This prevents the 60s silence gap while searching for the speaker
+                // We make this an async IIFE or just handle it as a promise chain
+                // checking TV state usually takes 1-2s.
+                (async () => {
+                    try {
+                        const tvState = await checkTvMediaState();
+                        if (tvState === MEDIA_PLAYING) {
+                            log(`📺 TV is PLAYING. Sending PAUSE...`);
+                            await adbCommand('shell input keyevent 127');
+                            await new Promise(r => setTimeout(r, 1000));
+                            const newState = await checkTvMediaState();
+                            if (newState === MEDIA_PLAYING) {
+                                log(`⚠️ TV ignored PAUSE. Muting...`);
+                                await adbCommand('shell input keyevent 164');
+                                tvWasMuted = true;
+                            } else {
+                                tvWasInterrupted = true;
+                            }
+                        }
+                    } catch (e) {
+                        console.error("Error controlling TV:", e);
                     }
 
-                    // 2. Set Target Volume
-                    setDeviceVolume(CONFIG.device.targetVolume, (err) => {
-                        if (err) console.error("⚠️ Failed to set volume:", err.message);
-                        else log(`🔊 Volume set to ${(CONFIG.device.targetVolume * 100).toFixed(0)}%`);
+                    // Proceed with Cast logic ONLY after TV actions are attempted
+                    proceedWithCast();
+                })();
 
-                        const dashboardUrl = `http://${localIp}:${CONFIG.serverPort}/images/generated/current_dashboard.jpg?t=${Date.now()}`;
+                function proceedWithCast() {
+                    // 1. Get Current Status (Receiver Status, not App Status)
+                    device.getReceiverStatus((err, status) => {
+                        if (!err && status && status.volume) {
+                            originalVolume = status.volume.level;
+                            log(`📊 Current Volume: ${(originalVolume * 100).toFixed(0)}% (Saved for restore)`);
+                        }
 
-                        var media = {
-                            url: castUrl,
-                            contentType: 'video/mp4',
-                            metadata: {
-                                type: 1,
-                                metadataType: 0,
-                                title: `${prayerName} Adhan`,
-                                images: [{ url: dashboardUrl }]
-                            }
-                        };
+                        // 2. Set Target Volume
+                        setDeviceVolume(CONFIG.device.targetVolume, (err) => {
+                            if (err) console.error("⚠️ Failed to set volume:", err.message);
+                            else log(`🔊 Volume set to ${(CONFIG.device.targetVolume * 100).toFixed(0)}%`);
 
-                        // 3. Play Media
-                        // Note: Play disconnects and creates a new connection, that's fine.
-                        device.play(media, function (err) {
-                            if (err) {
-                                log(`❌ Playback Error: ${err.message}`);
-                                cleanup();
-                            } else {
-                                log(`🎶 Playback Started!`);
-                                safetyTimer = setTimeout(cleanup, 600000); // 10m safety
+                            const dashboardUrl = `http://${localIp}:${CONFIG.serverPort}/images/generated/current_dashboard.jpg?t=${Date.now()}`;
 
-                                // FORCE VOLUME SET AFTER PLAYBACK STARTS
-                                // This fixes "no session started" error by ensuring an app is running
-                                setTimeout(() => {
-                                    // Use adhanDevice here (closure) because device might be stale or different context
-                                    if (adhanDevice) {
-                                        // Correct logic to retry volume
-                                        setDeviceVolume(CONFIG.device.targetVolume, (err) => {
-                                            if (!err) log(`🔊 Volume set to ${(CONFIG.device.targetVolume * 100).toFixed(0)}% (Post-Launch)`);
-                                        });
-                                    }
-                                }, 2000);
+                            var media = {
+                                url: castUrl,
+                                contentType: 'video/mp4',
+                                metadata: {
+                                    type: 1,
+                                    metadataType: 0,
+                                    title: `${prayerName} Adhan`,
+                                    images: [{ url: dashboardUrl }]
+                                }
+                            };
 
-                                // Monitor via Events
-                                let lastStatusTime = Date.now();
-                                let lastState = '';
-                                let lastStateChangeTime = Date.now();
-
-                                const statusHandler = (status) => {
-                                    lastStatusTime = Date.now(); // Update heartbeat
-
-                                    if (status && status.playerState !== lastState) {
-                                        log(`📊 Device Status: ${status.playerState}`);
-                                        lastState = status.playerState;
-                                        lastStateChangeTime = Date.now();
-                                    }
-
-                                    if (!status || status.playerState === 'IDLE') {
-                                        log(`⏹️  Adhan Finished (IDLE).`);
-                                        cleanup();
-                                    }
-                                };
-
-                                device.on('status', statusHandler);
-
-                                // Explicit 'finished' event from library
-                                device.on('finished', () => {
-                                    log(`⏹️  Adhan Finished (Event).`);
+                            // 3. Play Media
+                            // Note: Play disconnects and creates a new connection, that's fine.
+                            device.play(media, function (err) {
+                                if (err) {
+                                    log(`❌ Playback Error: ${err.message}`);
                                     cleanup();
-                                });
+                                } else {
+                                    log(`🎶 Playback Started!`);
+                                    safetyTimer = setTimeout(cleanup, 600000); // 10m safety
 
-                                // Active Polling Loop (Serialized to prevent Listener Leaks)
-                                // We MUST poll because 'status' events often stop firing automatically for Cast devices.
-                                let pollingActive = true;
-                                let consecutiveFailures = 0;
-
-                                const pollLoop = async () => {
-                                    if (isCleanedUp || !pollingActive) return;
-
-                                    const now = Date.now();
-
-                                    // Watchdog 1: Connection Silence (No updates at all)
-                                    if (now - lastStatusTime > 300000) { // 5 mins
-                                        log(`⚠️ Monitor Timeout. Cleanup.`);
-                                        cleanup();
-                                        return;
-                                    }
-
-                                    // Watchdog 2: Stuck in Non-Playing State (Paused/Buffering loop)
-                                    if ((lastState === 'PAUSED' || lastState === 'BUFFERING') && (now - lastStateChangeTime > 180000)) { // 3 mins
-                                        log(`⚠️ Device Stuck. Cleanup.`);
-                                        cleanup();
-                                        return;
-                                    }
-
-                                    try {
-                                        const status = await new Promise((resolve, reject) => {
-                                            const t = setTimeout(() => reject(new Error('Timeout')), 1000); // Faster timeout
-                                            device.getStatus((err, s) => { // getStatus uses existing session
-                                                clearTimeout(t);
-                                                if (err) reject(err);
-                                                else resolve(s);
+                                    // FORCE VOLUME SET AFTER PLAYBACK STARTS
+                                    // This fixes "no session started" error by ensuring an app is running
+                                    setTimeout(() => {
+                                        // Use adhanDevice here (closure) because device might be stale or different context
+                                        if (adhanDevice) {
+                                            // Correct logic to retry volume
+                                            setDeviceVolume(CONFIG.device.targetVolume, (err) => {
+                                                if (!err) log(`🔊 Volume set to ${(CONFIG.device.targetVolume * 100).toFixed(0)}% (Post-Launch)`);
                                             });
-                                        });
+                                        }
+                                    }, 2000);
 
-                                        // Success - Reset failure counter
-                                        consecutiveFailures = 0;
+                                    // Monitor via Events
+                                    let lastStatusTime = Date.now();
+                                    let lastState = '';
+                                    let lastStateChangeTime = Date.now();
 
-                                        // Manually feed the handler
-                                        statusHandler(status);
+                                    const statusHandler = (status) => {
+                                        lastStatusTime = Date.now(); // Update heartbeat
 
-                                    } catch (e) {
-                                        consecutiveFailures++;
-
-                                        // "Smart" Error Detection
-                                        const msg = e.message.toLowerCase();
-                                        if (msg.includes('closed') || msg.includes('destroyed') || msg.includes('socket') || msg.includes('not open')) {
-                                            log(`⚠️ Connection Closed (${e.message}). Cleanup.`);
-                                            consecutiveFailures = 99; // Force exit
+                                        if (status && status.playerState !== lastState) {
+                                            log(`📊 Device Status: ${status.playerState}`);
+                                            lastState = status.playerState;
+                                            lastStateChangeTime = Date.now();
                                         }
 
-                                        // Fail faster (2 retries = ~5-6s total delay instead of 20s)
-                                        if (consecutiveFailures >= 2) {
-                                            log(`⚠️ Connection Lost. Cleanup.`);
+                                        if (!status || status.playerState === 'IDLE') {
+                                            log(`⏹️  Adhan Finished (IDLE).`);
+                                            cleanup();
+                                        }
+                                    };
+
+                                    device.on('status', statusHandler);
+
+                                    // Explicit 'finished' event from library
+                                    device.on('finished', () => {
+                                        log(`⏹️  Adhan Finished (Event).`);
+                                        cleanup();
+                                    });
+
+                                    // Active Polling Loop (Serialized to prevent Listener Leaks)
+                                    // We MUST poll because 'status' events often stop firing automatically for Cast devices.
+                                    let pollingActive = true;
+                                    let consecutiveFailures = 0;
+
+                                    const pollLoop = async () => {
+                                        if (isCleanedUp || !pollingActive) return;
+
+                                        const now = Date.now();
+
+                                        // Watchdog 1: Connection Silence (No updates at all)
+                                        if (now - lastStatusTime > 300000) { // 5 mins
+                                            log(`⚠️ Monitor Timeout. Cleanup.`);
                                             cleanup();
                                             return;
                                         }
-                                    }
 
-                                    // Schedule next poll ONLY after this one completes (Serial)
-                                    if (!isCleanedUp && pollingActive) {
-                                        setTimeout(pollLoop, 3000); // 3s interval
-                                    }
-                                };
+                                        // Watchdog 2: Stuck in Non-Playing State (Paused/Buffering loop)
+                                        if ((lastState === 'PAUSED' || lastState === 'BUFFERING') && (now - lastStateChangeTime > 180000)) { // 3 mins
+                                            log(`⚠️ Device Stuck. Cleanup.`);
+                                            cleanup();
+                                            return;
+                                        }
 
-                                pollLoop(); // Start the poker
-                            }
-                        });
-                    }); // End setVolume
-                }); // End getReceiverStatus
+                                        try {
+                                            const status = await new Promise((resolve, reject) => {
+                                                const t = setTimeout(() => reject(new Error('Timeout')), 1000); // Faster timeout
+                                                device.getStatus((err, s) => { // getStatus uses existing session
+                                                    clearTimeout(t);
+                                                    if (err) reject(err);
+                                                    else resolve(s);
+                                                });
+                                            });
+
+                                            // Success - Reset failure counter
+                                            consecutiveFailures = 0;
+
+                                            // Manually feed the handler
+                                            statusHandler(status);
+
+                                        } catch (e) {
+                                            consecutiveFailures++;
+
+                                            // "Smart" Error Detection
+                                            const msg = e.message.toLowerCase();
+                                            if (msg.includes('closed') || msg.includes('destroyed') || msg.includes('socket') || msg.includes('not open')) {
+                                                log(`⚠️ Connection Closed (${e.message}). Cleanup.`);
+                                                consecutiveFailures = 99; // Force exit
+                                            }
+
+                                            // Fail faster (2 retries = ~5-6s total delay instead of 20s)
+                                            if (consecutiveFailures >= 2) {
+                                                log(`⚠️ Connection Lost. Cleanup.`);
+                                                cleanup();
+                                                return;
+                                            }
+                                        }
+
+                                        // Schedule next poll ONLY after this one completes (Serial)
+                                        if (!isCleanedUp && pollingActive) {
+                                            setTimeout(pollLoop, 3000); // 3s interval
+                                        }
+                                    };
+
+                                    pollLoop(); // Start the poker
+                                }
+                            });
+                        }); // End setVolume
+                    }); // End getReceiverStatus
+                } // End proceedWithCast
             } // End if (friendlyName check)
         }); // End on('device')
     }
