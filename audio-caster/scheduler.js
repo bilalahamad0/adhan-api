@@ -29,7 +29,7 @@ const CONFIG = {
     },
     device: {
         name: process.env.DEVICE_NAME || 'Google Display',
-        targetVolume: 0.5 // Level 5 (Range 0.0-1.0)
+        targetVolume: 0.55 // Level 5.5 (Range 0.0-1.0)
     },
     audio: {
         // Active Selections
@@ -256,9 +256,12 @@ async function executePreFlightAndCast(prayerName, audioFileName, targetTimeObj)
         return new Promise((resolve) => {
             exec(`adb -s ${TV_IP} ${cmd}`, { timeout: 5000 }, (error, stdout, stderr) => {
                 if (error || (stdout && stdout.includes('offline'))) {
-                    // Retry once if offline
-                    if (retry && (error?.message.includes('offline') || stdout.includes('offline'))) {
-                        log(`⚠️ ADB Device Offline. Reconnecting...`);
+                    // Retry once if offline or not found
+                    if (retry && (
+                        (error && (error.message.includes('offline') || error.message.includes('not found'))) ||
+                        (stdout && stdout.includes('offline'))
+                    )) {
+                        log(`⚠️ ADB Device Disconnected. Reconnecting to ${TV_IP}...`);
                         exec(`adb disconnect ${TV_IP} && adb connect ${TV_IP}`, { timeout: 5000 }, () => {
                             // Retry the original command without recursion loop
                             setTimeout(() => resolve(adbCommand(cmd, false)), 1000);
@@ -269,7 +272,7 @@ async function executePreFlightAndCast(prayerName, audioFileName, targetTimeObj)
                     if (error && error.message.includes('unauthorized')) {
                         log(`⚠️ ADB Authorization Missing! Please check TV screen.`);
                     }
-                    // log(`⚠️ ADB Error (${cmd}): ${error ? error.message : stdout}`);
+                    log(`⚠️ ADB Error (${cmd}): ${error ? error.message : stdout}`);
                     resolve(null);
                 } else {
                     resolve(stdout.trim());
@@ -299,7 +302,10 @@ async function executePreFlightAndCast(prayerName, audioFileName, targetTimeObj)
 
             return MEDIA_STOPPED;
         } catch (err) {
+            log(`❌ TV Check Error: ${err.message}`);
             return MEDIA_STOPPED;
+        } finally {
+            // log(`📺 TV State Check Complete.`);
         }
     }
 
@@ -330,6 +336,13 @@ async function executePreFlightAndCast(prayerName, audioFileName, targetTimeObj)
         let safetyTimer = null;
         let originalVolume = null; // Store initial volume
 
+        // State Management
+        const PHASE_ADHAN = 'ADHAN';
+        const PHASE_DUA = 'DUA';
+        const PHASE_DONE = 'DONE';
+        let currentPhase = PHASE_ADHAN;
+
+
         const setDeviceVolume = (vol, cb) => {
             if (!adhanDevice || !adhanDevice.client) {
                 // If client isn't ready (pre-flight often hits this), fail gracefully
@@ -355,7 +368,27 @@ async function executePreFlightAndCast(prayerName, audioFileName, targetTimeObj)
 
         const cleanup = () => {
             if (isCleanedUp) return;
+
+            // If we are just finishing Adhan, check if we should show Dua
+            if (currentPhase === PHASE_ADHAN) {
+                log(`✨ Adhan Video Finished. Switching to Dua Image...`);
+                // Clear safety timer for Adhan logic
+                if (safetyTimer) clearTimeout(safetyTimer);
+
+                // Switch Phase
+                currentPhase = PHASE_DUA;
+                castDuaImage();
+                return;
+            }
+
+            // If we are showing Dua, ignore redundant cleanup calls (e.g. from delayed 'finished' events)
+            if (currentPhase === PHASE_DUA) {
+                log(`🛡️  Ignoring Cleanup: Currently in Dua Phase.`);
+                return;
+            }
+
             isCleanedUp = true;
+            currentPhase = PHASE_DONE;
             log(`🔄 Playback Ended. Starting cleanup...`);
             resumeTvSafely();
 
@@ -363,6 +396,10 @@ async function executePreFlightAndCast(prayerName, audioFileName, targetTimeObj)
             const finalize = () => {
                 try {
                     if (adhanDevice) {
+                        try {
+                            if (adhanDevice.stop) adhanDevice.stop(); // Try to stop media explicitly
+                        } catch (e) { }
+
                         // Suppress 'disconnect' error on already closed socket
                         try {
                             if (adhanDevice.client) adhanDevice.client.close();
@@ -396,6 +433,41 @@ async function executePreFlightAndCast(prayerName, audioFileName, targetTimeObj)
                 finalize();
             }
         };
+
+        function castDuaImage() {
+            const duaUrl = `http://${localIp}:${CONFIG.serverPort}/images/dua_after_adhan.png`;
+            var media = {
+                url: duaUrl,
+                contentType: 'image/png',
+                metadata: {
+                    type: 0, // Generic
+                    metadataType: 0,
+                    title: `Dua After Adhan`,
+                    images: [{ url: duaUrl }]
+                }
+            };
+
+            if (!adhanDevice) return; // Paranoia check
+
+            log(`🤲 Casting Dua Image: ${duaUrl}`);
+
+            adhanDevice.play(media, function (err) {
+                if (err) {
+                    log(`❌ Dua Cast Error: ${err.message}`);
+                    // Force Cleanup on error
+                    currentPhase = PHASE_DONE; // Allow cleanup
+                    cleanup();
+                } else {
+                    log(`⏳ Dua Displayed. Waiting 20 seconds...`);
+                    // Wait 20 seconds, then Finish
+                    safetyTimer = setTimeout(() => {
+                        log(`✅ Dua Complete.`);
+                        currentPhase = PHASE_DONE; // Allow cleanup
+                        cleanup();
+                    }, 20000);
+                }
+            });
+        }
 
         debugLog('Scanning for devices...');
         const client = Client.on('device', function (device) {
@@ -440,6 +512,10 @@ async function executePreFlightAndCast(prayerName, audioFileName, targetTimeObj)
                     // Proceed with Cast logic ONLY after TV actions are attempted
                     proceedWithCast();
                 })();
+
+
+
+
 
                 function proceedWithCast() {
                     // 1. Get Current Status (Receiver Status, not App Status)
