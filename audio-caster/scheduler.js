@@ -335,6 +335,11 @@ async function executePreFlightAndCast(prayerName, audioFileName, targetTimeObj)
         let isCleanedUp = false;
         let safetyTimer = null;
         let originalVolume = null; // Store initial volume
+        let discoveryTimeout = setTimeout(() => {
+            log(`❌ Error: Device '${CONFIG.device.name}' not found within 30s.`);
+            isCleanedUp = true; // Force cleanup logic to skip phases
+            cleanup();
+        }, 30000); // 30s timeout for discovery
 
         // State Management
         const PHASE_ADHAN = 'ADHAN';
@@ -409,6 +414,7 @@ async function executePreFlightAndCast(prayerName, audioFileName, targetTimeObj)
                 } catch (e) { console.error("Error closing device:", e.message); }
 
                 if (safetyTimer) clearTimeout(safetyTimer);
+                if (discoveryTimeout) clearTimeout(discoveryTimeout); // Ensure timeout doesn't fire later
 
                 try {
                     if (Client) Client.destroy();
@@ -474,6 +480,9 @@ async function executePreFlightAndCast(prayerName, audioFileName, targetTimeObj)
             debugLog(`Found device: ${device.friendlyName} (${device.host})`);
             if (device.friendlyName === CONFIG.device.name) {
                 if (adhanDevice) return; // Prevent duplicates
+
+                // Found it! Clear timeout
+                if (discoveryTimeout) clearTimeout(discoveryTimeout);
 
                 adhanDevice = device;
                 device.setMaxListeners(20);
