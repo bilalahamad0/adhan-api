@@ -221,6 +221,20 @@ app.listen(CONFIG.serverPort, () => {
 async function executePreFlightAndCast(prayerName, audioFileName, targetTimeObj) {
     log(`🚀 TRIGGER: ${prayerName} Time! Starting sequence...`);
 
+    // 0. Late Execution Guard (e.g. System woke from sleep)
+    if (targetTimeObj) {
+        const now = Date.now();
+        const scheduledTime = targetTimeObj.toMillis();
+        const diff = now - scheduledTime;
+
+        // If we are more than 10 minutes past the scheduled prayer time, skip.
+        // (Note: trigger happens 5 mins BEFORE prayer time, so normally diff is -300000)
+        if (diff > 10 * 60 * 1000) { // 10 minutes late
+            log(`⚠️ SKIPPING: Too late for ${prayerName} (Delayed by ${(diff / 60000).toFixed(1)} mins). System likely slept.`);
+            return;
+        }
+    }
+
     // 1. Pre-Generate Video (The Heavy Lift - takes ~1 min)
     // We do this BEFORE messing with the TV or Speaker
     try {
