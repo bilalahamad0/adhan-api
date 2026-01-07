@@ -219,6 +219,26 @@ app.listen(CONFIG.serverPort, () => {
 
 // --- CASTING ENGINE WITH VOLUME CONTROL & TV SYNC ---
 async function executePreFlightAndCast(prayerName, audioFileName, targetTimeObj) {
+    // 0a. Pre-flight Network Check (Robustness)
+    // If Gateway is unreachable, REBOOT immediately to attempt recovery for Adhan.
+    try {
+        const isOnline = await new Promise(resolve => {
+            require('child_process').exec('ping -c 1 -W 2 10.0.0.1', (err) => resolve(!err));
+        });
+
+        if (!isOnline) {
+            log(`🚨 CRITICAL: Network Down (Gateway Unreachable). Rebooting System to recover...`);
+            // Only actually reboot if running on Pi (linux) to avoid killing Dev machine
+            if (process.platform === 'linux') {
+                require('child_process').exec('sudo reboot');
+            }
+            return; // Stop execution
+        }
+        log(`✅ Network Check Passed (Gateway Reachable).`);
+    } catch (e) {
+        log(`⚠️ Network Check Error: ${e.message}`);
+    }
+
     log(`🚀 TRIGGER: ${prayerName} Time! Starting sequence...`);
 
     // 0. Late Execution Guard (e.g. System woke from sleep)
