@@ -228,11 +228,17 @@ async function executePreFlightAndCast(prayerName, audioFileName, targetTimeObj)
 
         if (!isOnline) {
             log(`🚨 CRITICAL: Network Down (Gateway Unreachable). Rebooting System to recover...`);
-            // Only actually reboot if running on Pi (linux) to avoid killing Dev machine
-            if (process.platform === 'linux') {
-                require('child_process').exec('sudo reboot');
+
+            // Bypass for Test Mode
+            if (process.argv.includes('--test')) {
+                log(`🧪 TEST MODE: Skipping Reboot. Proceeding anyway...`);
+            } else {
+                // Only actually reboot if running on Pi (linux) to avoid killing Dev machine
+                if (process.platform === 'linux') {
+                    require('child_process').exec('sudo reboot');
+                }
+                return; // Stop execution
             }
-            return; // Stop execution
         }
         log(`✅ Network Check Passed (Gateway Reachable).`);
     } catch (e) {
@@ -499,6 +505,7 @@ async function executePreFlightAndCast(prayerName, audioFileName, targetTimeObj)
                     cleanup();
                 } else {
                     log(`⏳ Dua Displayed. Waiting 20 seconds...`);
+
                     // Wait 20 seconds, then Finish
                     safetyTimer = setTimeout(() => {
                         log(`✅ Dua Complete.`);
@@ -517,6 +524,14 @@ async function executePreFlightAndCast(prayerName, audioFileName, targetTimeObj)
 
                 // Found it! Clear timeout
                 if (discoveryTimeout) clearTimeout(discoveryTimeout);
+
+                // FIX: Race Condition.
+                // If timeout fired (30s) but device found late (34s), resurrection is needed.
+                if (isCleanedUp) {
+                    log(`⚠️ Late Connection (Resurrecting Session). Device found after timeout.`);
+                    isCleanedUp = false;
+                    currentPhase = PHASE_ADHAN; // Reset phase
+                }
 
                 adhanDevice = device;
                 device.setMaxListeners(20);
@@ -805,6 +820,9 @@ schedule.scheduleJob('0 1 * * *', scheduleToday);
 if (process.argv.includes('--test')) {
     log("🧪 TEST TRIGGERED");
 
+    // OVERRIDE: Use lower volume for tests (50%)
+    CONFIG.device.targetVolume = 0.05;
+
     // Allow forcing specific prayer via args (e.g. node scheduler.js --test --maghrib)
     const prayers = ['fajr', 'dhuhr', 'asr', 'maghrib', 'isha'];
     const forcedPrayer = prayers.find(p => process.argv.includes(`--${p}`));
@@ -813,7 +831,7 @@ if (process.argv.includes('--test')) {
     const testKey = (testName === 'Fajr') ? CONFIG.audio.fajrCurrent : CONFIG.audio.regularCurrent;
     const testAudio = `${testKey}.mp3`;
 
-    log(`🎯 Test Target: ${testName}`);
+    log(`🎯 Test Target: ${testName} (Volume: ${(CONFIG.device.targetVolume * 100).toFixed(0)}%)`);
 
     setTimeout(async () => {
         await ensureAudioCache(); // Make sure we have files
