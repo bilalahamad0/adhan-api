@@ -22,6 +22,23 @@ function run(cmd) {
 async function resetAdb() {
     log(`🔄 STARTING ADB RESET for ${TV_IP}...`);
 
+    // 0. Pre-Flight Ping Check
+    console.log(`1️⃣  Checking Network Connectivity...`);
+    try {
+        await new Promise((resolve, reject) => {
+            exec(`ping -c 1 -W 2 ${TV_IP}`, (err) => {
+                if (err) reject(new Error('Host unreachable'));
+                else resolve();
+            });
+        });
+        log(`✅ TV is ONLINE (Ping successful). Proceeding...`);
+    } catch (e) {
+        log(`❌ CRITICAL ERROR: TV at ${TV_IP} is NOT REACHABLE.`);
+        log(`   -> Check if TV is ON.`);
+        log(`   -> Check if TV IP Address changed.`);
+        return;
+    }
+
     // 1. Kill Server
     log(`☠️  Killing ADB Server...`);
     await run('adb kill-server');
