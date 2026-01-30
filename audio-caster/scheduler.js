@@ -330,16 +330,21 @@ async function executePreFlightAndCast(prayerName, audioFileName, targetTimeObj)
         try {
             // Method 1: Dumpsys Media Session (Most accurate for modern Android TV)
             const sessionOutput = await adbCommand('shell dumpsys media_session');
-            if (sessionOutput && (sessionOutput.includes('state=3') || sessionOutput.includes('state=Playing'))) return MEDIA_PLAYING;
+            if (sessionOutput && (sessionOutput.includes('state=3') || sessionOutput.includes('state=Playing'))) {
+                log(`🔍 TV: Detected PLAYING (MediaSession)`);
+                return MEDIA_PLAYING;
+            }
             if (sessionOutput && (sessionOutput.includes('state=2') || sessionOutput.includes('state=Paused'))) return MEDIA_PAUSED;
 
             // Method 2: Audio Output Check (Fallback)
             const audioOutput = await adbCommand('shell dumpsys audio');
             // Broader check for 'started' state to catch YouTube
             if (audioOutput && (audioOutput.includes('state:started') || audioOutput.includes('playerState=2'))) {
+                log(`🔍 TV: Detected PLAYING (AudioDump)`);
                 return MEDIA_PLAYING;
             }
 
+            log(`🔍 TV Check: No playback detected. (SessLen: ${sessionOutput ? sessionOutput.length : 0}, AudLen: ${audioOutput ? audioOutput.length : 0})`);
             return MEDIA_STOPPED;
         } catch (err) {
             log(`❌ TV Check Error: ${err.message}`);
