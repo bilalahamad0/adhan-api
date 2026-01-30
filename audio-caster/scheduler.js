@@ -294,17 +294,25 @@ async function executePreFlightAndCast(prayerName, audioFileName, targetTimeObj)
 
     function adbCommand(cmd, retry = true) {
         return new Promise((resolve) => {
-            exec(`adb -s ${TV_IP} ${cmd}`, { timeout: 5000 }, (error, stdout, stderr) => {
+            exec(`adb -s ${TV_IP} ${cmd}`, { timeout: 8000 }, (error, stdout, stderr) => {
                 if (error || (stdout && stdout.includes('offline'))) {
                     // Retry once if offline or not found
                     if (retry && (
-                        (error && (error.message.includes('offline') || error.message.includes('not found'))) ||
-                        (stdout && stdout.includes('offline'))
+                        (error && (error.message.includes('offline') || error.message.includes('not found') || error.message.includes('device'))) ||
+                        (stdout && (stdout.includes('offline')))
                     )) {
-                        log(`⚠️ ADB Device Disconnected. Reconnecting to ${TV_IP}...`);
-                        exec(`adb disconnect ${TV_IP} && adb connect ${TV_IP}`, { timeout: 5000 }, () => {
-                            // Retry the original command without recursion loop
-                            setTimeout(() => resolve(adbCommand(cmd, false)), 1000);
+                        log(`⚠️ ADB Disconnected. Attempting repair (${TV_IP})...`);
+
+                        // Execute Force Reconnect
+                        exec(`adb disconnect ${TV_IP} && adb connect ${TV_IP}`, { timeout: 8000 }, (err2, out2) => {
+                            if (err2 || (out2 && out2.includes('unable to connect'))) {
+                                log(`❌ ADB Repair Failed: ${out2 ? out2.trim() : err2.message}`);
+                                resolve(null);
+                            } else {
+                                // Wait 2s for handshake, then retry command
+                                log(`✅ ADB Reconnected. Retrying command...`);
+                                setTimeout(() => resolve(adbCommand(cmd, false)), 2000);
+                            }
                         });
                         return;
                     }
@@ -312,13 +320,23 @@ async function executePreFlightAndCast(prayerName, audioFileName, targetTimeObj)
                     if (error && error.message.includes('unauthorized')) {
                         log(`⚠️ ADB Authorization Missing! Please check TV screen.`);
                     }
-                    log(`⚠️ ADB Error (${cmd}): ${error ? error.message : stdout}`);
+                    // log(`⚠️ ADB Error (${cmd}): ${error ? error.message : stdout}`);
                     resolve(null);
                 } else {
                     resolve(stdout.trim());
                 }
             });
         });
+    }
+
+    // Helper: Verify connection BEFORE critical checks
+    async function verifyTvConnection() {
+        const test = await adbCommand('shell echo test', true);
+        if (!test) {
+            log(`⚠️ Pre-flight ADB Connectivity Check Failed.`);
+            return false;
+        }
+        return true;
     }
 
     // Constants for TV media state
@@ -554,6 +572,9 @@ async function executePreFlightAndCast(prayerName, audioFileName, targetTimeObj)
                 // checking TV state usually takes 1-2s.
                 (async () => {
                     try {
+                        // PRE-FLIGHT: Ensure we actually have an ADB connection
+                        await verifyTvConnection();
+
                         const tvState = await checkTvMediaState();
                         if (tvState === MEDIA_PLAYING) {
                             log(`📺 TV is PLAYING. Sending PAUSE...`);
