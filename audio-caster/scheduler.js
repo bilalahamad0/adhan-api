@@ -825,7 +825,7 @@ schedule.scheduleJob('0 1 * * *', scheduleToday);
 if (process.argv.includes('--test')) {
     log("🧪 TEST TRIGGERED");
 
-    // OVERRIDE: Use lower volume for tests (50%)
+    // OVERRIDE: Use lower volume for tests (5%)
     CONFIG.device.targetVolume = 0.05;
 
     // Allow forcing specific prayer via args (e.g. node scheduler.js --test --maghrib)
