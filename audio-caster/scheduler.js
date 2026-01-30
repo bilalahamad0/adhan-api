@@ -303,16 +303,28 @@ async function executePreFlightAndCast(prayerName, audioFileName, targetTimeObj)
                     )) {
                         log(`⚠️ ADB Disconnected. Attempting repair (${TV_IP})...`);
 
-                        // Execute Force Reconnect
-                        exec(`adb disconnect ${TV_IP} && adb connect ${TV_IP}`, { timeout: 8000 }, (err2, out2) => {
-                            if (err2 || (out2 && out2.includes('unable to connect'))) {
-                                log(`❌ ADB Repair Failed: ${out2 ? out2.trim() : err2.message}`);
+                        // 1. Check if TV is even pingable
+                        exec(`ping -c 1 -W 2 ${TV_IP}`, (pingErr) => {
+                            if (pingErr) {
+                                log(`❌ ADB Repair Aborted: TV (${TV_IP}) is NOT pingable. Check physical connection.`);
                                 resolve(null);
-                            } else {
-                                // Wait 2s for handshake, then retry command
-                                log(`✅ ADB Reconnected. Retrying command...`);
-                                setTimeout(() => resolve(adbCommand(cmd, false)), 2000);
+                                return;
                             }
+
+                            // 2. Execute Force Reconnect (Use ; to ignore disconnect failure)
+                            exec(`adb disconnect ${TV_IP}; adb connect ${TV_IP}`, { timeout: 8000 }, (err2, out2) => {
+                                // Note: 'no such device' might appear in stderr or stdout depending on adb version
+                                const combinedOut = (out2 || '') + (err2 ? err2.message : '');
+
+                                if (combinedOut.includes('unable to connect') || combinedOut.includes('cannot connect')) {
+                                    log(`❌ ADB Repair Failed: ${combinedOut.trim()}`);
+                                    resolve(null);
+                                } else {
+                                    // Wait 2s for handshake, then retry command
+                                    log(`✅ ADB Reconnect Command Sent. Retrying action...`);
+                                    setTimeout(() => resolve(adbCommand(cmd, false)), 2000);
+                                }
+                            });
                         });
                         return;
                     }
