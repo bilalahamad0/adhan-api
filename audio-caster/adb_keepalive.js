@@ -6,6 +6,23 @@ const TV_IP = process.env.TV_IP || '10.0.0.80';
 // Check every 2 minutes (Aggressive Keep-Alive)
 const CHECK_INTERVAL_MS = 2 * 60 * 1000;
 
+function log(msg) {
+    console.log(`[${new Date().toLocaleTimeString()}] 🛡️ ADB-KEEPER: ${msg}`);
+}
+
+function run(cmd) {
+    return new Promise((resolve) => {
+        exec(cmd, { timeout: 10000 }, (error, stdout, stderr) => {
+            if (error) {
+                // log(`Error running ${cmd}: ${error.message}`);
+                resolve(null);
+            } else {
+                resolve(stdout ? stdout.trim() : '');
+            }
+        });
+    });
+}
+
 async function checkAndHeal() {
     try {
         log(`🔍 Checking status for ${TV_IP}...`);
