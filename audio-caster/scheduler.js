@@ -411,10 +411,10 @@ async function executePreFlightAndCast(prayerName, audioFileName, targetTimeObj)
         let safetyTimer = null;
         let originalVolume = null; // Store initial volume
         let discoveryTimeout = setTimeout(() => {
-            log(`❌ Error: Device '${CONFIG.device.name}' not found within 30s.`);
+            log(`❌ Error: Device '${CONFIG.device.name}' not found within 90s.`);
             isCleanedUp = true; // Force cleanup logic to skip phases
             cleanup();
-        }, 30000); // 30s timeout for discovery
+        }, 90000); // 90s timeout for discovery
 
         // State Management
         const PHASE_ADHAN = 'ADHAN';
