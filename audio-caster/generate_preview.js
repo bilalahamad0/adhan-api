@@ -37,8 +37,8 @@ async function run() {
     // Using 7:30 PM as a realistic Isha time
     const buffer = await visualGen.generateDashboard("Isha", "7:30 PM", hijriDate);
 
-    fs.writeFileSync(path.join(__dirname, 'audio_cache/current_dashboard.jpg'), buffer);
-    console.log("✅ Saved to audio_cache/current_dashboard.jpg");
+    fs.writeFileSync(path.join(__dirname, 'audio/current_dashboard.jpg'), buffer);
+    console.log("✅ Saved to audio/current_dashboard.jpg");
 }
 
 run();

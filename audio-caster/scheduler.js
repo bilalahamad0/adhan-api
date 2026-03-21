@@ -52,7 +52,7 @@ const CONFIG = {
 };
 
 const SCHEDULE_FILE = path.join(__dirname, 'annual_schedule.json');
-const AUDIO_DIR = path.join(__dirname, 'audio_cache');
+const AUDIO_DIR = path.join(__dirname, 'audio');
 const IMAGES_DIR = path.join(__dirname, '../images');
 
 // --- UTILS ---

@@ -10,8 +10,8 @@ token.json
 
 
 # Generated Media
-audio-caster/audio_cache/*.mp3
-!audio-caster/audio_cache/.keep
+audio-caster/audio/*.mp3
+!audio-caster/audio/.keep
 images/generated/*
 !images/generated/.keep
 images/previews/*
