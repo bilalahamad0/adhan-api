@@ -2,7 +2,7 @@ const { exec } = require('child_process');
 require('dotenv').config({ path: require('path').join(__dirname, '.env') });
 
 // Configuration
-const TV_IP = process.env.TV_IP || '10.0.0.80';
+const TV_IP = process.env.TV_IP || '127.0.0.1';
 // Check every 2 minutes (Aggressive Keep-Alive)
 const CHECK_INTERVAL_MS = 2 * 60 * 1000;
 

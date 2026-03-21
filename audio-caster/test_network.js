@@ -2,7 +2,7 @@ const { exec } = require('child_process');
 const net = require('net');
 require('dotenv').config();
 
-const TV_IP = process.env.TV_IP || '10.0.0.80';
+const TV_IP = process.env.TV_IP || '127.0.0.1';
 
 console.log(`\n🔍 --- NETWORK DIAGNOSTICS FOR ${TV_IP} ---\n`);
 

@@ -28,7 +28,7 @@ It also integrates with **Android TV** via ADB to intelligently pause your media
 *   **3-Strike Watchdog**: Detects if playback stops externally (e.g., voice command "Stop") and exits cleanly within seconds.
 
 ### 📺 **Smart TV Control**
-*   **ADB Integration**: Pauses YouTube/Netflix/TV on your Android TV Box (`192.168.1.x`) when Adhan starts.
+*   **ADB Integration**: Pauses YouTube/Netflix/TV on your Android TV Box (`<TV_IP>`) when Adhan starts.
 *   **Auto-Resume**: Resumes playback automatically when the Adhan finishes.
 
 ## 🚀 Deployment (Raspberry Pi)
@@ -50,8 +50,8 @@ It also integrates with **Android TV** via ADB to intelligently pause your media
     Copy `.env.example` to `.env` and set your device details:
     ```env
     DEVICE_NAME="Google Display"
-    TV_IP="192.168.1.x"   # Your Android TV IP
-    HOST_IP="192.168.1.y" # Your Pi's IP
+    TV_IP="<TV_IP>"   # Your Android TV IP
+    HOST_IP="<PI_IP>" # Your Pi's IP
     ```
 
 3.  **Start with PM2 (Production)**

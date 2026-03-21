@@ -1,12 +1,12 @@
 # Raspberry Pi 4 Deployment Guide for Adhan Caster
 
-This guide will help you migrate and host the `adhan-api/audio-caster` on your Raspberry Pi 4 (IP: `192.168.1.y`).
+This guide will help you migrate and host the `adhan-api/audio-caster` on your Raspberry Pi 4 (IP: `192.168.1.PI_IP`).
 
 ## 1. Prerequisites (Run on Raspberry Pi)
 
 First, SSH into your Raspberry Pi:
 ```bash
-ssh <your-user>@192.168.1.y
+ssh <your-user>@192.168.1.PI_IP
 ```
 
 Install the required system packages (`ffmpeg` for video generation, `adb` for TV control):
@@ -17,7 +17,7 @@ sudo apt install -y ffmpeg adb
 
 Ensure Node.js (v18+) is installed. Since we are using a Raspberry Pi, the best way is using `nvm` (Node Version Manager) for the current user (avoid using `sudo` for node).
 
-**Run these commands exactly as the `bilalahamad` user:**
+**Run these commands exactly as the pi-user (e.g., `bilalahamad`):**
 
 1.  Install NVM:
     ```bash
@@ -60,7 +60,7 @@ From your **Mac terminal**, copy the entire repository to ensure the `images` di
 
 ```bash
 # Copy the whole adhan-api folder
-scp -r /Users/bilalahamad/Documents/GitHub/adhan-api <pi-user>@192.168.1.y:~/adhan-api
+scp -r /Users/<your-mac-user>/Documents/GitHub/adhan-api <pi-user>@192.168.1.PI_IP:~/adhan-api
 ```
 
 ## 3. Installation & Configuration
@@ -89,11 +89,11 @@ Make sure your `.env` looks like this (adjust values for your home):
 
 ```properties
 # Network Configuration
-HOST_IP=192.168.1.y         <-- IMPORTANT: Set this to your Pi's IP
+HOST_IP=192.168.1.PI_IP         <-- IMPORTANT: Set this to your Pi's IP
 SERVER_PORT=3001
 
 # Target Devices
-TV_IP=192.168.1.x            <-- Your Android TV IP
+TV_IP=192.168.1.TV_IP            <-- Your Android TV IP
 DEVICE_NAME=Google Display <-- Exact name of your Nest Hub
 
 # Location
@@ -112,12 +112,12 @@ You need to authorize the Pi to talk to your Android TV.
     ```bash
     adb connect <TV_IP>
     ```
-    *(Replace `<TV_IP>` with your TV's actual IP, e.g., 192.168.1.x)*
+    *(Replace `<TV_IP>` with your TV's actual IP, e.g., 192.168.1.TV_IP)*
 3.  **Look at your TV screen**: A popup will appear asking to allow debugging. Select **"Always allow from this computer"** and click **Allow**.
 4.  Verify connection:
     ```bash
     adb devices
-    # Should show: 192.168.1.x:5555 device
+    # Should show: <TV_IP>:5555 device
     ```
 
 ## 5. PM2 Setup (Run in Background)
@@ -149,16 +149,16 @@ pm2 logs adhan-caster
 You should see:
 > `🚀 Adhan System v2.0 Starting...`
 > `✅ Today's Prayer Times...`
-> `🔊 Local Audio Server running at http://192.168.1.y:3001/audio/`
+> `🔊 Local Audio Server running at http://<PI_IP>:3001/audio/`
 
 ## Troubleshooting
 
--   **Wrong IP**: If the cast URL shows `127.0.0.1` or wrong IP, ensure `HOST_IP=192.168.1.y` is set in `.env`.
+-   **Wrong IP**: If the cast URL shows `127.0.0.1` or wrong IP, ensure `HOST_IP=192.168.1.PI_IP` is set in `.env`.
 -   **Audio not playing**: Check `pm2 logs`. Ensure the Google Display is on the same network.
 -   **TV not pausing / ADB Error**:
     -   If logs say `adb: device unauthorized`:
         1.  On your TV, go to **Settings > system > Developer Options > Revoke USB debugging authorizations**.
-        2.  On Pi: `adb kill-server` then `adb connect 192.168.1.x`.
+        2.  On Pi: `adb kill-server` then `adb connect 192.168.1.TV_IP`.
         3.  **Watch TV Screen immediately** and click "Always Allow".
     -   Ensure `adb devices` shows `device` (not `unauthorized`).
 

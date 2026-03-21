@@ -15,3 +15,7 @@ audio-caster/audio_cache/*.mp3
 images/generated/*
 !images/generated/.keep
 images/previews/*
+
+# SSH Keys
+exit
+exit.pub

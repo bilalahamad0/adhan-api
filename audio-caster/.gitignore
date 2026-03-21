@@ -2,3 +2,5 @@ node_modules/
 audio_cache/
 .DS_Store
 *.log
+.env
+*.mp4

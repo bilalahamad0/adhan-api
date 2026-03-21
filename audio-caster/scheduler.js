@@ -223,7 +223,7 @@ async function executePreFlightAndCast(prayerName, audioFileName, targetTimeObj)
     // If Gateway is unreachable, REBOOT immediately to attempt recovery for Adhan.
     try {
         const isOnline = await new Promise(resolve => {
-            require('child_process').exec('ping -c 1 -W 2 10.0.0.1', (err) => resolve(!err));
+            require('child_process').exec('ping -c 1 -W 2 8.8.8.8', (err) => resolve(!err)); // Ping Google DNS as a connectivity test
         });
 
         if (!isOnline) {
