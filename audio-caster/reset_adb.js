@@ -73,7 +73,7 @@ async function resetAdb() {
 
     if (devices.includes('unauthorized')) {
         log(`🚨 STATUS: UNAUTHORIZED. Please accept the popup on the TV.`);
-    } else if (devices.includes('device')) {
+    } else if (devices.split('\n').some(line => line.includes(TV_IP) && /\bdevice\b/.test(line))) {
         log(`✅ STATUS: CONNECTED and AUTHORIZED.`);
     } else {
         log(`❓ STATUS: Unknown. Output: ${devices}`);

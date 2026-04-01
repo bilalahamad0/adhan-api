@@ -46,7 +46,7 @@ async function checkAndHeal() {
             await run('adb start-server');
         }
 
-        const isConnected = devices && devices.includes(TV_IP) && devices.includes('device');
+        const isConnected = devices && devices.split('\n').some(line => line.includes(TV_IP) && /\bdevice\b/.test(line));
 
         if (isConnected) {
             // log(`✅ Connected.`);

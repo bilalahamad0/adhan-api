@@ -30,7 +30,7 @@ async function runTest() {
     const devices = await adbCommand('devices');
     console.log(devices);
 
-    if (!devices.includes(TV_IP) && !devices.includes('device')) {
+    if (!devices.split('\n').some(line => line.includes(TV_IP) && /\bdevice\b/.test(line))) {
         log(`⚠️ Device not found in list. Attempting connect...`);
         await adbCommand(`connect ${TV_IP}`);
     }
