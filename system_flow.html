@@ -43,7 +43,7 @@
         h1 {
             font-family: 'Outfit', sans-serif;
             font-weight: 600;
-            font-size: 2.5rem;
+            font-size: 3.5rem;
             margin-bottom: 0.5rem;
             background: linear-gradient(135deg, var(--gold) 0%, #fff 100%);
             -webkit-background-clip: text;
@@ -53,76 +53,76 @@
 
         .subtitle {
             color: var(--text-dim);
-            font-size: 1.1rem;
-            margin-bottom: 3rem;
+            font-size: 1.4rem;
+            margin-bottom: 4rem;
         }
 
         /* Container & Layout */
         .stage {
             position: relative;
-            width: 1000px;
-            height: 600px;
+            width: 1200px;
+            height: 750px;
             /* border: 1px solid rgba(255,255,255,0.05); */
         }
 
         /* Nodes */
         .node {
             position: absolute;
-            width: 140px;
-            height: 140px;
+            width: 200px;
+            height: 200px;
             background: var(--slate-900);
             border: 1px solid rgba(255,255,255,0.1);
-            border-radius: 24px;
+            border-radius: 32px;
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            padding: 1rem;
+            padding: 1.5rem;
             text-align: center;
             backdrop-filter: blur(12px);
-            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+            box-shadow: 0 4px 30px rgba(0,0,0,0.6);
             transition: all 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
             z-index: 10;
         }
 
         .node i {
-            font-size: 2rem;
-            margin-bottom: 0.5rem;
+            font-size: 3rem;
+            margin-bottom: 0.75rem;
         }
 
         .node span {
-            font-size: 0.85rem;
+            font-size: 1.1rem;
             font-weight: 600;
             color: var(--text-main);
         }
 
         .node .status {
-            font-size: 0.7rem;
+            font-size: 0.9rem;
             color: var(--text-dim);
-            margin-top: 4px;
+            margin-top: 6px;
             font-weight: 400;
         }
 
         /* Specific Nodes Locations */
         #pi-brain {
-            top: 230px;
-            left: 430px;
-            width: 160px;
-            height: 160px;
+            top: 275px;
+            left: 475px;
+            width: 250px;
+            height: 250px;
             border-color: var(--blue-tech);
-            box-shadow: 0 0 20px var(--blue-glow);
+            box-shadow: 0 0 40px var(--blue-glow);
         }
 
-        #api-source { top: 40px; left: 150px; }
-        #local-disk { bottom: 40px; left: 150px; }
-        #android-tv { top: 40px; right: 150px; }
-        #nest-hub { bottom: 40px; right: 150px; }
+        #api-source { top: 20px; left: 100px; }
+        #local-disk { bottom: 20px; left: 100px; }
+        #android-tv { top: 20px; right: 100px; }
+        #nest-hub { bottom: 20px; right: 100px; }
 
         /* Icons */
         .icon {
-            width: 48px;
-            height: 48px;
-            margin-bottom: 8px;
+            width: 64px;
+            height: 64px;
+            margin-bottom: 12px;
             fill: currentColor;
         }
 
@@ -180,10 +180,10 @@
         /* Status Label Overlay */
         .stage-label {
             position: absolute;
-            bottom: -60px;
+            bottom: -80px;
             width: 100%;
             text-align: center;
-            font-size: 1.4rem;
+            font-size: 2rem;
             font-weight: 300;
             color: var(--gold);
             text-transform: uppercase;
@@ -197,28 +197,28 @@
         /* Timer Counter */
         #countdown-timer {
             position: absolute;
-            top: 180px;
+            top: 210px;
             left: 0;
             right: 0;
             text-align: center;
             font-family: 'Outfit', monospace;
-            font-size: 1.2rem;
+            font-size: 1.6rem;
             color: var(--text-dim);
         }
 
         /* Screen Previews */
         .preview {
-            width: 60px;
-            height: 40px;
-            margin-top: 5px;
-            border-radius: 4px;
+            width: 100px;
+            height: 60px;
+            margin-top: 8px;
+            border-radius: 6px;
             background: #1e293b;
             border: 1px solid rgba(255,255,255,0.1);
             overflow: hidden;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 0.4rem;
+            font-size: 0.7rem;
         }
 
         .preview.tv-active { background: #000; color: #ef4444; border-color: #ef4444; }
@@ -237,20 +237,20 @@
         <!-- Lines -->
         <svg class="connections">
             <!-- PI TO API -->
-            <path id="path-pi-api" class="link-path" d="M 430 310 Q 300 200 290 110" />
-            <path id="pulse-pi-api" class="pulse-path" d="M 430 310 Q 300 200 290 110" />
+            <path id="path-pi-api" class="link-path" d="M 475 400 Q 300 300 300 220" />
+            <path id="pulse-pi-api" class="pulse-path" d="M 475 400 Q 300 300 300 220" />
 
             <!-- PI TO DISK -->
-            <path id="path-pi-disk" class="link-path" d="M 430 310 Q 300 420 290 510" />
-            <path id="pulse-pi-disk" class="pulse-path" d="M 430 310 Q 300 420 290 510" />
+            <path id="path-pi-disk" class="link-path" d="M 475 400 Q 300 500 300 580" />
+            <path id="pulse-pi-disk" class="pulse-path" d="M 475 400 Q 300 500 300 580" />
 
             <!-- PI TO TV -->
-            <path id="path-pi-tv" class="link-path" d="M 590 310 Q 720 200 730 110" />
-            <path id="pulse-pi-tv" class="pulse-path" d="M 590 310 Q 720 200 730 110" />
+            <path id="path-pi-tv" class="link-path" d="M 725 400 Q 900 300 900 220" />
+            <path id="pulse-pi-tv" class="pulse-path" d="M 725 400 Q 900 300 900 220" />
 
             <!-- PI TO HUB -->
-            <path id="path-pi-hub" class="link-path" d="M 590 310 Q 720 420 730 510" />
-            <path id="pulse-pi-hub" class="pulse-path" d="M 590 310 Q 720 420 730 510" />
+            <path id="path-pi-hub" class="link-path" d="M 725 400 Q 900 500 900 580" />
+            <path id="pulse-pi-hub" class="pulse-path" d="M 725 400 Q 900 500 900 580" />
         </svg>
 
         <!-- Node: API -->
