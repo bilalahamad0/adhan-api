@@ -80,9 +80,7 @@
             justify-content: center;
             padding: 1.5rem;
             text-align: center;
-            backdrop-filter: blur(12px);
-            box-shadow: 0 4px 30px rgba(0,0,0,0.6);
-            transition: all 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            box-shadow: 0 4px 10px #000;
             z-index: 10;
         }
 
@@ -111,7 +109,7 @@
             width: 250px;
             height: 250px;
             border-color: var(--blue-tech);
-            box-shadow: 0 0 40px var(--blue-glow);
+            box-shadow: 0 0 10px var(--blue-tech);
         }
 
         #api-source { top: 20px; left: 100px; }
@@ -190,7 +188,6 @@
             text-transform: uppercase;
             letter-spacing: 0.2em;
             opacity: 0;
-            transition: opacity 0.5s;
         }
 
         .visible { opacity: 1; }
