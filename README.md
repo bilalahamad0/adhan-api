@@ -10,7 +10,7 @@
 The **Adhan API** is a complete smart-home solution that automates the Muslim call to prayer (Adhan). It runs autonomously on a **Raspberry Pi**, calculating accurate prayer times, generating high-definition dashboard visuals, and casting them to Google Nest/Cast devices precisely at the right moment.
 
 ## 🔄 System Flow
-![System Flow Animation](./images/system_flow/flow_animation.webp)
+<img src="./images/system_flow/flow_animation.webp" width="100%" alt="System Flow Animation" />
 
 It also integrates with **Android TV** via ADB to intelligently pause your media content during the Adhan and resume it afterwards.
 
