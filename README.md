@@ -78,7 +78,7 @@ node scheduler.js --test --debug
 | `DEPLOYMENT_GUIDE_PI.md` | Detailed step-by-step guide for Pi setup. |
 | `images/` | Background assets for different prayers. |
 
-## 🛡️ Stability Mechanisms
+## 🛡️ Stability & Security Mechanisms
 
 | Feature | Function |
 | :--- | :--- |
@@ -86,6 +86,12 @@ node scheduler.js --test --debug
 | **Stale State Watchdog** | If device stays `PAUSED` for >3 mins, it forces a cleanup. |
 | **Connection Watchdog** | If device stops responding for >20s (3 polls), it assumes disconnection. |
 | **ADB Retry** | Retries ADB commands once if `device offline` error is returned. |
+| **Security Auto-Fix** | A GitHub Action & local script that automatically detects and resolves vulnerabilities weekly. |
+
+### 🔒 Automated Security
+This repository includes an automated security workflow:
+- **GitHub Action**: Runs every Monday at midnight to perform `npm audit fix` and open PRs for any required updates.
+- **Local Fixer**: Run `bash scripts/fix-vulnerabilities.sh` to manually audit and fix dependencies across all sub-projects.
 
 ---
 *Built with ❤️ by Bilal Ahamad*
