@@ -7,10 +7,8 @@ const { exec } = require('child_process');
 const ChromecastAPI = require('chromecast-api');
 
 /**
- * CoreScheduler V8: ABSOLUTE LEGACY RESTORATION
- * This class now acts as a shell for the PROVEN structural logic of commit 603858cf.
- * All modular service layers (CastService, HardwareService) are bypassed in the execution flow
- * to ensure 1:1 hardware behavioral parity.
+ * CoreScheduler V9: FINAL PARITY & CONTEXT FIX
+ * Ported 1:1 from commit 603858cf with hardened closure scoping.
  */
 class CoreScheduler {
     constructor(config, hardwareService, mediaService, castService, scheduleFilePath) {
@@ -20,12 +18,17 @@ class CoreScheduler {
         this.cast = castService;
         this.scheduleFilePath = scheduleFilePath;
         this.log = (msg) => console.log(`[${new Date().toLocaleTimeString()}] ${msg}`);
+        
+        // Context Binding
+        this.scheduleToday = this.scheduleToday.bind(this);
+        this.executePreFlightAndCast = this.executePreFlightAndCast.bind(this);
     }
 
     async scheduleToday() {
         const SCHEDULE_FILE = this.scheduleFilePath;
         const log = this.log;
         const config = this.config;
+        const mediaService = this.media;
 
         log("📅 Loading Schedule...");
 
@@ -54,7 +57,7 @@ class CoreScheduler {
 
         // Cache Sync
         const audioDirPath = path.join(__dirname, '..', 'audio');
-        await this.media.cacheAudioSources(config, audioDirPath);
+        await mediaService.cacheAudioSources(config, audioDirPath);
 
         const today = DateTime.now().setZone(config.timezone);
         const month = today.month.toString();
@@ -89,11 +92,14 @@ class CoreScheduler {
     }
 
     /**
-     * EXACT PORT OF 603858cf EXECUTION ENGINE
+     * EXACT PORT OF 603858cf EXECUTION ENGINE (V9 CONTEXT HARDENED)
      */
     async executePreFlightAndCast(prayerName, audioFileName, targetTimeObj) {
+        // HARDENED CONTEXT CAPTURE
         const log = this.log;
-        const CONFIG = this.config;
+        const config = this.config; 
+        const mediaService = this.media;
+        const hardwareService = this.hardware;
         const localIp = require('ip').address();
 
         log(`🚀 TRIGGER: ${prayerName} Time! Starting sequence...`);
@@ -104,15 +110,15 @@ class CoreScheduler {
         const imgPath = path.join(__dirname, '..', '..', 'images', 'generated', 'current_dashboard.jpg');
 
         try {
-            const today = DateTime.now().setZone(CONFIG.timezone);
+            const today = DateTime.now().setZone(config.timezone);
             const displayTime = targetTimeObj ? targetTimeObj.toFormat('h:mm a') : today.toFormat('h:mm a');
             
             const VisualGenerator = require('../visual_generator.js');
-            const vg = new VisualGenerator(CONFIG);
+            const vg = new VisualGenerator(config);
             const imgBuffer = await vg.generateDashboard(prayerName, displayTime, null, {});
             fs.mkdirSync(path.dirname(imgPath), { recursive: true });
             fs.writeFileSync(imgPath, imgBuffer);
-            await this.media.encodeVideoFromImageAndAudio(imgPath, audioPath, outputVideoPath);
+            await mediaService.encodeVideoFromImageAndAudio(imgPath, audioPath, outputVideoPath);
         } catch (e) {
             log(`❌ Generation Failed: ${e.message}`);
             return;
@@ -126,7 +132,7 @@ class CoreScheduler {
             }
         }
 
-        const castUrl = `http://${localIp}:${CONFIG.serverPort}/images/generated/${prayerName.toLowerCase()}.mp4?t=${Date.now()}`;
+        const castUrl = `http://${localIp}:${config.serverPort}/images/generated/${prayerName.toLowerCase()}.mp4?t=${Date.now()}`;
 
         // 2. Sony TV ADB (Legacy Block)
         const tvIp = process.env.TV_IP;
@@ -146,7 +152,7 @@ class CoreScheduler {
             try {
                 const sessionOutput = await adbCommand('shell dumpsys media_session');
                 if (sessionOutput && (sessionOutput.includes('state=3') || sessionOutput.includes('state=Playing'))) {
-                    log(`📺 TV is PLAYING. Sending PAUSE...`);
+                    log(`📺 TV is PLAYING. Sending ADB PAUSE...`);
                     await adbCommand('shell input keyevent 127');
                     await new Promise(r => setTimeout(r, 1000));
                     tvWasInterrupted = true;
@@ -154,7 +160,7 @@ class CoreScheduler {
             } catch (e) { log(`⚠️ TV ADB Error: ${e.message}`); }
         }
 
-        // 3. Connect & Cast (LEGACY CLOSURE)
+        // 3. Connect & Cast (LEGACY CLOSURE - CONTEXT HARDENED)
         const Client = new ChromecastAPI();
         let adhanDevice = null;
         let isCleanedUp = false;
@@ -217,35 +223,40 @@ class CoreScheduler {
         };
 
         function castDuaImage() {
-            // Restore Stretched Dua generator from turn V5
+            // Scope-safe references
             const VisualGenerator = require('../visual_generator.js');
-            const vg = new VisualGenerator(CONFIG);
+            const vg = new VisualGenerator(config);
             const staticDuaPath = path.join(__dirname, '..', '..', 'images', 'dua_after_adhan.png');
             const generatedDuaPath = path.join(__dirname, '..', '..', 'images', 'generated', 'dua.jpg');
             
             vg.generateDua(staticDuaPath).then(buffer => {
                 fs.writeFileSync(generatedDuaPath, buffer);
-                const duaUrl = `http://${localIp}:${CONFIG.serverPort}/images/generated/dua.jpg?t=${Date.now()}`;
-                const media = {
+                const duaUrl = `http://${localIp}:${config.serverPort}/images/generated/dua.jpg?t=${Date.now()}`;
+                const mediaData = {
                     url: duaUrl,
                     contentType: 'image/jpeg',
                     metadata: { type: 0, metadataType: 0, title: `Dua After Adhan`, images: [{ url: duaUrl }] }
                 };
                 log(`🤲 Casting Stretched Dua: ${duaUrl}`);
-                adhanDevice.play(media, (err) => {
-                    if (err) cleanup();
-                    else safetyTimer = setTimeout(() => { log(`✅ Dua Complete.`); currentPhase = 'DONE'; cleanup(); }, 20000);
-                });
-            }).catch(() => {
-                const fallbackUrl = `http://${localIp}:${CONFIG.serverPort}/images/dua_after_adhan.png`;
-                adhanDevice.play({ url: fallbackUrl, contentType: 'image/png' }, () => {
-                   safetyTimer = setTimeout(cleanup, 20000);
-                });
+                if (adhanDevice) {
+                    adhanDevice.play(mediaData, (err) => {
+                        if (err) cleanup();
+                        else safetyTimer = setTimeout(() => { log(`✅ Dua Complete.`); currentPhase = 'DONE'; cleanup(); }, 20000);
+                    });
+                } else { cleanup(); }
+            }).catch((err) => {
+                log(`⚠️ Dua Generation Error: ${err.message}`);
+                const fallbackUrl = `http://${localIp}:${config.serverPort}/images/dua_after_adhan.png`;
+                if (adhanDevice) {
+                    adhanDevice.play({ url: fallbackUrl, contentType: 'image/png' }, () => {
+                        safetyTimer = setTimeout(cleanup, 20000);
+                    });
+                } else { cleanup(); }
             });
         }
 
         Client.on('device', (device) => {
-            if (device.friendlyName === CONFIG.device.name) {
+            if (device.friendlyName === config.device.name) {
                 if (adhanDevice) return;
                 adhanDevice = device;
                 log(`✅ Connected to Adhan Speaker: ${device.friendlyName}`);
@@ -253,8 +264,8 @@ class CoreScheduler {
                 device.getReceiverStatus((err, status) => {
                     if (!err && status && status.volume) originalVolume = status.volume.level;
 
-                    device.setVolume(CONFIG.device.targetVolume, (err) => {
-                        const dashboardUrl = `http://${localIp}:${CONFIG.serverPort}/images/generated/current_dashboard.jpg?t=${Date.now()}`;
+                    device.setVolume(config.device.targetVolume, (err) => {
+                        const dashboardUrl = `http://${localIp}:${config.serverPort}/images/generated/current_dashboard.jpg?t=${Date.now()}`;
                         const media = {
                             url: castUrl,
                             contentType: 'video/mp4',
