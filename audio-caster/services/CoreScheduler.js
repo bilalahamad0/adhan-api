@@ -270,7 +270,16 @@ class CoreScheduler {
              resumeTvSafely();
              
              const finalize = async () => {
-               await this.cast.stopMedia(device);
+               // Aggressive Halt: Don't wait more than 2 seconds for the halt command to commit
+               try {
+                   await Promise.race([
+                       this.cast.stopMedia(device),
+                       new Promise((_, reject) => setTimeout(() => reject(new Error('Stop Timeout')), 2000))
+                   ]);
+               } catch (e) {
+                   this.log(`⚠️ Halt Timeout (Forcing socket close to trigger home screen return)`);
+               }
+
                this.cast.closeClient(device);
                if (safetyTimer) clearTimeout(safetyTimer);
                
@@ -290,22 +299,41 @@ class CoreScheduler {
              }
           };
           
-          const castDuaImage = () => {
-             const duaUrl = `http://${localIp}:${this.config.serverPort}/images/dua_after_adhan.png`;
-             this.log(`🤲 Casting Dua Image: ${duaUrl}`);
-             const metadata = { type: 0, metadataType: 0, title: `Dua After Adhan`, images: [{ url: duaUrl }] };
-             this.cast.castMedia(device, duaUrl, 'image/png', metadata).then(() => {
-                this.log(`⏳ Dua Displayed. Waiting 20 seconds...`);
-                safetyTimer = setTimeout(() => {
-                   this.log(`✅ Dua Complete.`);
+          const castDuaImage = async () => {
+             const staticDuaPath = path.join(__dirname, '..', '..', 'images', 'dua_after_adhan.png');
+             const generatedDuaPath = path.join(__dirname, '..', '..', 'images', 'generated', 'dua.jpg');
+             
+             try {
+                this.log(`🎨 Scaling Dua Image to fit display...`);
+                const VisualGenerator = require('../visual_generator.js');
+                const vg = new VisualGenerator(this.config);
+                const buffer = await vg.generateDua(staticDuaPath);
+                fs.writeFileSync(generatedDuaPath, buffer);
+                
+                const duaUrl = `http://${localIp}:${this.config.serverPort}/images/generated/dua.jpg?t=${Date.now()}`;
+                this.log(`🤲 Casting Scaled Dua Image: ${duaUrl}`);
+                const metadata = { type: 0, metadataType: 0, title: `Dua After Adhan`, images: [{ url: duaUrl }] };
+                
+                this.cast.castMedia(device, duaUrl, 'image/jpeg', metadata).then(() => {
+                   this.log(`⏳ Dua Displayed. Waiting 20 seconds...`);
+                   safetyTimer = setTimeout(() => {
+                      this.log(`✅ Dua Complete.`);
+                      currentPhase = 'DONE';
+                      cleanup();
+                   }, 20000);
+                }).catch((err) => {
+                   this.log(`❌ Dua Cast Error: ${err.message}`);
                    currentPhase = 'DONE';
                    cleanup();
-                }, 20000);
-             }).catch((err) => {
-                this.log(`❌ Dua Cast Error: ${err.message}`);
-                currentPhase = 'DONE';
-                cleanup();
-             });
+                });
+             } catch (e) {
+                this.log(`⚠️ Scaling Failed. Falling back to static: ${e.message}`);
+                // Fallback to static if canvas fails
+                const duaUrl = `http://${localIp}:${this.config.serverPort}/images/dua_after_adhan.png`;
+                this.cast.castMedia(device, duaUrl, 'image/png').then(() => {
+                    safetyTimer = setTimeout(cleanup, 20000);
+                }).catch(() => cleanup());
+             }
           };
 
           // Fetch Original Volume

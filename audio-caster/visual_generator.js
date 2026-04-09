@@ -8,8 +8,8 @@ class VisualGenerator {
   constructor(config) {
     this.config = config;
     // Adjusted for Google Nest Hub Max (16:10 Aspect Ratio) to remove black bars
-    this.width = 1280;
-    this.height = 800;
+    this.width = 1024;
+    this.height = 600;
     this.cacheDir = path.join(__dirname, 'audio'); // For generated outputs (served by Express)
     this.bgPath = path.join(__dirname, '../images/default.jpg'); // Source default background
   }
@@ -257,6 +257,21 @@ class VisualGenerator {
     // City (Matched with Hijri)
     ctx.font = '40px sans-serif';
     ctx.fillText(this.config.location.city, this.width - PADDING, BOTTOM_BASE);
+
+    return canvas.toBuffer('image/jpeg', { quality: 0.95 });
+  }
+
+  async generateDua(duaPath) {
+    await this.init();
+    const canvas = createCanvas(this.width, this.height);
+    const ctx = canvas.getContext('2d');
+
+    const image = await loadImage(duaPath);
+    // Cover the canvas perfectly
+    const scale = Math.max(this.width / image.width, this.height / image.height) + 0.001;
+    const x = this.width / 2 - (image.width / 2) * scale;
+    const y = this.height / 2 - (image.height / 2) * scale;
+    ctx.drawImage(image, x, y, image.width * scale, image.height * scale);
 
     return canvas.toBuffer('image/jpeg', { quality: 0.95 });
   }
