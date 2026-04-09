@@ -20,3 +20,7 @@ images/previews/*
 exit
 exit.pub
 coverage/
+
+# Build Artifacts
+dist/
+*.tar.gz

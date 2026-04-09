@@ -47,24 +47,26 @@ Install `pm2` globally (no `sudo` needed with nvm):
 npm install -g pm2
 ```
 
-## 2. Transfer Code
+## 2. Transfer Code (Production Artifact Method)
 
-You can either `git pull` if you have the repo cloned, or copy your modified local files to the Pi.
+Instead of cloning the raw developer repository (which includes test suites and configurations you don't need on production hardware), you should use the pre-packaged build process.
 
-**Option A: Git Clone (Recommended if repo is public/accessible)**
-
+**From your Mac terminal:**
+First, build the production artifact (this strips tests and compresses the codebase):
 ```bash
-cd ~
-git clone https://github.com/bilalahamad0/adhan-api.git
-cd adhan-api/audio-caster
+npm run build:prod
 ```
 
-**Option B: Copy from Mac (If you have local changes not pushed)**
-From your **Mac terminal**, copy the entire repository to ensure the `images` directory (which `audio-caster` depends on) is included:
-
+Then, securely copy the artifact to your Raspberry Pi:
 ```bash
-# Copy the whole adhan-api folder
-scp -r /Users/<your-mac-user>/Documents/GitHub/adhan-api <pi-user>@192.168.1.PI_IP:~/adhan-api
+scp adhan-api-production.tar.gz <pi-user>@192.168.1.PI_IP:~/
+```
+
+Next, SSH into your Pi and unpack it:
+```bash
+ssh <pi-user>@192.168.1.PI_IP
+mkdir -p ~/adhan-api
+tar -xzf ~/adhan-api-production.tar.gz -C ~/adhan-api
 ```
 
 ## 3. Installation & Configuration
