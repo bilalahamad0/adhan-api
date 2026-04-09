@@ -133,7 +133,7 @@ You need to authorize the Pi to talk to your Android TV.
 Start the application with PM2 so it runs in the background and restarts automatically.
 
 ```bash
-pm2 start scheduler.js --name adhan-caster
+pm2 start boot.js --name adhan-caster
 ```
 
 Save the process list so it survives reboots:

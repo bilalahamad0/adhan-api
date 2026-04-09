@@ -68,7 +68,7 @@ It also integrates with **Android TV** via ADB to intelligently pause your media
 
 3.  **Start with PM2 (Production)**
     ```bash
-    pm2 start scheduler.js --name adhan-caster
+    pm2 start boot.js --name adhan-caster
     pm2 save
     ```
 
@@ -77,14 +77,14 @@ It also integrates with **Android TV** via ADB to intelligently pause your media
 Run a manual test to verify audio/video and casting:
 
 ```bash
-node scheduler.js --test --debug
+node boot.js --test --debug
 ```
 
 ## 📂 Project Structure
 
 | File/Folder                        | Description                                                       |
 | :--------------------------------- | :---------------------------------------------------------------- |
-| `audio-caster/scheduler.js`        | **Core Engine**. Handles timing, casting, ADB, and polling logic. |
+| `audio-caster/boot.js`             | **Core Engine**. Handles timing, casting, ADB, and polling logic. |
 | `audio-caster/visual_generator.js` | Generates the 1280x800 dashboard image using Canvas & OpenMeteo.  |
 | `DEPLOYMENT_GUIDE_PI.md`           | Detailed step-by-step guide for Pi setup.                         |
 | `images/`                          | Background assets for different prayers.                          |
