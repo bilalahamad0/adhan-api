@@ -1,0 +1,118 @@
+const schedule = require('node-schedule');
+const { DateTime } = require('luxon');
+
+class CoreScheduler {
+  constructor(config, hardwareService, mediaService, castService, scheduleFilePath) {
+    this.config = config;
+    this.hardware = hardwareService;
+    this.media = mediaService;
+    this.cast = castService;
+    this.scheduleFilePath = scheduleFilePath;
+    this.log = (msg) => console.log(`[${new Date().toLocaleTimeString()}] ${msg}`);
+  }
+
+  /**
+   * Reads external schedule
+   */
+  getAnnualData() {
+    try {
+      const fs = require('fs');
+      if (fs.existsSync(this.scheduleFilePath)) {
+        return JSON.parse(fs.readFileSync(this.scheduleFilePath));
+      }
+    } catch (e) {
+      this.log('⚠️ Local schedule corrupt.');
+    }
+    return null;
+  }
+
+  /**
+   * Verifies Network Preflight
+   */
+  async runNetworkPreFlight() {
+    const isOnline = await this.hardware.ping('8.8.8.8');
+    if (!isOnline) {
+      this.log(`🚨 CRITICAL: Network Down (Gateway Unreachable). Rebooting System...`);
+      if (process.platform === 'linux' && !process.argv.includes('--test')) {
+        await this.hardware.rebootOS();
+      }
+      return false;
+    }
+    this.log(`✅ Network Check Passed (Gateway Reachable).`);
+    return true;
+  }
+
+  /**
+   * Main casting flow decoupled
+   */
+  async executePreFlightAndCast(prayerName, audioFileName, targetTimeObj) {
+    if (!(await this.runNetworkPreFlight())) return;
+
+    this.log(`🚀 TRIGGER: ${prayerName} Time! Starting sequence...`);
+
+    // 0. Late Execution Guard
+    if (targetTimeObj) {
+      const now = Date.now();
+      const scheduledTime = targetTimeObj.toMillis();
+      const diff = now - scheduledTime;
+      if (diff > 10 * 60 * 1000) {
+        this.log(`⚠️ SKIPPING: Too late for ${prayerName} (Delayed). System likely slept.`);
+        return;
+      }
+    }
+
+    // 1. Generate Video
+    const path = require('path');
+    const outputVideoPath = path.join(
+      __dirname,
+      '..',
+      'images',
+      'generated',
+      `${prayerName.toLowerCase()}.mp4`
+    );
+    const audioPath = path.join(__dirname, '..', 'audio', audioFileName);
+    const imgPath = path.join(__dirname, '..', 'images', 'generated', 'current_dashboard.jpg');
+
+    try {
+      await this.media.encodeVideoFromImageAndAudio(imgPath, audioPath, outputVideoPath);
+    } catch (e) {
+      this.log(`❌ Video Generation Failed: ${e.message}`);
+      return;
+    }
+
+    if (targetTimeObj) {
+      const delay = targetTimeObj.toMillis() - Date.now();
+      if (delay > 0) {
+        this.log(`⏳ Video Ready. Waiting ${Math.round(delay / 1000)}s for precise prayer time...`);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+    }
+
+    const localIp = this.hardware.getLocalIp();
+    const castUrl = `http://${localIp}:${this.config.serverPort}/images/generated/${prayerName.toLowerCase()}.mp4?t=${Date.now()}`;
+
+    // Casting logic using the injected service
+    this.log(`📡 Ready to Cast: ${castUrl}`);
+
+    // 3. Connect & Cast
+    this.cast.startScanner(async (friendlyName) => {
+      if (friendlyName === this.config.device.name) {
+        const device = this.cast.findDevice(friendlyName);
+        if (device) {
+          try {
+            await this.cast.setVolume(device, this.config.device.targetVolume);
+            await this.cast.castMedia(device, castUrl);
+            this.log(`🎉 Playing ${prayerName} on ${friendlyName}`);
+          } catch (err) {
+            this.log(`❌ Cast Error: ${err.message}`);
+          }
+        }
+      }
+    });
+
+    // NOTE: ADB logic would be orchestrated here via `this.hardware.adbCommand`
+    // To ensure full coverage, logic is split explicitly.
+  }
+}
+
+module.exports = CoreScheduler;

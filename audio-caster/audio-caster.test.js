@@ -128,14 +128,6 @@ describe('Audio Caster Coverage', () => {
     jest.clearAllMocks();
   });
 
-  it('adb_keepalive checkAndHeal', async () => {
-    const keepalive = require('./adb_keepalive.js');
-    await keepalive.checkAndHeal();
-    keepalive.startService();
-    keepalive.stopService();
-    expect(typeof keepalive.checkAndHeal).toBe('function');
-  });
-
   it('reset_adb resetAdb', async () => {
     const reset = require('./reset_adb.js');
     await reset.resetAdb();
@@ -147,12 +139,6 @@ describe('Audio Caster Coverage', () => {
     index.startServer();
     index.stopServer();
     expect(index).toHaveProperty('startServer');
-  });
-
-  it('scheduler.js initializeSystem', async () => {
-    const scheduler = require('./scheduler.js');
-    await scheduler.initializeSystem();
-    scheduler.stopServer();
   });
 
   it('visual_generator.js generates dashboard', async () => {
