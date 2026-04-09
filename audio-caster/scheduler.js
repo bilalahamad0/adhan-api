@@ -105,11 +105,23 @@ async function executePreFlightAndCast(prayerName, audioFileName, targetTimeObj)
         fs.mkdirSync(path.dirname(imgPath), { recursive: true });
         fs.writeFileSync(imgPath, imgBuffer);
 
+        // Encoding via FFmpeg (603858cf Literal Block)
         await new Promise((resolve, reject) => {
             ffmpeg()
-                .input(imgPath).loop(1)
+                .input(imgPath)
+                .inputOptions(['-loop 1']) 
                 .input(audioPath)
-                .outputOptions('-c:v libx264', '-tune stillimage', '-c:a aac', '-b:a 192k', '-pix_fmt yuv420p', '-shortest')
+                .videoCodec('libx264')
+                .audioCodec('aac')
+                .audioFrequency(44100)
+                .outputOptions([
+                    '-pix_fmt yuv420p',
+                    '-preset ultrafast', 
+                    '-profile:v baseline', 
+                    '-level 3.0',
+                    '-tune stillimage',
+                    '-shortest'
+                ])
                 .save(outputVideoPath)
                 .on('end', resolve)
                 .on('error', reject);
