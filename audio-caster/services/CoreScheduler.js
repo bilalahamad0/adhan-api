@@ -266,28 +266,39 @@ class CoreScheduler {
 
           const cleanup = () => {
              if (isCleanedUp) return;
+             
+             // If we just finished Adhan, transition to Dua
              if (currentPhase === 'ADHAN') {
                 this.log(`✨ Adhan Video Finished. Switching to Dua Image...`);
                 if (safetyTimer) clearTimeout(safetyTimer);
+                
+                // CRITICAL: Purge all listeners instantly to prevent "ghost" events 
+                // and overlapping status polling during the Dua phase (Legacy Parity)
+                try { device.removeAllListeners(); } catch(e){}
+                
                 currentPhase = 'DUA';
                 castDuaImage();
                 return;
              }
+             
              if (currentPhase === 'DUA') return;
              
              isCleanedUp = true;
              currentPhase = 'DONE';
              this.log(`🔄 Playback Ended. Starting cleanup...`);
+             
+             // Final Purge
+             try { device.removeAllListeners(); } catch(e){}
              resumeTvSafely();
              
              const finalize = () => {
-               this.log(`🔄 Cleanup: Sending Stop Media...`);
-               this.cast.stopMedia(device);
+               this.log(`🔄 Cleanup: Sending Hard Stop (Receiver Exit)...`);
+               this.cast.stopApp(device);
                
-               // 1.5s Settling delay ensures the Stop packet is processed by the hardware 
-               // before we pull the plug on the scanner/sockets (Legacy Parity)
+               // 2s Settling delay ensures the termination signal is processed by the hardware 
+               // and the local networking stack before we hard-kill the scanner (Legacy Parity)
                setTimeout(() => {
-                  this.log(`🔄 Cleanup: Destroying Scanner & Sockets...`);
+                  this.log(`🔄 Cleanup: Purging Sockets & Scanner...`);
                   this.cast.closeClient(device);
                   this.cast.destroyScanner();
                   
@@ -297,7 +308,7 @@ class CoreScheduler {
                      this.log("🧪 Test Complete. Exiting in 1 second.");
                      setTimeout(() => process.exit(0), 1000);
                   }
-               }, 1500);
+               }, 2000);
              };
 
              if (originalVolume !== null) {

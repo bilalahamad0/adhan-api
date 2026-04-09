@@ -85,7 +85,10 @@ class CastService {
      });
   }
 
-  stopMedia(device) {
+  /**
+   * Hard stops the receiver application to force Home screen return
+   */
+  stopApp(device) {
     try { if (device.stop) device.stop(); } catch (e) { }
   }
 
