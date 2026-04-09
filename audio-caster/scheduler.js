@@ -300,7 +300,15 @@ schedule.scheduleJob('0 1 * * *', scheduleToday);
 if (process.argv.includes('--test')) {
     log("🧪 TEST TRIGGERED");
     CONFIG.device.targetVolume = 0.10;
-    const testTarget = "Isha"; 
-    const testAudio = `${CONFIG.audio.regularCurrent}.mp3`;
-    setTimeout(() => executePreFlightAndCast(testTarget, testAudio, null), 2000);
+
+    const prayers = ['fajr', 'dhuhr', 'asr', 'maghrib', 'isha'];
+    const forcedReq = process.argv.find((arg) => {
+        const clean = arg.replace('--', '').toLowerCase();
+        return prayers.includes(clean);
+    });
+    const testName = forcedReq ? (forcedReq.replace('--', '').charAt(0).toUpperCase() + forcedReq.replace('--', '').slice(1).toLowerCase()) : 'Isha';
+    const testAudio = `${testName === 'Fajr' ? CONFIG.audio.fajrCurrent : CONFIG.audio.regularCurrent}.mp3`;
+
+    log(`🎯 Test Target: ${testName}`);
+    setTimeout(() => executePreFlightAndCast(testName, testAudio, null), 2000);
 }
