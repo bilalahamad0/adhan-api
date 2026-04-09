@@ -1,6 +1,7 @@
 {
   "name": "audio-caster",
   "version": "1.0.0",
+  "type": "commonjs",
   "description": "",
   "main": "index.js",
   "scripts": {

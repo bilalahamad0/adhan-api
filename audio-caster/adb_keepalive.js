@@ -76,9 +76,30 @@ async function checkAndHeal() {
   }
 }
 
-// Start immediately
-log(`🚀 ADB Keep-Alive Service Started. Target: ${TV_IP}`);
-checkAndHeal();
+let intervalId = null;
 
-// Loop
-setInterval(checkAndHeal, CHECK_INTERVAL_MS);
+function startService() {
+  log(`🚀 ADB Keep-Alive Service Started. Target: ${TV_IP}`);
+  checkAndHeal();
+
+  if (!intervalId) {
+    intervalId = setInterval(checkAndHeal, CHECK_INTERVAL_MS);
+  }
+}
+
+function stopService() {
+  if (intervalId) {
+    clearInterval(intervalId);
+    intervalId = null;
+  }
+}
+
+if (require.main === module) {
+  startService();
+}
+
+module.exports = {
+  checkAndHeal,
+  startService,
+  stopService,
+};

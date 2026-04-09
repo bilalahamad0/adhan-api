@@ -80,4 +80,11 @@ async function resetAdb() {
   }
 }
 
-resetAdb();
+if (require.main === module) {
+  resetAdb();
+}
+
+module.exports = {
+  resetAdb,
+  run,
+};

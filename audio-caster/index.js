@@ -150,7 +150,33 @@ app.get('/test', (req, res) => {
   });
 });
 
-app.listen(PORT, () => {
-  console.log(`🚀 Audio Caster running on port ${PORT}`);
-  console.log('📡 Scanning for Google Cast devices...');
-});
+let serverInstance = null;
+
+function startServer() {
+  if (!serverInstance) {
+    serverInstance = app.listen(PORT, () => {
+      console.log(`🚀 Audio Caster running on port ${PORT}`);
+      console.log('📡 Scanning for Google Cast devices...');
+    });
+  }
+}
+
+function stopServer() {
+  if (serverInstance) {
+    serverInstance.close();
+    serverInstance = null;
+  }
+}
+
+if (require.main === module) {
+  startServer();
+}
+
+module.exports = {
+  app,
+  startServer,
+  stopServer,
+  findDevice,
+  devices, // exported for testing
+  client,
+};

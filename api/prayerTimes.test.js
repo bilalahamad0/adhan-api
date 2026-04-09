@@ -1,4 +1,3 @@
-import handler from './prayerTimes.js';
 import { jest } from '@jest/globals';
 
 jest.unstable_mockModule('axios', () => ({
@@ -20,17 +19,17 @@ jest.unstable_mockModule('axios', () => ({
 }));
 
 describe('prayerTimes handler', () => {
-  it('should return a 500 error if fetching fails', async () => {
-    // Mock req and res
+  it('should successfully return prayer times', async () => {
     const req = { query: { country: 'US', city: 'Sunnyvale' } };
     const res = {
       status: jest.fn().mockReturnThis(),
       json: jest.fn(),
     };
 
-    // Default mock is successful but since we haven't dynamically imported handler after mocking,
-    // it will use actual axios in ESM test unless configured carefully.
-    // For now we just test that the handler is a function.
-    expect(typeof handler).toBe('function');
+    const { default: handler } = await import('./prayerTimes.js');
+    await handler(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalled();
   });
 });

@@ -2,14 +2,14 @@ import { google } from 'googleapis';
 import axios from 'axios';
 import { DateTime } from 'luxon';
 
-const calendarId = process.env.GOOGLE_CALENDAR_ID;
-
-if (!calendarId) {
-  throw new Error('❌ Missing GOOGLE_CALENDAR_ID in Environment Variables');
-}
-
 export default async function handler(req, res) {
   try {
+    const calendarId = process.env.GOOGLE_CALENDAR_ID;
+
+    if (!calendarId) {
+      throw new Error('❌ Missing GOOGLE_CALENDAR_ID in Environment Variables');
+    }
+
     console.log('🚀 Starting Google Calendar update...');
 
     // Load Google API Credentials

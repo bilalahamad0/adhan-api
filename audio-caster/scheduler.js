@@ -214,9 +214,20 @@ function generateVideoFile(prayerName, audioFileName, prayerTime) {
   });
 }
 
-app.listen(CONFIG.serverPort, () => {
-  log(`🔊 Local Audio Server running at http://${getLocalIp()}:${CONFIG.serverPort}/audio/`);
-});
+let serverInstance = null;
+function startServer() {
+  if (!serverInstance) {
+    serverInstance = app.listen(CONFIG.serverPort, () => {
+      log(`🔊 Local Audio Server running at http://${getLocalIp()}:${CONFIG.serverPort}/audio/`);
+    });
+  }
+}
+function stopServer() {
+  if (serverInstance) {
+    serverInstance.close();
+    serverInstance = null;
+  }
+}
 
 // --- CASTING ENGINE WITH VOLUME CONTROL & TV SYNC ---
 async function executePreFlightAndCast(prayerName, audioFileName, targetTimeObj) {
@@ -888,35 +899,51 @@ async function scheduleToday() {
   });
 }
 
-// --- STARTUP ---
-log(`🚀 Adhan System v2.0 Starting...`);
-scheduleToday();
+async function initializeSystem() {
+  log(`🚀 Adhan System v2.0 Starting...`);
+  startServer();
+  await scheduleToday();
 
-// Daily Refresh at 1 AM
-schedule.scheduleJob('0 1 * * *', scheduleToday);
+  // Daily Refresh at 1 AM
+  schedule.scheduleJob('0 1 * * *', scheduleToday);
 
-// --- TEST MODE ---
-if (process.argv.includes('--test')) {
-  log('🧪 TEST TRIGGERED');
+  // --- TEST MODE ---
+  if (process.argv.includes('--test')) {
+    log('🧪 TEST TRIGGERED');
 
-  // OVERRIDE: Use lower volume for tests (5%)
-  CONFIG.device.targetVolume = 0.05;
+    // OVERRIDE: Use lower volume for tests (5%)
+    CONFIG.device.targetVolume = 0.05;
 
-  // Allow forcing specific prayer via args (e.g. node scheduler.js --test --maghrib)
-  const prayers = ['fajr', 'dhuhr', 'asr', 'maghrib', 'isha'];
-  const forcedPrayer = prayers.find((p) => process.argv.includes(`--${p}`));
+    // Allow forcing specific prayer via args (e.g. node scheduler.js --test --maghrib)
+    const prayers = ['fajr', 'dhuhr', 'asr', 'maghrib', 'isha'];
+    const forcedPrayer = prayers.find((p) => process.argv.includes(`--${p}`));
 
-  const testName = forcedPrayer
-    ? forcedPrayer.charAt(0).toUpperCase() + forcedPrayer.slice(1)
-    : 'Isha';
-  const testKey = testName === 'Fajr' ? CONFIG.audio.fajrCurrent : CONFIG.audio.regularCurrent;
-  const testAudio = `${testKey}.mp3`;
+    const testName = forcedPrayer
+      ? forcedPrayer.charAt(0).toUpperCase() + forcedPrayer.slice(1)
+      : 'Isha';
+    const testKey = testName === 'Fajr' ? CONFIG.audio.fajrCurrent : CONFIG.audio.regularCurrent;
+    const testAudio = `${testKey}.mp3`;
 
-  log(`🎯 Test Target: ${testName} (Volume: ${(CONFIG.device.targetVolume * 100).toFixed(0)}%)`);
+    log(`🎯 Test Target: ${testName} (Volume: ${(CONFIG.device.targetVolume * 100).toFixed(0)}%)`);
 
-  setTimeout(async () => {
-    await ensureAudioCache(); // Make sure we have files
-    // Mock target time as 'Now' for test (pass null to skip precision wait)
-    executePreFlightAndCast(testName, testAudio, null);
-  }, 2000);
+    setTimeout(async () => {
+      await ensureAudioCache(); // Make sure we have files
+      // Mock target time as 'Now' for test (pass null to skip precision wait)
+      executePreFlightAndCast(testName, testAudio, null);
+    }, 2000);
+  }
 }
+
+if (require.main === module) {
+  initializeSystem();
+}
+
+module.exports = {
+  initializeSystem,
+  scheduleToday,
+  executePreFlightAndCast,
+  startServer,
+  stopServer,
+  app,
+  CONFIG,
+};
