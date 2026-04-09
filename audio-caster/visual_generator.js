@@ -8,8 +8,8 @@ class VisualGenerator {
   constructor(config) {
     this.config = config;
     // Adjusted for Google Nest Hub Max (16:10 Aspect Ratio) to remove black bars
-    this.width = 1024;
-    this.height = 600;
+    this.width = 1280;
+    this.height = 800;
     this.cacheDir = path.join(__dirname, 'audio'); // For generated outputs (served by Express)
     this.bgPath = path.join(__dirname, '../images/default.jpg'); // Source default background
   }

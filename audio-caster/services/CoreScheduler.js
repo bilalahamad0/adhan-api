@@ -269,18 +269,11 @@ class CoreScheduler {
              this.log(`🔄 Playback Ended. Starting cleanup...`);
              resumeTvSafely();
              
-             const finalize = async () => {
-               // Aggressive Halt: Don't wait more than 2 seconds for the halt command to commit
-               try {
-                   await Promise.race([
-                       this.cast.stopMedia(device),
-                       new Promise((_, reject) => setTimeout(() => reject(new Error('Stop Timeout')), 2000))
-                   ]);
-               } catch (e) {
-                   this.log(`⚠️ Halt Timeout (Forcing socket close to trigger home screen return)`);
-               }
-
-               this.cast.closeClient(device);
+             const finalize = () => {
+               // Non-blocking cleanup matches legacy logic for instant Home screen return
+               try { this.cast.stopMedia(device); } catch(e){}
+               try { this.cast.closeClient(device); } catch(e){}
+               
                if (safetyTimer) clearTimeout(safetyTimer);
                
                if (process.argv.includes('--test')) {
