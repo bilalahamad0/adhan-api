@@ -12,6 +12,13 @@ class VisualGenerator {
     this.height = 800;
     this.cacheDir = path.join(__dirname, 'audio'); // For generated outputs (served by Express)
     this.bgPath = path.join(__dirname, '../images/default.jpg'); // Source default background
+    
+    // Weather Cache to prevent 429 Rate Limiting
+    this.weatherCache = {
+       data: null,
+       lastFetch: 0,
+       ttl: 15 * 60 * 1000 // 15 Minutes
+    };
   }
 
   // ... (methods remain same) use lines from original file for context ...
@@ -98,18 +105,29 @@ class VisualGenerator {
   }
 
   async getWeather() {
+    const now = Date.now();
+    if (this.weatherCache.data && (now - this.weatherCache.lastFetch < this.weatherCache.ttl)) {
+       return this.weatherCache.data;
+    }
+
     try {
       // Open-Meteo for Sunnyvale (Celsius) + is_day
       const url = `https://api.open-meteo.com/v1/forecast?latitude=37.3688&longitude=-122.0363&current=temperature_2m,weather_code,is_day&temperature_unit=celsius&timezone=auto`;
       const res = await axios.get(url);
       const current = res.data.current;
-      return {
+      
+      this.weatherCache.data = {
         temp: Math.round(current.temperature_2m) + '°C',
         code: current.weather_code,
         isDay: current.is_day, // 1 = Day, 0 = Night
       };
+      this.weatherCache.lastFetch = now;
+      
+      return this.weatherCache.data;
     } catch (e) {
       console.error('⚠️ Weather fetch failed:', e.message);
+      // If we have old data, return it instead of fallback
+      if (this.weatherCache.data) return this.weatherCache.data;
       return { temp: '--°C', code: 0, isDay: 1 };
     }
   }

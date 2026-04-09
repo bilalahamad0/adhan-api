@@ -30,34 +30,41 @@ class CoreScheduler {
    * Daily Scheduling Engine (Invoked by boot.js)
    */
   async scheduleToday() {
-    this.log("📅 Loading Schedule...");
-    const fs = require('fs');
-    let annualData = this.getAnnualData();
-    const currentYear = DateTime.now().setZone(this.config.timezone).toFormat('yyyy');
+    try {
+      this.log("📅 Loading Schedule...");
+      const fs = require('fs');
+      let annualData = this.getAnnualData();
+      const currentYear = DateTime.now().setZone(this.config.timezone).toFormat('yyyy');
 
-    if (!annualData || annualData.year !== currentYear) {
-        this.log(`🔄 Initialzing Annual Data for ${currentYear}...`);
-        try {
-            const axios = require('axios');
-            const url = `http://api.aladhan.com/v1/calendarByCity/${currentYear}?city=${this.config.location.city}&country=${this.config.location.country}&method=${this.config.location.method}&annual=true`;
-            const response = await axios.get(url);
-            annualData = { year: currentYear, data: response.data.data };
-            fs.writeFileSync(this.scheduleFilePath, JSON.stringify(annualData, null, 2));
-            this.log("💾 Annual Data Downloaded & Saved.");
-        } catch (error) {
-            this.log("❌ Fetch Error. Cannot Schedule.");
-            return;
-        }
-    }
+      if (!annualData || annualData.year !== currentYear) {
+          this.log(`🔄 Initialzing Annual Data for ${currentYear}...`);
+          try {
+              const axios = require('axios');
+              const url = `http://api.aladhan.com/v1/calendarByCity/${currentYear}?city=${this.config.location.city}&country=${this.config.location.country}&method=${this.config.location.method}&annual=true`;
+              const response = await axios.get(url);
+              annualData = { year: currentYear, data: response.data.data };
+              fs.writeFileSync(this.scheduleFilePath, JSON.stringify(annualData, null, 2));
+              this.log("💾 Annual Data Downloaded & Saved.");
+          } catch (error) {
+              this.log("❌ Fetch Error. Cannot Schedule.");
+              return;
+          }
+      }
 
-    const today = DateTime.now().setZone(this.config.timezone);
-    const month = today.month.toString();
-    const day = today.day.toString();
-    const monthData = annualData.data[month];
-    if (!monthData) return this.log('❌ Calendar Error: Month missing.');
+      if (!annualData || !annualData.data) {
+          return this.log('❌ Calendar Error: Data structure invalid.');
+      }
 
-    const todayEntry = monthData.find((d) => parseInt(d.date.gregorian.day) === today.day);
-    if (!todayEntry) return this.log('❌ Calendar Error: Day missing.');
+      const today = DateTime.now().setZone(this.config.timezone);
+      const month = today.month.toString();
+      const monthData = annualData.data[month];
+      
+      if (!monthData || !Array.isArray(monthData)) {
+          return this.log(`❌ Calendar Error: Month data for [${month}] missing or invalid.`);
+      }
+
+      const todayEntry = monthData.find((d) => parseInt(d.date.gregorian.day) === today.day);
+      if (!todayEntry) return this.log(`❌ Calendar Error: Day [${today.day}] missing.`);
 
     const timings = todayEntry.timings;
     this.log(`✅ Today's Prayer Times (${todayEntry.date.readable}):`);
@@ -85,7 +92,11 @@ class CoreScheduler {
         });
 
         this.log(`   - ${prayer}: ${timeStr} (Trigger: ${triggerTime.toFormat('h:mm:ss a')})`);
-    });
+      });
+    } catch (e) {
+      this.log(`🚨 CRITICAL SCHEDULER ERROR: ${e.message}`);
+      console.error(e.stack);
+    }
   }
 
   /**

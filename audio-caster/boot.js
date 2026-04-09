@@ -5,6 +5,17 @@ const CastService = require('./services/CastService');
 const CoreScheduler = require('./services/CoreScheduler');
 require('dotenv').config();
 
+// --- CRASH DIAGNOSTICS (Production Stability) ---
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[FATAL] Unhandled Rejection at:', promise, 'reason:', reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[FATAL] Uncaught Exception:', err.message);
+  console.error(err.stack);
+  // PM2 will restart the process automatically
+  process.exit(1);
+});
+
 const CONFIG = {
   location: {
     city: process.env.LOCATION_CITY || 'Sunnyvale',
@@ -78,6 +89,8 @@ async function bootSystem() {
 
   // 3. Initiate Scheduler Flow
   console.log('⏳ Awaiting schedules...');
+  // Post-Boot Grace Period (Ensures network is 100% ready after a Pi reboot)
+  await new Promise(r => setTimeout(r, 5000));
   await scheduler.scheduleToday();
 
   // Daily Refresh at 1 AM
