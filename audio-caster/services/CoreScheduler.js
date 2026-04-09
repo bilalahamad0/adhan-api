@@ -63,6 +63,7 @@ class CoreScheduler {
 
     // 1. Generate Video
     const path = require('path');
+    const fs = require('fs');
     const outputVideoPath = path.join(
       __dirname,
       '..',
@@ -74,6 +75,17 @@ class CoreScheduler {
     const imgPath = path.join(__dirname, '..', 'images', 'generated', 'current_dashboard.jpg');
 
     try {
+      // a. Generate Image Overlay
+      const VisualGenerator = require('../visual_generator.js');
+      const vg = new VisualGenerator(this.config);
+      const timeString = targetTimeObj ? targetTimeObj.toFormat('h:mm a') : 'Now';
+      const imgBuffer = await vg.generateDashboard(prayerName, timeString, null, {});
+      
+      fs.mkdirSync(path.dirname(imgPath), { recursive: true });
+      fs.writeFileSync(imgPath, imgBuffer);
+      this.log(`🖼️  Dashboard image generated at ${imgPath}`);
+
+      // b. Encode Video via FFmpeg
       await this.media.encodeVideoFromImageAndAudio(imgPath, audioPath, outputVideoPath);
     } catch (e) {
       this.log(`❌ Video Generation Failed: ${e.message}`);
