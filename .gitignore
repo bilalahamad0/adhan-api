@@ -24,3 +24,4 @@ coverage/
 # Build Artifacts
 dist/
 *.tar.gz
+adhan-api-production.tar.gz
