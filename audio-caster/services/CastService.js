@@ -59,6 +59,47 @@ class CastService {
       });
     });
   }
+
+  /**
+   * Fetches Receiver constraints (e.g. baseline Volume)
+   */
+  async getReceiverStatus(device) {
+     return new Promise((resolve, reject) => {
+        device.getReceiverStatus((err, status) => {
+           if (err) return reject(err);
+           resolve(status);
+        });
+     });
+  }
+
+  /**
+   * Fetches Media Controller status (playerState IDLE vs PLAYING)
+   */
+  async getStatus(device) {
+     return new Promise((resolve, reject) => {
+        device.getStatus((err, status) => {
+           if (err) return reject(err);
+           resolve(status);
+        });
+     });
+  }
+
+  /**
+   * Halts media explicitly
+   */
+  async stopMedia(device) {
+     return new Promise((resolve) => {
+        try { if (device.stop) device.stop(() => resolve(true)); else resolve(true); } 
+        catch (e) { resolve(false); }
+     });
+  }
+
+  /**
+   * Soft closes clients explicitly
+   */
+  closeClient(device) {
+     try { if (device.client) device.client.close(); device.close(); } catch(e){}
+  }
 }
 
 module.exports = CastService;

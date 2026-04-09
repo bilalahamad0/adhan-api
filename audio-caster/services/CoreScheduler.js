@@ -27,6 +27,68 @@ class CoreScheduler {
   }
 
   /**
+   * Daily Scheduling Engine (Invoked by boot.js)
+   */
+  async scheduleToday() {
+    this.log("📅 Loading Schedule...");
+    const fs = require('fs');
+    let annualData = this.getAnnualData();
+    const currentYear = DateTime.now().setZone(this.config.timezone).toFormat('yyyy');
+
+    if (!annualData || annualData.year !== currentYear) {
+        this.log(`🔄 Initialzing Annual Data for ${currentYear}...`);
+        try {
+            const axios = require('axios');
+            const url = `http://api.aladhan.com/v1/calendarByCity/${currentYear}?city=${this.config.location.city}&country=${this.config.location.country}&method=${this.config.location.method}&annual=true`;
+            const response = await axios.get(url);
+            annualData = { year: currentYear, data: response.data.data };
+            fs.writeFileSync(this.scheduleFilePath, JSON.stringify(annualData, null, 2));
+            this.log("💾 Annual Data Downloaded & Saved.");
+        } catch (error) {
+            this.log("❌ Fetch Error. Cannot Schedule.");
+            return;
+        }
+    }
+
+    const today = DateTime.now().setZone(this.config.timezone);
+    const month = today.month.toString();
+    const day = today.day.toString();
+    const monthData = annualData.data[month];
+    if (!monthData) return this.log('❌ Calendar Error: Month missing.');
+
+    const todayEntry = monthData.find((d) => parseInt(d.date.gregorian.day) === today.day);
+    if (!todayEntry) return this.log('❌ Calendar Error: Day missing.');
+
+    const timings = todayEntry.timings;
+    this.log(`✅ Today's Prayer Times (${todayEntry.date.readable}):`);
+
+    const prayers = ['Fajr', 'Dhuhr', 'Asr', 'Maghrib', 'Isha'];
+
+    prayers.forEach((prayer) => {
+        let timeStr = timings[prayer].split(' ')[0];
+        const [hours, minutes] = timeStr.split(':');
+        const scheduleTime = today.set({ hour: parseInt(hours), minute: parseInt(minutes), second: 0 });
+        const PREP_BUFFER_MINUTES = 5;
+
+        if (scheduleTime < DateTime.now().setZone(this.config.timezone)) return;
+
+        const audioKey = prayer === 'Fajr' ? this.config.audio.fajrCurrent : this.config.audio.regularCurrent;
+        const audioFile = `${audioKey}.mp3`;
+
+        let triggerTime = scheduleTime.minus({ minutes: PREP_BUFFER_MINUTES });
+        if (triggerTime < DateTime.now().setZone(this.config.timezone)) {
+            triggerTime = DateTime.now().setZone(this.config.timezone).plus({ seconds: 2 });
+        }
+
+        schedule.scheduleJob(triggerTime.toJSDate(), () => {
+            this.executePreFlightAndCast(prayer, audioFile, scheduleTime);
+        });
+
+        this.log(`   - ${prayer}: ${timeStr} (Trigger: ${triggerTime.toFormat('h:mm:ss a')})`);
+    });
+  }
+
+  /**
    * Verifies Network Preflight
    */
   async runNetworkPreFlight() {
@@ -142,31 +204,155 @@ class CoreScheduler {
       if (friendlyName === this.config.device.name) {
         const device = this.cast.findDevice(friendlyName);
         if (device) {
-          try {
-            await this.cast.castMedia(device, castUrl);
-            try {
-              // Wait for play to initiate a session before setting volume
-              await new Promise(res => setTimeout(res, 2000));
-              await this.cast.setVolume(device, this.config.device.targetVolume);
-            } catch (volErr) {
-              this.log(`⚠️ Volume Set Error: ${volErr.message}`);
+          
+          let originalVolume = null;
+          let isCleanedUp = false;
+          let safetyTimer = null;
+          let currentPhase = 'ADHAN';
+          
+          const resumeTvSafely = async () => {
+            if (tvWasMuted) {
+              this.log(`🔊 Unmuting Sony TV...`);
+              await this.hardware.adbCommand(tvIp, 'shell input keyevent 164');
+              tvWasMuted = false;
+            } else if (tvWasInterrupted) {
+              this.log(`▶️ Resuming Sony TV...`);
+              await this.hardware.adbCommand(tvIp, 'shell input keyevent 126');
+              tvWasInterrupted = false;
             }
-            this.log(`🎉 Playing ${prayerName} on ${friendlyName}`);
-            
-            // Revert TV after 5 minutes (mocking duration of adhan) Wait, standard cast library has `finished` events. 
-            // We use timeout for TV recovery since cast events can be flaky
-            setTimeout(async () => {
-               if (tvWasMuted) {
-                 this.log(`🔊 Unmuting Sony TV...`);
-                 await this.hardware.adbCommand(tvIp, 'shell input keyevent 164');
-               } else if (tvWasInterrupted) {
-                 this.log(`▶️ Resuming Sony TV...`);
-                 await this.hardware.adbCommand(tvIp, 'shell input keyevent 126'); // Play
-               }
-            }, 300000); // 5 minutes
+          };
 
-          } catch (err) {
-            this.log(`❌ Cast Error: ${err.message}`);
+          const cleanup = () => {
+             if (isCleanedUp) return;
+             if (currentPhase === 'ADHAN') {
+                this.log(`✨ Adhan Video Finished. Switching to Dua Image...`);
+                if (safetyTimer) clearTimeout(safetyTimer);
+                currentPhase = 'DUA';
+                castDuaImage();
+                return;
+             }
+             if (currentPhase === 'DUA') return;
+             
+             isCleanedUp = true;
+             currentPhase = 'DONE';
+             this.log(`🔄 Playback Ended. Starting cleanup...`);
+             resumeTvSafely();
+             
+             const finalize = () => {
+               this.cast.stopMedia(device);
+               this.cast.closeClient(device);
+               if (safetyTimer) clearTimeout(safetyTimer);
+               
+               if (process.argv.includes('--test')) {
+                  this.log("🧪 Test Complete. Exiting in 1 second.");
+                  setTimeout(() => process.exit(0), 1000);
+               }
+             };
+
+             if (originalVolume !== null) {
+                this.log(`🔊 Restoring Original Volume to ${(originalVolume * 100).toFixed(0)}%...`);
+                this.cast.setVolume(device, originalVolume).then(() => {
+                   setTimeout(finalize, 500);
+                }).catch(() => finalize());
+             } else {
+                finalize();
+             }
+          };
+          
+          const castDuaImage = () => {
+             const duaUrl = `http://${localIp}:${this.config.serverPort}/images/dua_after_adhan.png`;
+             this.log(`🤲 Casting Dua Image: ${duaUrl}`);
+             this.cast.castMedia(device, duaUrl, 'image/png').then(() => {
+                this.log(`⏳ Dua Displayed. Waiting 20 seconds...`);
+                safetyTimer = setTimeout(() => {
+                   this.log(`✅ Dua Complete.`);
+                   currentPhase = 'DONE';
+                   cleanup();
+                }, 20000);
+             }).catch((err) => {
+                this.log(`❌ Dua Cast Error: ${err.message}`);
+                currentPhase = 'DONE';
+                cleanup();
+             });
+          };
+
+          // Fetch Original Volume
+          try {
+             this.cast.getReceiverStatus(device).then(status => {
+                if (status && status.volume) {
+                   originalVolume = status.volume.level;
+                   this.log(`📊 Current Volume: ${(originalVolume * 100).toFixed(0)}% (Saved for restore)`);
+                }
+                
+                // Set Volume and Cast
+                this.cast.setVolume(device, this.config.device.targetVolume).then(() => {
+                   this.log(`🔊 Volume set to ${(this.config.device.targetVolume * 100).toFixed(0)}%`);
+                   this.cast.castMedia(device, castUrl).then(() => {
+                      this.log(`🎶 Playback Started! Playing ${prayerName} on ${friendlyName}`);
+                      safetyTimer = setTimeout(cleanup, 600000); // 10m fallback
+                      
+                      // Explicit force volume set after media instantiation (fixes cast session race condition)
+                      setTimeout(() => {
+                         this.cast.setVolume(device, this.config.device.targetVolume).catch(() => {});
+                      }, 2000);
+                      
+                      // Active Polling Loop 
+                      let lastStatusTime = Date.now();
+                      let lastState = '';
+                      let lastStateChangeTime = Date.now();
+                      let pollingActive = true;
+                      
+                      const statusHandler = (status) => {
+                         lastStatusTime = Date.now();
+                         if (status && status.playerState !== lastState) {
+                             this.log(`📊 Device Status: ${status.playerState}`);
+                             lastState = status.playerState;
+                             lastStateChangeTime = Date.now();
+                         }
+                         if (!status || status.playerState === 'IDLE') {
+                             this.log(`⏹️ Adhan Finished (IDLE).`);
+                             cleanup();
+                         }
+                      };
+                      
+                      // Native Event Registration
+                      device.on('status', statusHandler);
+                      device.on('finished', () => {
+                         this.log(`⏹️ Adhan Finished (Event).`);
+                         cleanup();
+                      });
+                      
+                      const pollLoop = () => {
+                         if (isCleanedUp || !pollingActive) return;
+                         const now = Date.now();
+                         
+                         if (now - lastStatusTime > 300000) return cleanup();
+                         if ((lastState === 'PAUSED' || lastState === 'BUFFERING') && (now - lastStateChangeTime > 180000)) return cleanup();
+                         
+                         this.cast.getStatus(device).then(s => {
+                            statusHandler(s);
+                            if (!isCleanedUp && pollingActive) setTimeout(pollLoop, 3000);
+                         }).catch((e) => {
+                            const msg = e.message.toLowerCase();
+                            if (msg.includes('closed') || msg.includes('destroyed')) cleanup();
+                            else if (!isCleanedUp && pollingActive) setTimeout(pollLoop, 3000);
+                         });
+                      };
+                      
+                      pollLoop(); // Start polling
+                   }).catch((err) => {
+                      this.log(`❌ Cast Error: ${err.message}`);
+                      cleanup();
+                   });
+                }).catch((err) => {
+                   this.log(`❌ Volume Set Error: ${err.message}`);
+                   cleanup();
+                });
+             }).catch(e => {
+                this.log(`❌ Device Pre-Flight Error: ${e}`);
+             });
+          } catch(e) { 
+             this.log(`❌ Init Cast err: ${e}`); 
           }
         }
       }

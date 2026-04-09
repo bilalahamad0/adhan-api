@@ -17,6 +17,8 @@ const CONFIG = {
     targetVolume: 0.55,
   },
   audio: {
+    fajrCurrent: 'fajr',
+    regularCurrent: 'generic_3',
     options: {
       fajr: 'https://raw.githubusercontent.com/AalianKhan/adhans/master/adhan_fajr.mp3',
       mecca_1: 'https://www.islamcan.com/audio/adhan/azan1.mp3',
@@ -71,13 +73,36 @@ async function bootSystem() {
 
   // 3. Initiate Scheduler Flow
   console.log('⏳ Awaiting schedules...');
-  // Logic to bind node-schedule would go here calling scheduler.executePreFlightAndCast()
+  await scheduler.scheduleToday();
+
+  // Daily Refresh at 1 AM
+  const schedule = require('node-schedule');
+  schedule.scheduleJob('0 1 * * *', () => scheduler.scheduleToday());
   
   // Complete System Test hook
   if (process.argv.includes('--test')) {
-     console.log('🧪 SYSTEM TEST: Simulating end-to-end hardware cast pipeline...');
-     await scheduler.executePreFlightAndCast('TestPrayer', 'fajr.mp3', null);
-     console.log('🧪 SYSTEM TEST: Hardware cast command issued. Evaluator should verify TV behaviour.');
+    console.log('🧪 SYSTEM TEST: Simulating end-to-end hardware cast pipeline...');
+    
+    // OVERRIDE: Use lower volume for tests (10%)
+    CONFIG.device.targetVolume = 0.10;
+
+    // Allow forcing specific prayer via args (e.g. node boot.js --test Maghrib)
+    const prayers = ['fajr', 'dhuhr', 'asr', 'maghrib', 'isha'];
+    const forcedReq = process.argv.find((arg) => prayers.includes(arg.toLowerCase()));
+    
+    // Fallback to Isha if no valid arg was found
+    const testName = forcedReq
+      ? forcedReq.charAt(0).toUpperCase() + forcedReq.slice(1).toLowerCase()
+      : 'Isha';
+
+    const testKey = testName === 'Fajr' ? CONFIG.audio.fajrCurrent : CONFIG.audio.regularCurrent;
+    const testAudio = `${testKey}.mp3`;
+
+    console.log(`🎯 Test Target: ${testName} (Volume: ${(CONFIG.device.targetVolume * 100).toFixed(0)}%)`);
+
+    setTimeout(async () => {
+      await scheduler.executePreFlightAndCast(testName, testAudio, null);
+    }, 2000);
   }
 }
 
