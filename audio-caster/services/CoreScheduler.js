@@ -112,8 +112,14 @@ class CoreScheduler {
         const device = this.cast.findDevice(friendlyName);
         if (device) {
           try {
-            await this.cast.setVolume(device, this.config.device.targetVolume);
             await this.cast.castMedia(device, castUrl);
+            try {
+              // Wait for play to initiate a session before setting volume
+              await new Promise(res => setTimeout(res, 2000));
+              await this.cast.setVolume(device, this.config.device.targetVolume);
+            } catch (volErr) {
+              this.log(`⚠️ Volume Set Error: ${volErr.message}`);
+            }
             this.log(`🎉 Playing ${prayerName} on ${friendlyName}`);
           } catch (err) {
             this.log(`❌ Cast Error: ${err.message}`);
