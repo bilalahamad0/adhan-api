@@ -1,6 +1,6 @@
 const schedule = require('node-schedule');
 const axios = require('axios');
-require('events').EventEmitter.defaultMaxListeners = 25; // Suppress Warning
+require('events').EventEmitter.defaultMaxListeners = 25; 
 const fs = require('fs');
 const { DateTime } = require('luxon');
 const ChromecastAPI = require('chromecast-api');
@@ -25,11 +25,11 @@ const CONFIG = {
         city: process.env.LOCATION_CITY || 'Sunnyvale',
         country: process.env.LOCATION_COUNTRY || 'US',
         method: parseInt(process.env.LOCATION_METHOD || 2), // ISNA
-        school: parseInt(process.env.LOCATION_SCHOOL || 1)  // Hanafi
+        school: parseInt(process.env.LOCATION_SCHOOL || 1)  
     },
     device: {
         name: process.env.DEVICE_NAME || 'Google Display',
-        targetVolume: 0.55 // Level 5.5 (Range 0.0-1.0)
+        targetVolume: 0.55 
     },
     audio: {
         fajrCurrent: "fajr",
@@ -88,49 +88,46 @@ async function ensureAudioCache() {
     }
 }
 
-// --- ENGINE (603858cf LITERAL Restoration) ---
+// --- ENGINE (Phase 16: Zero-Latency Restoration) ---
 async function executePreFlightAndCast(prayerName, audioFileName, targetTimeObj) {
     const localIp = getLocalIp();
-    log(`🚀 TRIGGER: ${prayerName} Time! Starting sequence...`);
+    log(`🚀 TRIGGER: ${prayerName} Time! Starting pre-flight...`);
 
     const outputVideoPath = path.join(IMAGES_DIR, 'generated', `${prayerName.toLowerCase()}.mp4`);
     const audioPath = path.join(AUDIO_DIR, audioFileName);
     const imgPath = path.join(IMAGES_DIR, 'generated', 'current_dashboard.jpg');
+    const generatedDuaPath = path.join(IMAGES_DIR, 'generated', 'dua.jpg');
 
     try {
         const today = DateTime.now().setZone(CONFIG.timezone);
         const VisualGenerator = require('./visual_generator.js');
         const vg = new VisualGenerator(CONFIG);
+        
+        // 1. Pre-generate Dashboard
         const imgBuffer = await vg.generateDashboard(prayerName, targetTimeObj ? targetTimeObj.toFormat('h:mm a') : today.toFormat('h:mm a'), null, {});
         fs.mkdirSync(path.dirname(imgPath), { recursive: true });
         fs.writeFileSync(imgPath, imgBuffer);
 
-        // Encoding via FFmpeg (603858cf Literal Block)
+        // 2. Pre-generate Stretched Dua (Essential for seamless transition)
+        const staticDuaPath = path.join(IMAGES_DIR, 'dua_after_adhan.png');
+        const duaBuffer = await vg.generateDua(staticDuaPath);
+        fs.writeFileSync(generatedDuaPath, duaBuffer);
+        log(`🖼️  Pre-generation Complete: Video and Stretched Dua ready.`);
+
+        // 3. Bake Video
         await new Promise((resolve, reject) => {
             ffmpeg()
-                .input(imgPath)
-                .inputOptions(['-loop 1']) 
-                .input(audioPath)
-                .videoCodec('libx264')
-                .audioCodec('aac')
-                .audioFrequency(44100)
-                .outputOptions([
-                    '-pix_fmt yuv420p',
-                    '-preset ultrafast', 
-                    '-profile:v baseline', 
-                    '-level 3.0',
-                    '-tune stillimage',
-                    '-shortest'
-                ])
+                .input(imgPath).inputOptions(['-loop 1']).input(audioPath)
+                .videoCodec('libx264').audioCodec('aac').audioFrequency(44100)
+                .outputOptions(['-pix_fmt yuv420p', '-preset ultrafast', '-profile:v baseline', '-level 3.0', '-tune stillimage', '-shortest'])
                 .save(outputVideoPath)
-                .on('end', resolve)
-                .on('error', reject);
+                .on('end', resolve).on('error', reject);
         });
     } catch (e) { log(`❌ Generation Failed: ${e.message}`); return; }
 
     if (targetTimeObj) {
         const delay = targetTimeObj.toMillis() - Date.now();
-        if (delay > 0) { log(`⏳ Waiting ${Math.round(delay/1000)}s...`); await new Promise(r => setTimeout(r, delay)); }
+        if (delay > 0) { log(`⏳ Waiting ${Math.round(delay/1000)}s for precise time...`); await new Promise(r => setTimeout(r, delay)); }
     }
 
     const castUrl = `http://${localIp}:${CONFIG.serverPort}/images/generated/${prayerName.toLowerCase()}.mp4?t=${Date.now()}`;
@@ -140,9 +137,7 @@ async function executePreFlightAndCast(prayerName, audioFileName, targetTimeObj)
     let tvWasInterrupted = false;
     if (tvIp) {
         try {
-            const res = await new Promise(resolve => {
-                exec(`adb -s ${tvIp}:5555 shell dumpsys media_session`, (e, stdout) => resolve(stdout));
-            });
+            const res = await new Promise(resolve => exec(`adb -s ${tvIp}:5555 shell dumpsys media_session`, (e, stdout) => resolve(stdout)));
             if (res && (res.includes('state=3') || res.includes('state=Playing'))) {
                 log(`📺 TV is PLAYING. Sending ADB PAUSE...`);
                 exec(`adb -s ${tvIp}:5555 shell input keyevent 127`);
@@ -151,13 +146,51 @@ async function executePreFlightAndCast(prayerName, audioFileName, targetTimeObj)
         } catch (e) { }
     }
 
-    // CAST CLOSURE (Literal)
     const Client = new ChromecastAPI();
     let adhanDevice = null;
     let isCleanedUp = false;
     let safetyTimer = null;
     let originalVolume = null;
     let currentPhase = 'ADHAN';
+
+    const finalize = () => {
+        if (isCleanedUp && currentPhase === 'DONE') return;
+        isCleanedUp = true;
+        currentPhase = 'DONE';
+
+        log(`🔄 Finalizing: Hard terminating session...`);
+        if (tvWasInterrupted) exec(`adb -s ${tvIp}:5555 shell input keyevent 126`);
+
+        const killSystem = () => {
+            try { 
+                if (adhanDevice) adhanDevice.close(); 
+                if (Client) Client.destroy(); 
+            } catch (e) { }
+            if (safetyTimer) clearTimeout(safetyTimer);
+            if (process.argv.includes('--test')) {
+                log("🧪 Test Complete. Exiting.");
+                setTimeout(() => process.exit(0), 1000);
+            }
+        };
+
+        try {
+            if (adhanDevice && adhanDevice.client) {
+                // HARD STOP: Kill the receiver application itself
+                const receiver = adhanDevice.client.receiver;
+                if (receiver) {
+                    log(`🛑 Sending RECEIVER STOP (Return to Clock)...`);
+                    adhanDevice.client.stop(receiver, (err) => {
+                        log(`✅ Receiver exited.`);
+                        adhanDevice.client.close();
+                        killSystem();
+                    });
+                } else {
+                    adhanDevice.client.close();
+                    killSystem();
+                }
+            } else { killSystem(); }
+        } catch (e) { killSystem(); }
+    };
 
     const cleanup = () => {
         if (isCleanedUp) return;
@@ -168,55 +201,22 @@ async function executePreFlightAndCast(prayerName, audioFileName, targetTimeObj)
             castDuaImage();
             return;
         }
-        if (currentPhase === 'DUA') return;
-
-        isCleanedUp = true;
-        currentPhase = 'DONE';
-        log(`🔄 Playback Ended. Cleaning up...`);
-        if (tvWasInterrupted) exec(`adb -s ${tvIp}:5555 shell input keyevent 126`);
-
-        const finalize = () => {
-            try {
-                if (adhanDevice) {
-                    if (adhanDevice.stop) adhanDevice.stop();
-                    if (adhanDevice.client) adhanDevice.client.close();
-                    adhanDevice.close();
-                }
-                if (Client) Client.destroy();
-            } catch (e) { }
-            if (safetyTimer) clearTimeout(safetyTimer);
-            if (process.argv.includes('--test')) {
-                log("🧪 Test Complete. Exiting.");
-                setTimeout(() => process.exit(0), 1000);
-            }
-        };
-
-        if (adhanDevice && originalVolume !== null) {
-            log(`🔊 Restoring Volume...`);
-            adhanDevice.setVolume(originalVolume, () => setTimeout(finalize, 500));
-        } else finalize();
+        if (currentPhase === 'DUA') return; // Ignore status updates during 20s Dua
+        finalize();
     };
 
     function castDuaImage() {
-        // USE STRETCHED GENERATOR (Confirmed Fix)
-        const VisualGenerator = require('./visual_generator.js');
-        const vg = new VisualGenerator(CONFIG);
-        const staticDuaPath = path.join(IMAGES_DIR, 'dua_after_adhan.png');
-        const generatedDuaPath = path.join(IMAGES_DIR, 'generated', 'dua.jpg');
-        
-        vg.generateDua(staticDuaPath).then(buffer => {
-            fs.writeFileSync(generatedDuaPath, buffer);
-            const duaUrl = `http://${localIp}:${CONFIG.serverPort}/images/generated/dua.jpg?t=${Date.now()}`;
-            const media = {
-                url: duaUrl, contentType: 'image/jpeg',
-                metadata: { type: 0, metadataType: 0, title: `Dua After Adhan`, images: [{ url: duaUrl }] }
-            };
-            log(`🤲 Casting Stretched Dua: ${duaUrl}`);
-            adhanDevice.play(media, (err) => {
-                if (err) cleanup();
-                else safetyTimer = setTimeout(() => { log(`✅ Dua Complete.`); currentPhase = 'DONE'; cleanup(); }, 20000);
-            });
-        }).catch(() => cleanup());
+        // IMAGE IS ALREADY PRE-GENERATED AT THIS POINT (ZERO DELAY)
+        const duaUrl = `http://${localIp}:${CONFIG.serverPort}/images/generated/dua.jpg?t=${Date.now()}`;
+        const media = {
+            url: duaUrl, contentType: 'image/jpeg',
+            metadata: { type: 0, metadataType: 0, title: `Dua After Adhan`, images: [{ url: duaUrl }] }
+        };
+        log(`🤲 Casting Stretched Dua (Instant Switch): ${duaUrl}`);
+        adhanDevice.play(media, (err) => {
+            if (err) finalize();
+            else safetyTimer = setTimeout(() => { log(`✅ Dua Complete.`); finalize(); }, 20000);
+        });
     }
 
     Client.on('device', (device) => {
@@ -234,10 +234,10 @@ async function executePreFlightAndCast(prayerName, audioFileName, targetTimeObj)
                         metadata: { type: 1, metadataType: 0, title: `${prayerName} Adhan`, images: [{ url: dashboardUrl }] }
                     };
                     device.play(media, (err) => {
-                        if (err) cleanup();
+                        if (err) finalize();
                         else {
                             log(`🎶 Playback Started!`);
-                            safetyTimer = setTimeout(cleanup, 600000);
+                            safetyTimer = setTimeout(finalize, 600000);
                             let lastState = '';
                             device.on('status', (s) => {
                                 if (s && s.playerState !== lastState) { log(`📊 Status: ${s.playerState}`); lastState = s.playerState; }
@@ -251,7 +251,8 @@ async function executePreFlightAndCast(prayerName, audioFileName, targetTimeObj)
     });
 }
 
-// --- SCHEDULER ---
+const { exec } = require('child_process');
+
 async function scheduleToday() {
     log("📅 Loading Schedule...");
     let annualData;
@@ -291,24 +292,17 @@ async function scheduleToday() {
     });
 }
 
-// --- STARTUP ---
-log(`🚀 Adhan System v2.0 Starting (LITERAL Restoration)...`);
+log(`🚀 Adhan System Starting (Zero-Latency Restore)...`);
 scheduleToday();
 schedule.scheduleJob('0 1 * * *', scheduleToday);
 
-// TEST
 if (process.argv.includes('--test')) {
     log("🧪 TEST TRIGGERED");
     CONFIG.device.targetVolume = 0.10;
-
-    const prayers = ['fajr', 'dhuhr', 'asr', 'maghrib', 'isha'];
-    const forcedReq = process.argv.find((arg) => {
-        const clean = arg.replace('--', '').toLowerCase();
-        return prayers.includes(clean);
-    });
+    const prayersList = ['fajr', 'dhuhr', 'asr', 'maghrib', 'isha'];
+    const forcedReq = process.argv.find((arg) => prayersList.includes(arg.replace('--', '').toLowerCase()));
     const testName = forcedReq ? (forcedReq.replace('--', '').charAt(0).toUpperCase() + forcedReq.replace('--', '').slice(1).toLowerCase()) : 'Isha';
     const testAudio = `${testName === 'Fajr' ? CONFIG.audio.fajrCurrent : CONFIG.audio.regularCurrent}.mp3`;
-
     log(`🎯 Test Target: ${testName}`);
     setTimeout(() => executePreFlightAndCast(testName, testAudio, null), 2000);
 }
