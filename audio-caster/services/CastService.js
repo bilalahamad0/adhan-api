@@ -46,12 +46,13 @@ class CastService {
   /**
    * Casts a media object to a device
    */
-  async castMedia(device, mediaUrl, contentType = 'video/mp4') {
+  async castMedia(device, mediaUrl, contentType = 'video/mp4', metadata = null) {
     return new Promise((resolve, reject) => {
       const media = {
         url: mediaUrl,
         contentType: contentType,
       };
+      if (metadata) media.metadata = metadata;
 
       device.play(media, (err) => {
         if (err) return reject(err);

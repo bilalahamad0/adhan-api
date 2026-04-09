@@ -138,11 +138,42 @@ class CoreScheduler {
     const imgPath = path.join(__dirname, '..', '..', 'images', 'generated', 'current_dashboard.jpg');
 
     try {
+      let displayTime = targetTimeObj ? targetTimeObj.toFormat('h:mm a') : null;
+      let hijriDate = null;
+      let holidays = [];
+      const today = DateTime.now().setZone(this.config.timezone);
+
+      try {
+          const annualData = this.getAnnualData();
+          if (annualData && annualData.data) {
+              const m = today.month.toString();
+              const d = today.day;
+              if (annualData.data[m] && annualData.data[m][d - 1]) {
+                  const entry = annualData.data[m][d - 1];
+                  // Extract Schedule time natively if missing
+                  if (!displayTime && entry.timings && entry.timings[prayerName]) {
+                      displayTime = entry.timings[prayerName].split(' ')[0]; // E.g., '19:38'
+                      const [hours, minutes] = displayTime.split(':');
+                      displayTime = today.set({ hour: parseInt(hours), minute: parseInt(minutes), second: 0 }).toFormat('h:mm a');
+                  }
+                  
+                  const h = entry.date.hijri;
+                  hijriDate = `${h.day} ${h.month.en} ${h.year}`;
+                  holidays = h.holidays || [];
+              }
+          }
+      } catch (e) {
+          this.log(`⚠️ Metadata Parse Warning: ${e.message}`);
+      }
+      
+      // Strict Fallback
+      if (!displayTime) displayTime = today.toFormat('h:mm a');
+      const isFriday = today.weekday === 5;
+
       // a. Generate Image Overlay
       const VisualGenerator = require('../visual_generator.js');
       const vg = new VisualGenerator(this.config);
-      const timeString = targetTimeObj ? targetTimeObj.toFormat('h:mm a') : 'Now';
-      const imgBuffer = await vg.generateDashboard(prayerName, timeString, null, {});
+      const imgBuffer = await vg.generateDashboard(prayerName, displayTime, hijriDate, { holidays, isFriday });
       
       fs.mkdirSync(path.dirname(imgPath), { recursive: true });
       fs.writeFileSync(imgPath, imgBuffer);
@@ -238,8 +269,8 @@ class CoreScheduler {
              this.log(`🔄 Playback Ended. Starting cleanup...`);
              resumeTvSafely();
              
-             const finalize = () => {
-               this.cast.stopMedia(device);
+             const finalize = async () => {
+               await this.cast.stopMedia(device);
                this.cast.closeClient(device);
                if (safetyTimer) clearTimeout(safetyTimer);
                
@@ -262,7 +293,8 @@ class CoreScheduler {
           const castDuaImage = () => {
              const duaUrl = `http://${localIp}:${this.config.serverPort}/images/dua_after_adhan.png`;
              this.log(`🤲 Casting Dua Image: ${duaUrl}`);
-             this.cast.castMedia(device, duaUrl, 'image/png').then(() => {
+             const metadata = { type: 0, metadataType: 0, title: `Dua After Adhan`, images: [{ url: duaUrl }] };
+             this.cast.castMedia(device, duaUrl, 'image/png', metadata).then(() => {
                 this.log(`⏳ Dua Displayed. Waiting 20 seconds...`);
                 safetyTimer = setTimeout(() => {
                    this.log(`✅ Dua Complete.`);
@@ -287,7 +319,8 @@ class CoreScheduler {
                 // Set Volume and Cast
                 this.cast.setVolume(device, this.config.device.targetVolume).then(() => {
                    this.log(`🔊 Volume set to ${(this.config.device.targetVolume * 100).toFixed(0)}%`);
-                   this.cast.castMedia(device, castUrl).then(() => {
+                   const metadata = { type: 1, metadataType: 0, title: `${prayerName} Adhan`, images: [{ url: castUrl }] };
+                   this.cast.castMedia(device, castUrl, 'video/mp4', metadata).then(() => {
                       this.log(`🎶 Playback Started! Playing ${prayerName} on ${friendlyName}`);
                       safetyTimer = setTimeout(cleanup, 600000); // 10m fallback
                       
