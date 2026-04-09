@@ -2,8 +2,8 @@ name: Security Auto-Fix
 
 on:
   schedule:
-    - cron: '0 0 * * 1'  # Every Monday at midnight
-  workflow_dispatch:      # Allows manual trigger
+    - cron: '0 0 * * 1' # Every Monday at midnight
+  workflow_dispatch: # Allows manual trigger
 
 jobs:
   fix-vulnerabilities:
@@ -31,13 +31,13 @@ jobs:
         uses: peter-evans/create-pull-request@v6
         with:
           token: ${{ github.token }}
-          commit-message: "chore: update dependencies and fix vulnerabilities"
-          title: "🤖 [Security] Automated Dependency Fixes"
+          commit-message: 'chore: update dependencies and fix vulnerabilities'
+          title: '🤖 [Security] Automated Dependency Fixes'
           body: |
             This PR was automatically created by the Security Auto-Fixer workflow.
-            
+
             It runs `npm audit fix` across the repository to resolve high-priority security vulnerabilities identified by Dependabot.
-            
+
             If some vulnerabilities remain, they may require manual dependency replacement or are awaiting a fix from upstream maintainers.
           branch: security-autofix
           delete-branch: true

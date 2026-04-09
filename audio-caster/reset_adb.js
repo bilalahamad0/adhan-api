@@ -7,77 +7,77 @@ require('dotenv').config();
 const TV_IP = process.env.TV_IP || '127.0.0.1';
 
 function log(msg) {
-    console.log(`[${new Date().toLocaleTimeString()}] ${msg}`);
+  console.log(`[${new Date().toLocaleTimeString()}] ${msg}`);
 }
 
 function run(cmd) {
-    return new Promise((resolve) => {
-        exec(cmd, (error, stdout, stderr) => {
-            if (error) log(`⚠️ Error: ${error.message}`);
-            resolve(stdout ? stdout.trim() : '');
-        });
+  return new Promise((resolve) => {
+    exec(cmd, (error, stdout, stderr) => {
+      if (error) log(`⚠️ Error: ${error.message}`);
+      resolve(stdout ? stdout.trim() : '');
     });
+  });
 }
 
 async function resetAdb() {
-    log(`🔄 STARTING ADB RESET for ${TV_IP}...`);
+  log(`🔄 STARTING ADB RESET for ${TV_IP}...`);
 
-    // 0. Pre-Flight Ping Check
-    console.log(`1️⃣  Checking Network Connectivity...`);
-    try {
-        await new Promise((resolve, reject) => {
-            exec(`ping -c 1 -W 2 ${TV_IP}`, (err) => {
-                if (err) reject(new Error('Host unreachable'));
-                else resolve();
-            });
-        });
-        log(`✅ TV is ONLINE (Ping successful). Proceeding...`);
-    } catch (e) {
-        log(`❌ CRITICAL ERROR: TV at ${TV_IP} is NOT REACHABLE.`);
-        log(`   -> Check if TV is ON.`);
-        log(`   -> Check if TV IP Address changed.`);
-        return;
-    }
+  // 0. Pre-Flight Ping Check
+  console.log(`1️⃣  Checking Network Connectivity...`);
+  try {
+    await new Promise((resolve, reject) => {
+      exec(`ping -c 1 -W 2 ${TV_IP}`, (err) => {
+        if (err) reject(new Error('Host unreachable'));
+        else resolve();
+      });
+    });
+    log(`✅ TV is ONLINE (Ping successful). Proceeding...`);
+  } catch (e) {
+    log(`❌ CRITICAL ERROR: TV at ${TV_IP} is NOT REACHABLE.`);
+    log(`   -> Check if TV is ON.`);
+    log(`   -> Check if TV IP Address changed.`);
+    return;
+  }
 
-    // 1. Kill Server
-    log(`☠️  Killing ADB Server...`);
-    await run('adb kill-server');
+  // 1. Kill Server
+  log(`☠️  Killing ADB Server...`);
+  await run('adb kill-server');
 
-    // 2. Delete Keys (Force new key generation)
-    const homeDir = os.homedir();
-    const adbKeyPath = path.join(homeDir, '.android', 'adbkey');
-    const adbPubKeyPath = path.join(homeDir, '.android', 'adbkey.pub');
+  // 2. Delete Keys (Force new key generation)
+  const homeDir = os.homedir();
+  const adbKeyPath = path.join(homeDir, '.android', 'adbkey');
+  const adbPubKeyPath = path.join(homeDir, '.android', 'adbkey.pub');
 
-    if (fs.existsSync(adbKeyPath)) {
-        log(`🗑️  Deleting Old Keys: ${adbKeyPath}`);
-        fs.unlinkSync(adbKeyPath);
-        if (fs.existsSync(adbPubKeyPath)) fs.unlinkSync(adbPubKeyPath);
-    } else {
-        log(`ℹ️  No existing keys found at ${adbKeyPath}`);
-    }
+  if (fs.existsSync(adbKeyPath)) {
+    log(`🗑️  Deleting Old Keys: ${adbKeyPath}`);
+    fs.unlinkSync(adbKeyPath);
+    if (fs.existsSync(adbPubKeyPath)) fs.unlinkSync(adbPubKeyPath);
+  } else {
+    log(`ℹ️  No existing keys found at ${adbKeyPath}`);
+  }
 
-    // 3. Start Server (Generates new keys)
-    log(`🚀 Starting ADB Server (Regenerating keys)...`);
-    await run('adb start-server');
+  // 3. Start Server (Generates new keys)
+  log(`🚀 Starting ADB Server (Regenerating keys)...`);
+  await run('adb start-server');
 
-    // 4. Connect
-    log(`🔗 Connecting to ${TV_IP}...`);
-    log(`👉 LOOK AT THE TV SCREEN NOW for the "Allow USB Debugging" popup!`);
-    const output = await run(`adb connect ${TV_IP}`);
-    log(output);
+  // 4. Connect
+  log(`🔗 Connecting to ${TV_IP}...`);
+  log(`👉 LOOK AT THE TV SCREEN NOW for the "Allow USB Debugging" popup!`);
+  const output = await run(`adb connect ${TV_IP}`);
+  log(output);
 
-    // 5. Verify
-    log(`🔍 Verifying Status...`);
-    const devices = await run('adb devices');
-    console.log(devices);
+  // 5. Verify
+  log(`🔍 Verifying Status...`);
+  const devices = await run('adb devices');
+  console.log(devices);
 
-    if (devices.includes('unauthorized')) {
-        log(`🚨 STATUS: UNAUTHORIZED. Please accept the popup on the TV.`);
-    } else if (devices.split('\n').some(line => line.includes(TV_IP) && /\bdevice\b/.test(line))) {
-        log(`✅ STATUS: CONNECTED and AUTHORIZED.`);
-    } else {
-        log(`❓ STATUS: Unknown. Output: ${devices}`);
-    }
+  if (devices.includes('unauthorized')) {
+    log(`🚨 STATUS: UNAUTHORIZED. Please accept the popup on the TV.`);
+  } else if (devices.split('\n').some((line) => line.includes(TV_IP) && /\bdevice\b/.test(line))) {
+    log(`✅ STATUS: CONNECTED and AUTHORIZED.`);
+  } else {
+    log(`❓ STATUS: Unknown. Output: ${devices}`);
+  }
 }
 
 resetAdb();
