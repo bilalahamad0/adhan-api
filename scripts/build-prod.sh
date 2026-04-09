@@ -40,7 +40,7 @@ echo "🧹 Stripping development tests and assets verified."
 echo "🗜️ Compressing production build into $TAR_NAME..."
 cd "$BUILD_DIR"
 export COPYFILE_DISABLE=1
-tar -czf "../$TAR_NAME" .
+tar --disable-copyfile --no-xattr -czf "../$TAR_NAME" .
 cd ..
 
 # 4. Cleanup temp directory
