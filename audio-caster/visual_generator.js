@@ -278,6 +278,19 @@ class VisualGenerator {
 
     return canvas.toBuffer('image/jpeg', { quality: 0.95 });
   }
+
+  async generateDua(duaPath) {
+    await this.init();
+    const canvas = createCanvas(this.width, this.height);
+    const ctx = canvas.getContext('2d');
+
+    const image = await loadImage(duaPath);
+    // Forced Stretch: Match canvas exactly (ignoring aspect ratio)
+    // This fills the screen vertically without cropping the sides.
+    ctx.drawImage(image, 0, 0, this.width, this.height);
+
+    return canvas.toBuffer('image/jpeg', { quality: 0.95 });
+  }
 }
 
 module.exports = VisualGenerator;

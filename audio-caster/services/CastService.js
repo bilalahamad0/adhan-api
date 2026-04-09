@@ -92,10 +92,25 @@ class CastService {
   /**
    * Soft closes clients explicitly
    */
+  /**
+   * Soft closes clients explicitly
+   */
   closeClient(device) {
     try {
       if (device.client) device.client.close();
       device.close();
+    } catch (e) { }
+  }
+
+  /**
+   * Hard destroys the scanner and all underlying sockets (Legacy Parity)
+   */
+  destroyScanner() {
+    try {
+      if (this.client) {
+        this.client.destroy();
+        this.client = null;
+      }
     } catch (e) { }
   }
 }

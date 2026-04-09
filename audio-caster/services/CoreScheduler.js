@@ -281,16 +281,23 @@ class CoreScheduler {
              resumeTvSafely();
              
              const finalize = () => {
-               // Fire-and-forget stop and close sequence matches legacy parity 1:1
+               this.log(`🔄 Cleanup: Sending Stop Media...`);
                this.cast.stopMedia(device);
-               this.cast.closeClient(device);
                
-               if (safetyTimer) clearTimeout(safetyTimer);
-               
-               if (process.argv.includes('--test')) {
-                  this.log("🧪 Test Complete. Exiting in 1 second.");
-                  setTimeout(() => process.exit(0), 1000);
-               }
+               // 1.5s Settling delay ensures the Stop packet is processed by the hardware 
+               // before we pull the plug on the scanner/sockets (Legacy Parity)
+               setTimeout(() => {
+                  this.log(`🔄 Cleanup: Destroying Scanner & Sockets...`);
+                  this.cast.closeClient(device);
+                  this.cast.destroyScanner();
+                  
+                  if (safetyTimer) clearTimeout(safetyTimer);
+                  
+                  if (process.argv.includes('--test')) {
+                     this.log("🧪 Test Complete. Exiting in 1 second.");
+                     setTimeout(() => process.exit(0), 1000);
+                  }
+               }, 1500);
              };
 
              if (originalVolume !== null) {
@@ -303,23 +310,41 @@ class CoreScheduler {
              }
           };
           
-          const castDuaImage = () => {
-             const duaUrl = `http://${localIp}:${this.config.serverPort}/images/dua_after_adhan.png`;
-             this.log(`🤲 Casting Legacy Dua Image (Direct Png): ${duaUrl}`);
-             const metadata = { type: 0, metadataType: 0, title: `Dua After Adhan`, images: [{ url: duaUrl }] };
+          const castDuaImage = async () => {
+             const staticDuaPath = path.join(__dirname, '..', '..', 'images', 'dua_after_adhan.png');
              
-             this.cast.castMedia(device, duaUrl, 'image/png', metadata).then(() => {
-                this.log(`⏳ Dua Displayed. Waiting 20 seconds...`);
-                safetyTimer = setTimeout(() => {
-                   this.log(`✅ Dua Complete.`);
+             try {
+                this.log(`🎨 Generating Stretched Dua Image (V5 Final)...`);
+                const VisualGenerator = require('../visual_generator.js');
+                const vg = new VisualGenerator(this.config);
+                const buffer = await vg.generateDua(staticDuaPath);
+                
+                const generatedDuaPath = path.join(__dirname, '..', '..', 'images', 'generated', 'dua.jpg');
+                fs.writeFileSync(generatedDuaPath, buffer);
+                
+                const duaUrl = `http://${localIp}:${this.config.serverPort}/images/generated/dua.jpg?t=${Date.now()}`;
+                this.log(`🤲 Casting Stretched Dua: ${duaUrl}`);
+                const metadata = { type: 0, metadataType: 0, title: `Dua After Adhan`, images: [{ url: duaUrl }] };
+                
+                this.cast.castMedia(device, duaUrl, 'image/jpeg', metadata).then(() => {
+                   this.log(`⏳ Dua Displayed. Waiting 20 seconds...`);
+                   safetyTimer = setTimeout(() => {
+                      this.log(`✅ Dua Complete.`);
+                      currentPhase = 'DONE';
+                      cleanup();
+                   }, 20000);
+                }).catch((err) => {
+                   this.log(`❌ Dua Cast Error: ${err.message}`);
                    currentPhase = 'DONE';
                    cleanup();
-                }, 20000);
-             }).catch((err) => {
-                this.log(`❌ Dua Cast Error: ${err.message}`);
-                currentPhase = 'DONE';
-                cleanup();
-             });
+                });
+             } catch (e) {
+                this.log(`⚠️ Generation Failed: ${e.message}`);
+                const duaUrl = `http://${localIp}:${this.config.serverPort}/images/dua_after_adhan.png`;
+                this.cast.castMedia(device, duaUrl, 'image/png').then(() => {
+                    safetyTimer = setTimeout(cleanup, 20000);
+                }).catch(() => cleanup());
+             }
           };
 
           // Fetch Original Volume
