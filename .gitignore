@@ -19,3 +19,4 @@ images/previews/*
 # SSH Keys
 exit
 exit.pub
+coverage/
