@@ -85,21 +85,18 @@ class CastService {
      });
   }
 
-  /**
-   * Halts media explicitly
-   */
-  async stopMedia(device) {
-     return new Promise((resolve) => {
-        try { if (device.stop) device.stop(() => resolve(true)); else resolve(true); } 
-        catch (e) { resolve(false); }
-     });
+  stopMedia(device) {
+    try { if (device.stop) device.stop(); } catch (e) { }
   }
 
   /**
    * Soft closes clients explicitly
    */
   closeClient(device) {
-     try { if (device.client) device.client.close(); device.close(); } catch(e){}
+    try {
+      if (device.client) device.client.close();
+      device.close();
+    } catch (e) { }
   }
 }
 

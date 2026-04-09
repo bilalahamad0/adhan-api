@@ -278,21 +278,6 @@ class VisualGenerator {
 
     return canvas.toBuffer('image/jpeg', { quality: 0.95 });
   }
-
-  async generateDua(duaPath) {
-    await this.init();
-    const canvas = createCanvas(this.width, this.height);
-    const ctx = canvas.getContext('2d');
-
-    const image = await loadImage(duaPath);
-    // Cover the canvas perfectly
-    const scale = Math.max(this.width / image.width, this.height / image.height) + 0.001;
-    const x = this.width / 2 - (image.width / 2) * scale;
-    const y = this.height / 2 - (image.height / 2) * scale;
-    ctx.drawImage(image, x, y, image.width * scale, image.height * scale);
-
-    return canvas.toBuffer('image/jpeg', { quality: 0.95 });
-  }
 }
 
 module.exports = VisualGenerator;
