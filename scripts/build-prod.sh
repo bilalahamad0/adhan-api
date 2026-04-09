@@ -1,6 +1,14 @@
 #!/bin/bash
 set -e
 
+echo "🚀 Running Pre-Release Smoke Test..."
+npm run test:smoke
+
+if [ $? -ne 0 ]; then
+  echo "❌ Smoke Test Failed. Build Aborted."
+  exit 1
+fi
+
 echo "🚀 Building Production Release Artifact..."
 
 BUILD_DIR="dist"

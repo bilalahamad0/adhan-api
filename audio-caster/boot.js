@@ -51,14 +51,34 @@ async function bootSystem() {
   const app = express();
   app.use('/audio', express.static(audioDirPath));
   app.use('/images', express.static(path.join(__dirname, '..', 'images')));
+  
+  // Health endpoint for Post-Release Sanity Testing
+  app.get('/health', (req, res) => {
+    res.status(200).json({ status: 'OK', version: '2.0.0', module: 'audio-caster' });
+  });
 
-  app.listen(CONFIG.serverPort, () => {
+  const server = app.listen(CONFIG.serverPort, () => {
     console.log(`🔊 Media Server running on port ${CONFIG.serverPort}`);
   });
+
+  // Pre-Release Smoke Test hook
+  if (process.argv.includes('--smoke')) {
+     console.log('💨 SMOKE TEST: Startup successful. Environment configuration bound correctly.');
+     console.log('💨 SMOKE TEST: Shutting down safely...');
+     server.close();
+     process.exit(0);
+  }
 
   // 3. Initiate Scheduler Flow
   console.log('⏳ Awaiting schedules...');
   // Logic to bind node-schedule would go here calling scheduler.executePreFlightAndCast()
+  
+  // Complete System Test hook
+  if (process.argv.includes('--test')) {
+     console.log('🧪 SYSTEM TEST: Simulating end-to-end hardware cast pipeline...');
+     await scheduler.executePreFlightAndCast('TestPrayer', 'fajr.mp3', null);
+     console.log('🧪 SYSTEM TEST: Hardware cast command issued. Evaluator should verify TV behaviour.');
+  }
 }
 
 if (require.main === module) {

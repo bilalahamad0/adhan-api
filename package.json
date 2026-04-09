@@ -11,6 +11,9 @@
     "format": "prettier --write .",
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
     "test:cov": "npm run test -- --coverage",
+    "test:smoke": "node audio-caster/boot.js --smoke",
+    "test:system": "node audio-caster/boot.js --test",
+    "qa:sanity": "node audio-caster/tests/sanity.js",
     "build:prod": "bash scripts/build-prod.sh"
   },
   "devDependencies": {
