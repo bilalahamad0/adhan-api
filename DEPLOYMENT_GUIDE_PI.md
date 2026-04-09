@@ -62,11 +62,17 @@ Then, securely copy the artifact to your Raspberry Pi:
 scp adhan-api-production.tar.gz <pi-user>@192.168.1.PI_IP:~/
 ```
 
-Next, SSH into your Pi and unpack it:
+Next, SSH into your Pi manually (so your bash profile loads NVM correctly) and unpack it:
 ```bash
 ssh <pi-user>@192.168.1.PI_IP
+```
+
+Once logged in to the Pi, run:
+```bash
 mkdir -p ~/adhan-api
 tar -xzf ~/adhan-api-production.tar.gz -C ~/adhan-api
+cd ~/adhan-api/audio-caster
+npm install --omit=dev
 ```
 
 ## 3. Installation & Configuration

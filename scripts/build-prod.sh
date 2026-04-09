@@ -39,6 +39,7 @@ echo "🧹 Stripping development tests and assets verified."
 # 3. Zip into artifact
 echo "🗜️ Compressing production build into $TAR_NAME..."
 cd "$BUILD_DIR"
+export COPYFILE_DISABLE=1
 tar -czf "../$TAR_NAME" .
 cd ..
 
@@ -50,4 +51,10 @@ echo "   --> Artifact: $TAR_NAME"
 echo ""
 echo "To deploy to Pi, run:"
 echo "   scp $TAR_NAME <pi-user>@<pi-ip>:~/"
-echo "   ssh <pi-user>@<pi-ip> 'mkdir -p ~/adhan-api && tar -xzf ~/adhan-api-production.tar.gz -C ~/adhan-api && cd ~/adhan-api/audio-caster && npm install --omit=dev'"
+echo ""
+echo "Then SSH into your Pi to extract and install:"
+echo "   ssh <pi-user>@<pi-ip>"
+echo "   mkdir -p ~/adhan-api && tar -xzf ~/$TAR_NAME -C ~/adhan-api"
+echo "   cd ~/adhan-api/audio-caster"
+echo "   npm install --omit=dev"
+echo "   pm2 start boot.js --name adhan-caster"
