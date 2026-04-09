@@ -134,6 +134,37 @@ async function executePreFlightAndCast(prayerName, audioFileName, targetTimeObj)
     let originalVolume = null;
     let currentPhase = 'ADHAN';
 
+    const finalize = () => {
+        if (isCleanedUp && currentPhase === 'DONE') return; // Absolute shield
+        isCleanedUp = true;
+        currentPhase = 'DONE';
+
+        log(`🔄 Playback Ended. Starting final teardown...`);
+        if (tvWasInterrupted) adbCommand(tvIp, 'shell input keyevent 126');
+
+        try {
+            if (adhanDevice) {
+                log(`🔄 Finalize: Stopping device and closing client...`);
+                if (adhanDevice.stop) adhanDevice.stop();
+                if (adhanDevice.client) adhanDevice.client.close();
+                adhanDevice.close();
+            }
+        } catch (e) { }
+
+        if (safetyTimer) clearTimeout(safetyTimer);
+        try { 
+            if (Client) {
+                log(`🔄 Finalize: Destroying scanner instance...`);
+                Client.destroy(); 
+            }
+        } catch (e) { }
+
+        if (process.argv.includes('--test')) {
+            log("🧪 Test Complete. Exiting process.");
+            setTimeout(() => process.exit(0), 1000);
+        }
+    };
+
     const cleanup = () => {
         if (isCleanedUp) return;
 
@@ -145,40 +176,13 @@ async function executePreFlightAndCast(prayerName, audioFileName, targetTimeObj)
             return;
         }
 
-        if (currentPhase === 'DUA') return;
-
-        isCleanedUp = true;
-        currentPhase = 'DONE';
-        log(`🔄 Playback Ended. Starting cleanup...`);
-        
-        if (tvWasInterrupted) adbCommand(tvIp, 'shell input keyevent 126');
-
-        const finalize = () => {
-            try {
-                if (adhanDevice) {
-                    if (adhanDevice.stop) adhanDevice.stop();
-                    if (adhanDevice.client) adhanDevice.client.close();
-                    adhanDevice.close();
-                }
-            } catch (e) { }
-
-            if (safetyTimer) clearTimeout(safetyTimer);
-            try { if (Client) Client.destroy(); } catch (e) { }
-
-            if (process.argv.includes('--test')) {
-                log("🧪 Test Complete. Exiting.");
-                setTimeout(() => process.exit(0), 1000);
-            }
-        };
-
-        if (adhanDevice && originalVolume !== null) {
-            log(`🔊 Restoring Volume...`);
-            adhanDevice.setVolume(originalVolume, (err) => {
-                setTimeout(finalize, 500);
-            });
-        } else {
-            finalize();
+        // If we get an 'IDLE' status during the DUA phase, ignore it (the 20s timer wins)
+        if (currentPhase === 'DUA') {
+            log(`🛡️  Ignoring external status update during Dua phase.`);
+            return;
         }
+
+        finalize();
     };
 
     function castDuaImage() {
@@ -197,10 +201,13 @@ async function executePreFlightAndCast(prayerName, audioFileName, targetTimeObj)
             };
             log(`🤲 Casting Stretched Dua: ${duaUrl}`);
             adhanDevice.play(media, (err) => {
-                if (err) cleanup();
-                else safetyTimer = setTimeout(() => { log(`✅ Dua Complete.`); currentPhase = 'DONE'; cleanup(); }, 20000);
+                if (err) finalize();
+                else safetyTimer = setTimeout(() => { 
+                    log(`✅ Dua Complete. Forcing finalization...`); 
+                    finalize(); 
+                }, 20000);
             });
-        }).catch(() => cleanup());
+        }).catch(() => finalize());
     }
 
     Client.on('device', (device) => {
