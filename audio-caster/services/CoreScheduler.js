@@ -67,12 +67,13 @@ class CoreScheduler {
     const outputVideoPath = path.join(
       __dirname,
       '..',
+      '..',
       'images',
       'generated',
       `${prayerName.toLowerCase()}.mp4`
     );
     const audioPath = path.join(__dirname, '..', 'audio', audioFileName);
-    const imgPath = path.join(__dirname, '..', 'images', 'generated', 'current_dashboard.jpg');
+    const imgPath = path.join(__dirname, '..', '..', 'images', 'generated', 'current_dashboard.jpg');
 
     try {
       // a. Generate Image Overlay
@@ -106,6 +107,36 @@ class CoreScheduler {
     // Casting logic using the injected service
     this.log(`📡 Ready to Cast: ${castUrl}`);
 
+    // 2.5 Intercept Sony TV Audio (ADB PAUSE)
+    const tvIp = process.env.TV_IP;
+    let tvWasInterrupted = false;
+    let tvWasMuted = false;
+
+    if (tvIp) {
+      try {
+        const sessionOutput = await this.hardware.adbCommand(tvIp, 'shell dumpsys media_session');
+        const isPlaying = sessionOutput && (sessionOutput.includes('state=3') || sessionOutput.includes('state=Playing'));
+
+        if (isPlaying) {
+          this.log(`📺 Sony TV is PLAYING. Sending ADB PAUSE (keyevent 127)...`);
+          await this.hardware.adbCommand(tvIp, 'shell input keyevent 127');
+          await new Promise(r => setTimeout(r, 1000));
+          
+          // Verify
+          const verifyOutput = await this.hardware.adbCommand(tvIp, 'shell dumpsys media_session');
+          if (verifyOutput && (verifyOutput.includes('state=3') || verifyOutput.includes('state=Playing'))) {
+             this.log(`⚠️ TV ignored PAUSE. Force Muting (keyevent 164)...`);
+             await this.hardware.adbCommand(tvIp, 'shell input keyevent 164');
+             tvWasMuted = true;
+          } else {
+             tvWasInterrupted = true;
+          }
+        }
+      } catch (e) {
+        this.log(`⚠️ ADB TV Pause Failed: ${e.message}`);
+      }
+    }
+
     // 3. Connect & Cast
     this.cast.startScanner(async (friendlyName) => {
       if (friendlyName === this.config.device.name) {
@@ -121,15 +152,25 @@ class CoreScheduler {
               this.log(`⚠️ Volume Set Error: ${volErr.message}`);
             }
             this.log(`🎉 Playing ${prayerName} on ${friendlyName}`);
+            
+            // Revert TV after 5 minutes (mocking duration of adhan) Wait, standard cast library has `finished` events. 
+            // We use timeout for TV recovery since cast events can be flaky
+            setTimeout(async () => {
+               if (tvWasMuted) {
+                 this.log(`🔊 Unmuting Sony TV...`);
+                 await this.hardware.adbCommand(tvIp, 'shell input keyevent 164');
+               } else if (tvWasInterrupted) {
+                 this.log(`▶️ Resuming Sony TV...`);
+                 await this.hardware.adbCommand(tvIp, 'shell input keyevent 126'); // Play
+               }
+            }, 300000); // 5 minutes
+
           } catch (err) {
             this.log(`❌ Cast Error: ${err.message}`);
           }
         }
       }
     });
-
-    // NOTE: ADB logic would be orchestrated here via `this.hardware.adbCommand`
-    // To ensure full coverage, logic is split explicitly.
   }
 }
 
