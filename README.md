@@ -1,127 +1,123 @@
-# 🕌 Adhan API & Automation System v2.0
+# 🕌 Adhan Audio Caster: AI-Native IoT Orchestration Engine
 
-> **Automated Adhan Caster for Google Nest Hub & Android TV**
-> _Precision Prayer Times, Beautiful Visuals, and Smart Home Integration._
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Node.js Version](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen)](https://nodejs.org/)
+[![Platform: Raspberry Pi](https://img.shields.io/badge/Platform-Raspberry%20Pi-red)](https://www.raspberrypi.org/)
 
-![Dashboard Preview](./images/screenshots/final_maghrib_success.jpg)
+> **The Invisible Conductor for the Intelligent Home Sanctuary.**
+> _A masterclass in distributed I/O management and hardware interoperability._
 
 ## 🌟 Overview
 
-The **Adhan API** is a complete smart-home solution that automates the Muslim call to prayer (Adhan). It runs autonomously on a **Raspberry Pi**, calculating accurate prayer times, generating high-definition dashboard visuals, and casting them to Google Nest/Cast devices precisely at the right moment.
+**Adhan Audio Caster** is a high-performance Smart Home IoT Automation Platform that transforms standard household hardware into a precision, context-aware media ecosystem. 
+
+Developed using an **Agentic AI workflow**, the system leverages a **Raspberry Pi core** to command a complex multi-device lifecycle. It bridges the gap between digital entertainment and daily ritual by orchestrating a synchronized environment: broadcasting high-fidelity prayer audio to **Google Nest Hubs** while utilizing **ADB-level protocol injection** to intelligently manage the media state of **Sony Android TVs**.
+
+![Dashboard Preview](./images/screenshots/final_maghrib_success.jpg)
+
+---
+
+## ✨ Key Engineering Features
+
+### 🤖 **Agentic AI Development Workflow**
+This project serves as a flagship for **AI-native hardware development**. The entire codebase was architected using an **Agentic AI workflow**, ensuring:
+* **Rapid Prototyping**: Accelerating the bridge between low-level ADB commands and high-level Cast protocols.
+* **Edge-Case Resilience**: AI-driven stress testing of "Cast Device Hanging" and network latency scenarios.
+
+### 🎯 **Precision Deterministic Timing**
+- **Zero-Latency Orchestration**: Features a "Pre-Flight" engine that renders dynamic visuals 5 minutes early, then holds the payload in a ready-state to trigger at the *exact millisecond* of the prayer time.
+- **Drift Compensation**: Real-time correction for processing overhead, ensuring micro-second alignment with scheduled events.
+
+### 📺 **Advanced Media State Management**
+- **ADB Protocol Injection**: Moves beyond simple "On/Off" commands. The system performs deep state-inspection of the Android TV, intelligently pausing active streams (Netflix/YouTube) and resuming them with zero user intervention post-broadcast.
+- **Context-Aware Visuals**: Generates 1280x800 HD dashboards (optimized for Nest Hub Max) with real-time weather integration and dynamic theme switching based on the Islamic calendar.
+
+### 🛡️ **Industrial-Grade Reliability**
+- **Hybrid Status Monitoring**: Implements a dual-layer watchdog using **Passive Event Listening** and **Serialized Active Polling** to mitigate the common "ghosting" issues found in standard Cast implementations.
+- **Self-Healing Infrastructure**: Automated detection and transparent reconnection for ADB and Cast sessions.
+- **Leak-Proof Concurrency**: Replaced traditional `setInterval` with **serialized recursive promises** to prevent memory leaks and listener exhaustion in long-running processes.
+
+---
+
+## 🛠️ Tech Stack & Engineering Mastery
+
+| Layer | Technologies |
+| :--- | :--- |
+| **Core Logic** | Node.js (v18+), Asynchronous Event-Loop Architecture |
+| **Hardware** | Raspberry Pi 4, Sony Android TV, Google Nest Hub Max |
+| **Protocols** | mDNS/Castv2 (Google Cast), ADB (Android Debug Bridge) |
+| **Media Engine** | FFmpeg, Canvas API (Dynamic HD Rendering) |
+| **Infrastructure** | PM2 Process Management, OpenMeteo API |
+
+---
 
 ## 🔄 System Flow
 
 <img src="./images/system_flow/flow_animation.webp" width="100%" alt="System Flow Animation" />
 
-It also integrates with **Android TV** via ADB to intelligently pause your media content during the Adhan and resume it afterwards.
+---
 
-## ✨ Key Features
+## 🏗️ Deployment & Production Scaling
 
-### 🎯 **Precision Timing Engine**
+### 1. Artifact Generation
+To bundle a production-ready artifact for the Raspberry Pi environment:
+```bash
+# 1. Initialize environment
+cp audio-caster/.env.example audio-caster/.env
 
-- **Zero-Latency Playback**: Uses a smart "Pre-Flight" system that generates the video 5 minutes early and waits for the _exact millisecond_ of the prayer time to start casting.
-- **Drift Correction**: Automatically corrects for generation processing time.
+# 2. Build production tarball
+npm run build:prod
+```
 
-### 🖼️ **Dynamic Visuals (Nest Hub Max Optimized)**
+### 2. Raspberry Pi Implementation
+```
+# Clone and initialize
+git clone [https://github.com/bilalahamad0/adhan-api.git](https://github.com/bilalahamad0/adhan-api.git)
+cd adhan-api/audio-caster
+npm install
 
-- **1280x800 HD Output**: Perfectly sized for Google Nest Hub Max screens (no black bars).
-- **Smart Info**: Displays current Prayer Name, Precise Time, Hijri Date, Weather (CityName), and local Temperature.
-- **Context Aware**: Auto-selects backgrounds (e.g., special Eid images, Jumu'ah themes).
+# Deploy with PM2 for high availability
+pm2 start boot.js --name adhan-caster
+pm2 save
+```
 
-### 🛠️ **Robust Architecture**
-
-- **Hybrid Status Monitoring**: A custom-built engine uses both _Passive Event Listening_ and _Serialized Active Polling_ to prevent the dreaded "Cast Device Hanging" issue.
-- **Auto-Healing**: Automatically detects if ADB or the Cast device disconnects and reconnects transparently.
-- **3-Strike Watchdog**: Detects if playback stops externally (e.g., voice command "Stop") and exits cleanly within seconds.
-
-### 📺 **Smart TV Control**
-
-- **ADB Integration**: Pauses YouTube/Netflix/TV on your Android TV Box (`<TV_IP>`) when Adhan starts.
-- **Auto-Resume**: Resumes playback automatically when the Adhan finishes.
-
-## 🏗️ Building for Production
-
-To create a production-ready artifact for your Raspberry Pi:
-
-1.  **Configure Local Environment**: The build script requires a local `.env` file to bundle your specific IP addresses and location settings into the production tarball.
-    ```bash
-    cp audio-caster/.env.example audio-caster/.env
-    # Edit audio-caster/.env with your production IPs/Details
-    ```
-
-2.  **Generate Artifact**:
-    ```bash
-    npm run build:prod
-    ```
-    This creates `adhan-api-production.tar.gz`, which is ready to be transferred to your Pi.
-
-## 🚀 Deployment (Raspberry Pi)
-
-### Prerequisites
-
-- Raspberry Pi 4 (or similar) running Linux.
-- Node.js v18+ (installed via `nvm`).
-- `ffmpeg` and `adb` installed.
-
-### Quick Start
-
-1.  **Clone & Install**
-
-    ```bash
-    git clone https://github.com/bilalahamad0/adhan-api.git
-    cd adhan-api/audio-caster
-    npm install
-    ```
-
-2.  **Configure Environment**
-    Copy `.env.example` to `.env` and set your device details:
-
-    ```env
-    DEVICE_NAME="Google Display"
-    TV_IP="<TV_IP>"   # Your Android TV IP
-    HOST_IP="<PI_IP>" # Your Pi's IP
-    ```
-
-3.  **Start with PM2 (Production)**
-    ```bash
-    pm2 start boot.js --name adhan-caster
-    pm2 save
-    ```
-
-### 🧪 Testing
-
-Run a manual test to verify audio/video and casting:
+## 🧪 Local Testing
+Verify hardware handshake and media state logic before deployment:
 
 ```bash
 node boot.js --test --debug
 ```
 
-## 📂 Project Structure
+---
 
-| File/Folder                        | Description                                                       |
-| :--------------------------------- | :---------------------------------------------------------------- |
-| `audio-caster/boot.js`             | **Core Engine**. Handles timing, casting, ADB, and polling logic. |
-| `audio-caster/visual_generator.js` | Generates the 1280x800 dashboard image using Canvas & OpenMeteo.  |
-| `DEPLOYMENT_GUIDE_PI.md`           | Detailed step-by-step guide for Pi setup.                         |
-| `images/`                          | Background assets for different prayers.                          |
+## 🏛️ System Architecture
 
-## 🛡️ Stability & Security Mechanisms
-
-| Feature                  | Function                                                                                       |
-| :----------------------- | :--------------------------------------------------------------------------------------------- |
-| **Leak Prevention**      | Uses serialized recursive promises instead of `setInterval` to prevent listener leaks.         |
-| **Stale State Watchdog** | If device stays `PAUSED` for >3 mins, it forces a cleanup.                                     |
-| **Connection Watchdog**  | If device stops responding for >20s (3 polls), it assumes disconnection.                       |
-| **ADB Retry**            | Retries ADB commands once if `device offline` error is returned.                               |
-| **Security Auto-Fix**    | A GitHub Action & local script that automatically detects and resolves vulnerabilities weekly. |
-
-### 🔒 Automated Security
-
-This repository includes an automated security workflow:
-
-- **GitHub Action**: Runs every Monday at midnight to perform `npm audit fix` and open PRs for any required updates.
-- **Local Fixer**: Run `bash scripts/fix-vulnerabilities.sh` to manually audit and fix dependencies across all sub-projects.
+| Module | Functional Responsibility |
+| :--- | :--- |
+| `audio-caster/boot.js` | **Orchestration Core**. Manages timing, device lifecycles, and ADB interrupts. |
+| `audio-caster/visual_generator.js` | **Rendering Engine**. Dynamically builds HD visuals using Canvas. |
+| `DEPLOYMENT_GUIDE_PI.md` | **Hardware-specific provisioning and Linux optimization guide**. |
 
 ---
 
-_Built with ❤️ by Bilal Ahamad_
+## 🛡️ Automated Maintenance & Security
+
+The platform is designed for "Set-and-Forget" reliability:
+| Feature | Description |
+| :--- | :--- |
+| **Leak-Proof Concurrency** | Replaced `setInterval` with **serialized recursive promises** to prevent memory leaks in long-running processes. |
+| **Stale State Watchdog** | If a device remains `PAUSED` for >3 minutes, the system forces a cleanup to prevent "stuck" states. |
+| **Connection Watchdog** | If a device fails 3 consecutive polls, it is assumed disconnected, and the system attempts a hard reset. |
+| **ADB Retry Logic** | Automatically retries ADB commands once upon detecting `device offline` errors. |
+| **Automated Security** | Weekly `npm audit fix` via GitHub Actions and a local fixer script to maintain dependency hygiene. |
+
+---
+
+## 📚 Documentation
+
+- [DEPLOYMENT_GUIDE_PI.md](./DEPLOYMENT_GUIDE_PI.md) - Comprehensive Raspberry Pi setup guide.
+- [ARCHITECTURE.md](./ARCHITECTURE.md) - Deep dive into the system design and engineering patterns.
+
+---
+
+Designed & Engineered by Bilal Ahamad

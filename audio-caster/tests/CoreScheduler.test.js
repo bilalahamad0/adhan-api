@@ -54,6 +54,7 @@ describe('CoreScheduler', () => {
 
     const fakeTimeObj = {
       toMillis: () => Date.now() - 15 * 60 * 1000, // 15 mins ago
+      toFormat: jest.fn().mockReturnValue('17:00'),
     };
 
     await scheduler.executePreFlightAndCast('Dhuhr', 'azan.mp3', fakeTimeObj);

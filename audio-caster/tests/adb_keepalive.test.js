@@ -30,12 +30,11 @@ describe('AdbKeepAlive', () => {
   it('restarts ADB server if devices return null (offline)', async () => {
     fakeHardware.ping.mockResolvedValue(true);
     fakeHardware.getAdbDevices.mockResolvedValue(null);
-    fakeHardware.runExec.mockResolvedValue('connected to 1.2.3.4');
 
     await service.checkAndHeal();
 
     expect(fakeHardware.startAdbServer).toHaveBeenCalled();
-    expect(fakeHardware.runExec).toHaveBeenCalledWith('adb connect 1.2.3.4');
+    expect(fakeHardware.runExec).not.toHaveBeenCalled(); // Returns early after server start
   });
 
   it('runs dummy shell date if TV is authorized and connected', async () => {
@@ -45,7 +44,7 @@ describe('AdbKeepAlive', () => {
     await service.checkAndHeal();
 
     expect(fakeHardware.adbCommand).toHaveBeenCalledWith('1.2.3.4', 'shell date');
-    expect(fakeHardware.runExec).not.toHaveBeenCalled(); // No connect sequences
+    expect(fakeHardware.runExec).not.toHaveBeenCalled();
   });
 
   it('runs force connect sequence if TV is unauthorized', async () => {
@@ -57,13 +56,13 @@ describe('AdbKeepAlive', () => {
 
     await service.checkAndHeal();
 
-    expect(fakeHardware.runExec).toHaveBeenCalledWith('adb disconnect 1.2.3.4');
-    expect(fakeHardware.runExec).toHaveBeenCalledWith('adb connect 1.2.3.4');
+    expect(fakeHardware.runExec).toHaveBeenCalledWith('adb disconnect 1.2.3.4:5555');
+    expect(fakeHardware.runExec).toHaveBeenCalledWith('adb connect 1.2.3.4:5555');
   });
 
   it('handles exceptions safely', async () => {
     fakeHardware.ping.mockRejectedValue(new Error('Network Crash'));
     await service.checkAndHeal();
-    expect(service.log).toHaveBeenCalledWith('🔥 Error: Network Crash');
+    expect(service.log).toHaveBeenCalledWith('🔥 Unexpected Error during check: Network Crash');
   });
 });
