@@ -59,7 +59,7 @@ This project serves as a flagship for **AI-native hardware development**. The en
 
 This project features a **Live AI-Driven Engineering Dashboard** that tracks development metrics, AI utilization, and system health in real-time.
 
-> **[View Interactive Dashboard ↗](./dashboard.html)**
+> **[View Interactive Dashboard ↗](https://htmlpreview.github.io/?https://github.com/bilalahamad0/adhan-api/blob/main/dashboard.html)**
 
 ---
 
