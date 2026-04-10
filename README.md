@@ -25,7 +25,7 @@ It also integrates with **Android TV** via ADB to intelligently pause your media
 ### 🖼️ **Dynamic Visuals (Nest Hub Max Optimized)**
 
 - **1280x800 HD Output**: Perfectly sized for Google Nest Hub Max screens (no black bars).
-- **Smart Info**: Displays current Prayer Name, Precise Time, Hijri Date, Weather (Sunnyvale), and local Temperature.
+- **Smart Info**: Displays current Prayer Name, Precise Time, Hijri Date, Weather (CityName), and local Temperature.
 - **Context Aware**: Auto-selects backgrounds (e.g., special Eid images, Jumu'ah themes).
 
 ### 🛠️ **Robust Architecture**

@@ -1,6 +1,6 @@
 const schedule = require('node-schedule');
 const axios = require('axios');
-require('events').EventEmitter.defaultMaxListeners = 25; 
+require('events').EventEmitter.defaultMaxListeners = 25;
 const fs = require('fs');
 const { DateTime } = require('luxon');
 const ChromecastAPI = require('chromecast-api');
@@ -22,14 +22,16 @@ const ffmpeg = require('fluent-ffmpeg');
 // --- CONFIGURATION ---
 const CONFIG = {
     location: {
-        city: process.env.LOCATION_CITY || 'Sunnyvale',
-        country: process.env.LOCATION_COUNTRY || 'US',
+        city: process.env.LOCATION_CITY || 'CityName',
+        country: process.env.LOCATION_COUNTRY || 'CountryCode',
+        lat: process.env.LOCATION_LAT || '0.0',
+        lon: process.env.LOCATION_LON || '0.0',
         method: parseInt(process.env.LOCATION_METHOD || 2), // ISNA
-        school: parseInt(process.env.LOCATION_SCHOOL || 1)  
+        school: parseInt(process.env.LOCATION_SCHOOL || 1)
     },
     device: {
         name: process.env.DEVICE_NAME || 'Google Display',
-        targetVolume: 0.55 
+        targetVolume: 0.55
     },
     audio: {
         fajrCurrent: "fajr",
@@ -89,7 +91,7 @@ async function ensureAudioCache() {
 }
 
 // --- ENGINE (Phase 16: Zero-Latency Restoration) ---
-async function executePreFlightAndCast(prayerName, audioFileName, targetTimeObj) {
+async function executePreFlightAndCast(prayerName, audioFileName, targetTimeObj, prayerContext = null) {
     const localIp = getLocalIp();
     log(`🚀 TRIGGER: ${prayerName} Time! Starting pre-flight...`);
 
@@ -102,13 +104,26 @@ async function executePreFlightAndCast(prayerName, audioFileName, targetTimeObj)
         const today = DateTime.now().setZone(CONFIG.timezone);
         const VisualGenerator = require('./visual_generator.js');
         const vg = new VisualGenerator(CONFIG);
-        
-        // 1. Pre-generate Dashboard
-        const imgBuffer = await vg.generateDashboard(prayerName, targetTimeObj ? targetTimeObj.toFormat('h:mm a') : today.toFormat('h:mm a'), null, {});
+
+        // 1. Logic for Context (Hijri, Friday, Holidays)
+        const hijri = prayerContext?.date?.hijri;
+        const hijriStr = hijri ? `${hijri.day} ${hijri.month.en} ${hijri.year}` : null;
+        const isFriday = DateTime.now().setZone(CONFIG.timezone).weekday === 5;
+
+        // 2. Pre-generate Dashboard
+        const imgBuffer = await vg.generateDashboard(
+            prayerName,
+            targetTimeObj ? targetTimeObj.toFormat('h:mm a') : today.toFormat('h:mm a'),
+            hijriStr,
+            {
+                isFriday: isFriday,
+                holidays: hijri?.holidays || []
+            }
+        );
         fs.mkdirSync(path.dirname(imgPath), { recursive: true });
         fs.writeFileSync(imgPath, imgBuffer);
 
-        // 2. Pre-generate Stretched Dua (Essential for seamless transition)
+        // 3. Pre-generate Stretched Dua (Essential for seamless transition)
         const staticDuaPath = path.join(IMAGES_DIR, 'dua_after_adhan.png');
         const duaBuffer = await vg.generateDua(staticDuaPath);
         fs.writeFileSync(generatedDuaPath, duaBuffer);
@@ -127,7 +142,7 @@ async function executePreFlightAndCast(prayerName, audioFileName, targetTimeObj)
 
     if (targetTimeObj) {
         const delay = targetTimeObj.toMillis() - Date.now();
-        if (delay > 0) { log(`⏳ Waiting ${Math.round(delay/1000)}s for precise time...`); await new Promise(r => setTimeout(r, delay)); }
+        if (delay > 0) { log(`⏳ Waiting ${Math.round(delay / 1000)}s for precise time...`); await new Promise(r => setTimeout(r, delay)); }
     }
 
     const castUrl = `http://${localIp}:${CONFIG.serverPort}/images/generated/${prayerName.toLowerCase()}.mp4?t=${Date.now()}`;
@@ -137,13 +152,27 @@ async function executePreFlightAndCast(prayerName, audioFileName, targetTimeObj)
     let tvWasInterrupted = false;
     if (tvIp) {
         try {
+            log(`📺 Checking Sony TV (${tvIp})...`);
+            // Ensure ADB is connected first
+            await new Promise(r => exec(`adb connect ${tvIp}:5555`, r));
+
             const res = await new Promise(resolve => exec(`adb -s ${tvIp}:5555 shell dumpsys media_session`, (e, stdout) => resolve(stdout)));
+
+            // Log a snippet of the result for debugging
+            if (res) {
+                const sessions = res.split('\n').filter(l => l.includes('state=')).map(l => l.trim());
+                log(`📺 Active Media Sessions: ${sessions.length > 0 ? sessions.join(', ') : 'None'}`);
+            }
+
+            // Check if anything is playing (state=3) or buffering (state=4/6/8 depend on app)
             if (res && (res.includes('state=3') || res.includes('state=Playing'))) {
                 log(`📺 TV is PLAYING. Sending ADB PAUSE...`);
                 exec(`adb -s ${tvIp}:5555 shell input keyevent 127`);
                 tvWasInterrupted = true;
+            } else {
+                log(`📺 TV is not currently playing media. Skipping pause.`);
             }
-        } catch (e) { }
+        } catch (e) { log(`⚠️ ADB Check Failed: ${e.message}`); }
     }
 
     const Client = new ChromecastAPI();
@@ -159,38 +188,57 @@ async function executePreFlightAndCast(prayerName, audioFileName, targetTimeObj)
         currentPhase = 'DONE';
 
         log(`🔄 Finalizing: Hard terminating session...`);
-        if (tvWasInterrupted) exec(`adb -s ${tvIp}:5555 shell input keyevent 126`);
 
-        const killSystem = () => {
-            try { 
-                if (adhanDevice) adhanDevice.close(); 
-                if (Client) Client.destroy(); 
-            } catch (e) { }
-            if (safetyTimer) clearTimeout(safetyTimer);
-            if (process.argv.includes('--test')) {
-                log("🧪 Test Complete. Exiting.");
-                setTimeout(() => process.exit(0), 1000);
-            }
-        };
+        const performHardStop = () => {
+            if (tvWasInterrupted) exec(`adb -s ${tvIp}:5555 shell input keyevent 126`);
 
-        try {
-            if (adhanDevice && adhanDevice.client) {
-                // HARD STOP: Kill the receiver application itself
-                const receiver = adhanDevice.client.receiver;
-                if (receiver) {
-                    log(`🛑 Sending RECEIVER STOP (Return to Clock)...`);
-                    adhanDevice.client.stop(receiver, (err) => {
-                        log(`✅ Receiver exited.`);
+            const killSystem = () => {
+                try {
+                    if (adhanDevice) adhanDevice.close();
+                    if (Client) Client.destroy();
+                } catch (e) { }
+                if (safetyTimer) clearTimeout(safetyTimer);
+                if (process.argv.includes('--test')) {
+                    log("🧪 Test Complete. Exiting.");
+                    setTimeout(() => process.exit(0), 1000);
+                }
+            };
+
+            try {
+                if (adhanDevice && adhanDevice.client) {
+                    // HARD STOP: Kill the receiver application itself
+                    const receiver = adhanDevice.client.receiver;
+                    if (receiver) {
+                        log(`🛑 Sending RECEIVER STOP (Return to Clock)...`);
+                        adhanDevice.client.stop(receiver, (err) => {
+                            log(`✅ Receiver exited.`);
+                            adhanDevice.client.close();
+                            killSystem();
+                        });
+                    } else {
                         adhanDevice.client.close();
                         killSystem();
-                    });
-                } else {
-                    adhanDevice.client.close();
-                    killSystem();
-                }
-            } else { killSystem(); }
-        } catch (e) { killSystem(); }
+                    }
+                } else { killSystem(); }
+            } catch (e) { killSystem(); }
+        };
+
+        // 1. RESTORE VOLUME FIRST
+        if (adhanDevice && originalVolume !== null) {
+            log(`🔊 Restoring original volume to ${(originalVolume * 100).toFixed(0)}%...`);
+            try {
+                adhanDevice.setVolume(originalVolume, () => {
+                    performHardStop();
+                });
+            } catch (e) {
+                log(`⚠️ Volume restoration failed: ${e.message}`);
+                performHardStop();
+            }
+        } else {
+            performHardStop();
+        }
     };
+
 
     const cleanup = () => {
         if (isCleanedUp) return;
@@ -219,36 +267,100 @@ async function executePreFlightAndCast(prayerName, audioFileName, targetTimeObj)
         });
     }
 
+    // --- CASTING ENGINE ---
+    const discoveryTimeout = setTimeout(() => {
+        if (!adhanDevice && !isCleanedUp) {
+            log(`❌ Discovery Timeout: Device "${CONFIG.device.name}" not found after 30s.`);
+            finalize();
+        }
+    }, 30000);
+
+    Client.on('error', (err) => {
+        log(`❌ Chromecast Client Error: ${err.message}`);
+        finalize();
+    });
+
     Client.on('device', (device) => {
         if (device.friendlyName === CONFIG.device.name) {
-            if (adhanDevice) return;
+            if (adhanDevice || isCleanedUp) return;
             adhanDevice = device;
+            clearTimeout(discoveryTimeout);
             log(`✅ Connected to Adhan Speaker: ${device.friendlyName}`);
 
-            device.getReceiverStatus((err, status) => {
-                if (!err && status && status.volume) originalVolume = status.volume.level;
-                device.setVolume(CONFIG.device.targetVolume, () => {
-                    const dashboardUrl = `http://${localIp}:${CONFIG.serverPort}/images/generated/current_dashboard.jpg?t=${Date.now()}`;
-                    const media = {
-                        url: castUrl, contentType: 'video/mp4',
-                        metadata: { type: 1, metadataType: 0, title: `${prayerName} Adhan`, images: [{ url: dashboardUrl }] }
-                    };
+            device.on('error', (err) => {
+                log(`❌ Device Error: ${err.message}`);
+                finalize();
+            });
+
+            const startPlayback = () => {
+                if (isCleanedUp) return;
+                const dashboardUrl = `http://${localIp}:${CONFIG.serverPort}/images/generated/current_dashboard.jpg?t=${Date.now()}`;
+                const media = {
+                    url: castUrl,
+                    contentType: 'video/mp4',
+                    metadata: {
+                        type: 1,
+                        metadataType: 0,
+                        title: `${prayerName} Adhan`,
+                        images: [{ url: dashboardUrl }]
+                    }
+                };
+
+                try {
+                    log(`🎶 Starting Playback: ${prayerName}...`);
                     device.play(media, (err) => {
-                        if (err) finalize();
-                        else {
-                            log(`🎶 Playback Started!`);
-                            safetyTimer = setTimeout(finalize, 600000);
+                        if (err) {
+                            log(`❌ Play Command Failed: ${err.message}`);
+                            finalize();
+                        } else {
+                            log(`🎶 Playback Started Successfully!`);
+                            if (safetyTimer) clearTimeout(safetyTimer);
+                            safetyTimer = setTimeout(finalize, 600000); // 10m safety
+
                             let lastState = '';
                             device.on('status', (s) => {
-                                if (s && s.playerState !== lastState) { log(`📊 Status: ${s.playerState}`); lastState = s.playerState; }
-                                if (!s || s.playerState === 'IDLE') { log(`⏹️  Finished.`); cleanup(); }
+                                if (s && s.playerState !== lastState) {
+                                    log(`📊 Status Update: ${s.playerState}`);
+                                    lastState = s.playerState;
+                                }
+                                if (!s || s.playerState === 'IDLE') {
+                                    log(`⏹️  Playback Finished.`);
+                                    cleanup();
+                                }
                             });
                         }
                     });
+                } catch (e) {
+                    log(`❌ Exception during device.play(): ${e.message}`);
+                    finalize();
+                }
+            };
+
+            // Volume and Play Sequence
+            try {
+                device.getReceiverStatus((err, status) => {
+                    if (!err && status && status.volume) {
+                        originalVolume = status.volume.level;
+                    }
+
+                    log(`🔊 Setting Volume to ${CONFIG.device.targetVolume}...`);
+                    try {
+                        device.setVolume(CONFIG.device.targetVolume, (volErr) => {
+                            if (volErr) log(`⚠️ Volume set error (non-fatal): ${volErr.message}`);
+                            startPlayback();
+                        });
+                    } catch (vEx) {
+                        log(`⚠️ Volume exception (non-fatal): ${vEx.message}`);
+                        startPlayback();
+                    }
                 });
-            });
+            } catch (e) {
+                log(`❌ Critical Exception during device interaction: ${e.message}`);
+                finalize();
+            }
         }
     });
+
 }
 
 const { exec } = require('child_process');
@@ -287,7 +399,7 @@ async function scheduleToday() {
         let triggerTime = scheduleTime.minus({ minutes: 5 });
         if (triggerTime < DateTime.now().setZone(CONFIG.timezone)) triggerTime = DateTime.now().setZone(CONFIG.timezone).plus({ seconds: 2 });
 
-        schedule.scheduleJob(triggerTime.toJSDate(), () => executePreFlightAndCast(prayer, audioFile, scheduleTime));
+        schedule.scheduleJob(triggerTime.toJSDate(), () => executePreFlightAndCast(prayer, audioFile, scheduleTime, todayEntry));
         log(`   - ${prayer}: ${timeStr} (Trigger: ${triggerTime.toFormat('h:mm:ss a')})`);
     });
 }

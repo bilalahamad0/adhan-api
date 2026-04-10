@@ -111,8 +111,10 @@ class VisualGenerator {
     }
 
     try {
-      // Open-Meteo for Sunnyvale (Celsius) + is_day
-      const url = `https://api.open-meteo.com/v1/forecast?latitude=37.3688&longitude=-122.0363&current=temperature_2m,weather_code,is_day&temperature_unit=celsius&timezone=auto`;
+      // Open-Meteo for Location (Celsius) + is_day
+      const lat = this.config.location.lat || '0.0';
+      const lon = this.config.location.lon || '0.0';
+      const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code,is_day&temperature_unit=celsius&timezone=auto`;
       const res = await axios.get(url);
       const current = res.data.current;
       

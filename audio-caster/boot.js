@@ -15,8 +15,8 @@ process.on('uncaughtException', (err) => {
 
 const CONFIG = {
   location: {
-    city: process.env.LOCATION_CITY || 'Sunnyvale',
-    country: process.env.LOCATION_COUNTRY || 'US',
+    city: process.env.LOCATION_CITY || 'CityName',
+    country: process.env.LOCATION_COUNTRY || 'CountryCode',
     method: parseInt(process.env.LOCATION_METHOD || 2), // ISNA
     school: parseInt(process.env.LOCATION_SCHOOL || 1), // Hanafi
   },

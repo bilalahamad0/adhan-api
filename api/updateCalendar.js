@@ -41,8 +41,8 @@ export default async function handler(req, res) {
       ? `https://${process.env.VERCEL_URL}`
       : 'http://localhost:3000';
 
-    const country = process.env.ADHAN_COUNTRY || 'USA';
-    const city = process.env.ADHAN_CITY || 'Sunnyvale';
+    const country = process.env.ADHAN_COUNTRY || 'CountryCode';
+    const city = process.env.ADHAN_CITY || 'CityName';
 
     const response = await axios.get(`${baseUrl}/api/prayerTimes?country=${country}&city=${city}`);
 
