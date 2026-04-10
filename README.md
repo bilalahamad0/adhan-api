@@ -55,7 +55,15 @@ This project serves as a flagship for **AI-native hardware development**. The en
 
 <img src="./images/system_flow/flow_animation.webp" width="100%" alt="System Flow Animation" />
 
+## 📊 Development Analytics
+
+This project features a **Live AI-Driven Engineering Dashboard** that tracks development metrics, AI utilization, and system health in real-time.
+
+> **[View Interactive Dashboard ↗](./dashboard.html)**
+
 ---
+
+**Adhan Audio Caster** integrates with **Android TV** via ADB to intelligently pause your media content during the Adhan and resume it afterwards.
 
 ## 🏗️ Deployment & Production Scaling
 
