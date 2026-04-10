@@ -1,13 +1,17 @@
 #!/bin/bash
 set -e
 
-echo "🚀 Running Pre-Release Smoke Test..."
-npm run test:smoke
-
-if [ $? -ne 0 ]; then
-  echo "❌ Smoke Test Failed. Build Aborted."
+# 0. Safety Check: Ensure .env exists for production bundling
+if [ ! -f "audio-caster/.env" ]; then
+  echo "❌ Build Aborted: 'audio-caster/.env' not found!"
+  echo "   This file is required to bundle production settings (IPs, Location) into the artifact."
+  echo "   Please run: cp audio-caster/.env.example audio-caster/.env"
+  echo "   Then edit the file with your specific device and location details."
   exit 1
 fi
+
+echo "🚀 Running Pre-Release Smoke Test..."
+npm run test:smoke
 
 echo "🚀 Building Production Release Artifact..."
 

@@ -39,6 +39,22 @@ It also integrates with **Android TV** via ADB to intelligently pause your media
 - **ADB Integration**: Pauses YouTube/Netflix/TV on your Android TV Box (`<TV_IP>`) when Adhan starts.
 - **Auto-Resume**: Resumes playback automatically when the Adhan finishes.
 
+## 🏗️ Building for Production
+
+To create a production-ready artifact for your Raspberry Pi:
+
+1.  **Configure Local Environment**: The build script requires a local `.env` file to bundle your specific IP addresses and location settings into the production tarball.
+    ```bash
+    cp audio-caster/.env.example audio-caster/.env
+    # Edit audio-caster/.env with your production IPs/Details
+    ```
+
+2.  **Generate Artifact**:
+    ```bash
+    npm run build:prod
+    ```
+    This creates `adhan-api-production.tar.gz`, which is ready to be transferred to your Pi.
+
 ## 🚀 Deployment (Raspberry Pi)
 
 ### Prerequisites
