@@ -27,6 +27,7 @@
   "overrides": {
     "systeminformation": "^5.31.3",
     "ip": "^2.0.1",
-    "xml2js": "^0.6.2"
+    "xml2js": "^0.6.2",
+    "basic-ftp": "5.2.2"
   }
 }

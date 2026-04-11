@@ -18,6 +18,7 @@ function log(msg) {
 }
 
 const ffmpeg = require('fluent-ffmpeg');
+ffmpeg.setFfmpegPath('/usr/local/bin/ffmpeg');
 
 // --- CONFIGURATION ---
 const CONFIG = {
@@ -108,35 +109,78 @@ async function executePreFlightAndCast(prayerName, audioFileName, targetTimeObj,
         // 1. Logic for Context (Hijri, Friday, Holidays)
         const hijri = prayerContext?.date?.hijri;
         const hijriStr = hijri ? `${hijri.day} ${hijri.month.en} ${hijri.year}` : null;
-        const isFriday = DateTime.now().setZone(CONFIG.timezone).weekday === 5;
+        const isFriday = today.weekday === 5;
 
-        // 2. Pre-generate Dashboard
+        // 2. Weather Fetch for Baking
+        const weather = await vg.getWeather();
+        log(`⛅ Baking with weather: ${weather.temp}, Code: ${weather.code}`);
+
+        // 3. Pre-generate Dashboard
         const imgBuffer = await vg.generateDashboard(
             prayerName,
             targetTimeObj ? targetTimeObj.toFormat('h:mm a') : today.toFormat('h:mm a'),
             hijriStr,
-            {
-                isFriday: isFriday,
-                holidays: hijri?.holidays || []
-            }
+            { isFriday, holidays: hijri?.holidays || [] }
         );
         fs.mkdirSync(path.dirname(imgPath), { recursive: true });
         fs.writeFileSync(imgPath, imgBuffer);
 
-        // 3. Pre-generate Stretched Dua (Essential for seamless transition)
+        // 4. Pre-generate Stretched Dua
         const staticDuaPath = path.join(IMAGES_DIR, 'dua_after_adhan.png');
         const duaBuffer = await vg.generateDua(staticDuaPath);
         fs.writeFileSync(generatedDuaPath, duaBuffer);
-        log(`🖼️  Pre-generation Complete: Video and Stretched Dua ready.`);
 
-        // 3. Bake Video
+        // 5. Select Weather Filter (v22 Audited Manual-Stitch)
+        let filterChain = '[bg][weath]lut2=c0=\'x+y\':c1=\'x\':c2=\'x\',format=yuv420p[v]'; // Default Clear
+        let weatherFilter = 'color=black:s=1280x800:d=5'; // Default constant black block
+
+        if (weather.code >= 51 && weather.code <= 67) {
+            log('🌧️  Condition: RAIN (v22 Dense)');
+            weatherFilter = 'color=black:s=1280x800:d=5,noise=alls=100:allf=t+u,dblur=90:60';
+        } else if (weather.code >= 71 && weather.code <= 77) {
+            log('❄️  Condition: SNOW (v22 Slow Drift)');
+            weatherFilter = 'color=black:s=1280x800:d=5,noise=alls=100:allf=t+u,scale=64:40:flags=neighbor,scale=1280:800:flags=neighbor,gblur=15,setpts=4.0*PTS';
+        } else if (weather.code >= 45 && weather.code <= 48) {
+            log('≡  Condition: FOG (v22 Patchy)');
+            weatherFilter = 'color=black:s=1280x800:d=5,noise=alls=100:allf=t+u,scale=32:20:flags=neighbor,scale=1280:800:flags=neighbor,boxblur=50,scroll=h=0.03';
+        }
+
+        log(`🖼️  Baking Adhan Video (v22 Master)...`);
+
+        // 6. Bake Video (Zero-Chroma Safety Profile)
         await new Promise((resolve, reject) => {
             ffmpeg()
-                .input(imgPath).inputOptions(['-loop 1']).input(audioPath)
-                .videoCodec('libx264').audioCodec('aac').audioFrequency(44100)
-                .outputOptions(['-pix_fmt yuv420p', '-preset ultrafast', '-profile:v baseline', '-level 3.0', '-tune stillimage', '-shortest'])
+                .input(imgPath).inputOptions(['-loop 1'])
+                .input(audioPath)
+                .complexFilter([
+                    // Background Prep: Scale, Pad, and prepare standard YUV format
+                    `[0:v]scale=1280:800,setsar=1,format=yuv420p[base]`,
+                    
+                    // Procedural Weather Mask: Generate black block + Noise/Motion within the same string
+                    `color=black:s=1280x800:d=5,${weatherFilter},format=yuv420p[mask]`,
+                    
+                    // Final Stitch: Additive Luminance only on the brightness channel
+                    `[base][mask]lut2=c0='x+y':c1='x':c2='x',format=yuv420p[v]`
+                ])
+                .outputOptions([
+                    '-map [v]',
+                    '-map 1:a',
+                    '-c:v libx264',
+                    '-pix_fmt yuvj420p',
+                    '-color_range pc',
+                    '-preset ultrafast',
+                    '-tune stillimage',
+                    '-shortest'
+                ])
                 .save(outputVideoPath)
-                .on('end', resolve).on('error', reject);
+                .on('end', () => {
+                   log(`✅ Video Baked: ${path.basename(outputVideoPath)}`);
+                   resolve();
+                })
+                .on('error', (err) => {
+                   log(`❌ FFMPEG Error: ${err.message}`);
+                   reject(err);
+                });
         });
     } catch (e) { log(`❌ Generation Failed: ${e.message}`); return; }
 

@@ -36,6 +36,46 @@ class HardwareService {
   }
 
   /**
+   * Performs a composite check to see if the TV is actually awake.
+   * Checks network connectivity AND physical screen state via ADB.
+   */
+  async isActuallyOn(ip) {
+    const isPingable = await this.ping(ip);
+    if (!isPingable) return false;
+
+    // If pingable, check ADB screen state
+    const screenState = await this.checkScreenState(ip);
+    
+    // If we can't get screen state (ADB issue), we fall back to ping only
+    // to avoid false negatives, but we log the state.
+    if (screenState === 'OFF') {
+      return false;
+    }
+    
+    return true;
+  }
+
+  /**
+   * Checks the physical screen state via ADB
+   * Returns 'ON', 'OFF', or 'UNKNOWN'
+   */
+  async checkScreenState(ip) {
+    try {
+      // Look for mScreenOn=true or mHoldingDisplaySuspendBlocker=true (Sony TV specific)
+      const res = await this.adbCommand(ip, "shell dumpsys power");
+      if (!res) return 'UNKNOWN';
+
+      const isScreenOn = res.includes('mScreenOn=true') || 
+                        res.includes('mHoldingDisplaySuspendBlocker=true') ||
+                        res.includes('Display Power: state=ON');
+      
+      return isScreenOn ? 'ON' : 'OFF';
+    } catch (e) {
+      return 'UNKNOWN';
+    }
+  }
+
+  /**
    * Reboots the physical OS (usually Linux/Pi)
    */
   async rebootOS() {

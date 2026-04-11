@@ -135,44 +135,33 @@ class VisualGenerator {
   }
 
   getWeatherIcon(code, isDay) {
-    // Night overwrites for clear/partly cloudy
+    // Night Overwrite
     if (isDay === 0) {
-      if (code === 0) return '☾'; // Basic Crescent Moon (Safe U+263E) - Kept per user request
-      if (code === 1 || code === 2) return '☁️'; // Cloud (Emoji)
+      if (code === 0) return '☾'; // Crescent Moon (U+263E)
+      if (code <= 3) return '☁'; // Night Cloud (Standard Unicode)
     }
 
-    // WMO Weather interpretation codes (WW)
-    // Reverted to Emojis for "Beautiful" look (Sun/Cloud), except Moon
+    // Mapping using Standard Unicode Symbols (Non-emoji versions for high compatibility)
     const icons = {
-      0: '☀️',
-      1: '🌤️',
+      0: '☀', // Clear Sun (U+2600)
+      1: '⛅', // Partly Cloudy (U+26C5)
       2: '⛅',
-      3: '☁️',
-      45: '🌫️',
-      48: '🌫️',
-      51: '☔',
-      53: '☔',
-      55: '☔',
-      61: '🌧️',
-      63: '🌧️',
-      65: '🌧️',
-      71: '❄️',
-      73: '❄️',
-      75: '❄️',
-      80: '🌦️',
-      81: '🌦️',
-      82: '🌧️',
-      95: '⛈️',
-      96: '⛈️',
-      99: '⛈️',
+      3: '☁', // Overcast (U+2601)
+      45: '≡', // Fog (U+2261)
+      48: '≡',
+      51: '☔', // Drizzle (U+2614)
+      61: '☔', // Rain
+      71: '❄', // Snow (U+2744)
+      80: '☔', // Showers
+      95: '⚡', // Thunder (U+26A1)
     };
 
-    // Simplify logic
-    if (code >= 51 && code <= 57) return '☔'; // Drizzle -> Umbrella (Rain without heavy cloud)
-    if (code >= 61 && code <= 67) return '🌧️';
-    if (code >= 71 && code <= 77) return '❄️';
+    if (code >= 51 && code <= 67) return '☔';
+    if (code >= 71 && code <= 77) return '❄';
+    if (code >= 80 && code <= 82) return '☔';
+    if (code >= 95 && code <= 99) return '⚡';
 
-    return icons[code] || '🌡️';
+    return icons[code] || '🌡'; 
   }
 
   async generateDashboard(prayerName, prayerTime, hijriDate, context = {}) {
