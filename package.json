@@ -1,9 +1,10 @@
 {
   "type": "module",
   "dependencies": {
-    "axios": "^1.7.9",
+    "axios": "^1.15.0",
     "googleapis": "^144.0.0",
-    "luxon": "^3.5.0"
+    "luxon": "^3.5.0",
+    "pm2": "^6.0.14"
   },
   "scripts": {
     "lint": "eslint .",
