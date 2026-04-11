@@ -128,6 +128,13 @@ class AdbKeepAlive {
           this.transition('SLEEPING');
         }
       }
+
+      // 3. Reschedule heartbeat regardless of branch taken (unless SLEEPING/SAFETY_PULSE handled it)
+      if (this.state === 'ONLINE') {
+        this.setNextCheck(120000); // 2 mins
+      } else if (this.state === 'HUNTING') {
+        this.setNextCheck(60000); // 1 min
+      }
     } catch (e) {
       this.log(`🔥 Error during check: ${e.message}`);
       this.setNextCheck(300000); // Error backoff 5 mins
