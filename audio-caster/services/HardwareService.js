@@ -105,6 +105,94 @@ class HardwareService {
   }
 
   /**
+   * Retrieves a composite audio status (playing state and mute state)
+   * @param {string} ip
+   * @returns {Promise<{isPlaying: boolean, isMuted: boolean, isSonyMuted: boolean|null}>}
+   */
+  async getAudioStatus(ip) {
+    const audioRes = await this.adbCommand(ip, "shell dumpsys audio");
+    const sessionRes = await this.adbCommand(ip, "shell dumpsys media_session");
+    const sonyRes = await this.getSonySpecificStatus(ip);
+
+    // 1. Detection of 'Playing' state (Standard + Media Session)
+    const isPlaying = (sessionRes && (sessionRes.includes('state=3') || sessionRes.includes('state=Playing'))) ||
+                      (audioRes && (audioRes.includes('state:started') || audioRes.includes('playerState=2') || audioRes.includes('usage=USAGE_MEDIA')));
+
+    // 2. Detection of 'Muted' state (Stream 3 is usually Music/Media)
+    // Looking for blocks like "mStreamStates[3]:" ... until next stream or end of string
+    const stream3Match = audioRes ? audioRes.match(/mStreamStates\[3\]:([\s\S]*?)(?:\r?\n\s*mStreamStates\[\d+\]:|$)/i) : null;
+    const stream3Block = stream3Match ? stream3Match[1] : null;
+    let isMuted = stream3Block ? (stream3Block.includes('mMuted: true') || stream3Block.includes('Muted: true')) : false;
+
+    // Fallback for general mute flag
+    if (!isMuted && audioRes && /Muted:\s*true/i.test(audioRes)) {
+      isMuted = true;
+    }
+
+    return { 
+      isPlaying: !!isPlaying, 
+      isMuted: isMuted,
+      isSonyMuted: sonyRes.isSonyMuted
+    };
+  }
+
+  /**
+   * Attempts to retrieve Sony-specific proprietary state
+   */
+  async getSonySpecificStatus(ip) {
+    try {
+      const res = await this.adbCommand(ip, "shell dumpsys com.sony.dtv.networkservice");
+      if (!res) return { isSonyMuted: null };
+
+      // Look for JSON-like or key-value muted property
+      const mutedMatch = res.match(/\"muted\":\s*(\w+)/i) || res.match(/muted=\s*(\w+)/i);
+      return {
+        isSonyMuted: mutedMatch ? (mutedMatch[1] === 'true' || mutedMatch[1] === '1') : null
+      };
+    } catch (e) {
+      return { isSonyMuted: null };
+    }
+  }
+
+  /**
+   * Sets the mute state only if it differs from the current state
+   * @param {string} ip
+   * @param {boolean} targetMute
+   * @returns {Promise<boolean>} True if action was taken or already in state
+   */
+  async setMuteState(ip, targetMute) {
+    const status = await this.getAudioStatus(ip);
+    
+    // Use Sony specific state if available as a tie-breaker/extra verification
+    const currentMute = (status.isSonyMuted !== null) ? status.isSonyMuted : status.isMuted;
+
+
+
+    if (currentMute !== targetMute) {
+      // KEYCODE_VOLUME_MUTE = 164
+      await this.adbCommand(ip, "shell input keyevent 164");
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Sends a pause command
+   */
+  async pauseMedia(ip) {
+    // KEYCODE_MEDIA_PAUSE = 127
+    await this.adbCommand(ip, "shell input keyevent 127");
+  }
+
+  /**
+   * Sends a play/resume command
+   */
+  async resumeMedia(ip) {
+    // KEYCODE_MEDIA_PLAY = 126
+    await this.adbCommand(ip, "shell input keyevent 126");
+  }
+
+  /**
    * Runs an ADB command against a specific IP
    */
   async adbCommand(ip, rawCmd) {

@@ -11,6 +11,8 @@ const { promisify } = require('util');
 const stream = require('stream');
 const pipeline = promisify(stream.pipeline);
 require('dotenv').config();
+const HardwareService = require('./services/HardwareService');
+const hardware = new HardwareService();
 
 const DEBUG = process.argv.includes('--debug') || process.argv.includes('--test');
 function log(msg) {
@@ -191,30 +193,31 @@ async function executePreFlightAndCast(prayerName, audioFileName, targetTimeObj,
 
     const castUrl = `http://${localIp}:${CONFIG.serverPort}/images/generated/${prayerName.toLowerCase()}.mp4?t=${Date.now()}`;
 
-    // ADB
+    // ADB TV INTERRUPT (v23 State-Aware Muting)
     const tvIp = process.env.TV_IP;
     let tvWasInterrupted = false;
+    let tvWasMutedByUs = false;
+
     if (tvIp) {
         try {
             log(`📺 Checking Sony TV (${tvIp})...`);
-            // Ensure ADB is connected first
-            await new Promise(r => exec(`adb connect ${tvIp}:5555`, r));
+            // Ensure ADB is connected
+            await hardware.adbCommand(tvIp + ":5555", "connect");
 
-            const res = await new Promise(resolve => exec(`adb -s ${tvIp}:5555 shell dumpsys media_session`, (e, stdout) => resolve(stdout)));
+            const status = await hardware.getAudioStatus(tvIp + ":5555");
+            log(`📺 Status: Playing=${status.isPlaying}, Muted=${status.isMuted}, Sony=${status.isSonyMuted}`);
 
-            // Log a snippet of the result for debugging
-            if (res) {
-                const sessions = res.split('\n').filter(l => l.includes('state=')).map(l => l.trim());
-                log(`📺 Active Media Sessions: ${sessions.length > 0 ? sessions.join(', ') : 'None'}`);
+            if (status.isPlaying) {
+                log(`📺 TV is PLAYING. Sending ADB PAUSE...`);
+                await hardware.pauseMedia(tvIp + ":5555");
+                tvWasInterrupted = true;
             }
 
-            // Check if anything is playing (state=3) or buffering (state=4/6/8 depend on app)
-            if (res && (res.includes('state=3') || res.includes('state=Playing'))) {
-                log(`📺 TV is PLAYING. Sending ADB PAUSE...`);
-                exec(`adb -s ${tvIp}:5555 shell input keyevent 127`);
-                tvWasInterrupted = true;
-            } else {
-                log(`📺 TV is not currently playing media. Skipping pause.`);
+            // Composite Mute Check: If not muted by any standard, apply mute
+            const isActuallyMuted = status.isSonyMuted === true || status.isMuted === true;
+            if (!isActuallyMuted) {
+                log(`🔇 TV is AUDIBLE. Sending ADB MUTE...`);
+                tvWasMutedByUs = await hardware.setMuteState(tvIp + ":5555", true);
             }
         } catch (e) { log(`⚠️ ADB Check Failed: ${e.message}`); }
     }
@@ -233,8 +236,12 @@ async function executePreFlightAndCast(prayerName, audioFileName, targetTimeObj,
 
         log(`🔄 Finalizing: Hard terminating session...`);
 
-        const performHardStop = () => {
-            if (tvWasInterrupted) exec(`adb -s ${tvIp}:5555 shell input keyevent 126`);
+        const performHardStop = async () => {
+            if (tvWasInterrupted) await hardware.resumeMedia(tvIp + ":5555");
+            if (tvWasMutedByUs) {
+                log(`🔊 Adhan Finished. Restoring TV Volume (Unmuting)...`);
+                await hardware.setMuteState(tvIp + ":5555", false);
+            }
 
             const killSystem = () => {
                 try {
@@ -407,7 +414,7 @@ async function executePreFlightAndCast(prayerName, audioFileName, targetTimeObj,
 
 }
 
-const { exec } = require('child_process');
+
 
 async function scheduleToday() {
     log("📅 Loading Schedule...");
