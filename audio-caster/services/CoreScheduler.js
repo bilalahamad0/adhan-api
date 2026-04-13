@@ -63,7 +63,7 @@ class CoreScheduler {
                 triggerTime = DateTime.now().setZone(config.timezone).plus({ seconds: 2 });
             }
 
-            schedule.scheduleJob(triggerTime.toJSDate(), () => this.executePreFlightAndCast(prayer, audioFile, scheduleTime));
+            schedule.scheduleJob(triggerTime.toJSDate(), () => this.executePreFlightAndCast(prayer, audioFile, scheduleTime, todayEntry));
             log(`   - ${prayer}: ${timeStr} (Trigger: ${triggerTime.toFormat('h:mm:ss a')})`);
         });
     }
@@ -71,7 +71,7 @@ class CoreScheduler {
     /**
      * 1:1 LEGACY STRUCTURAL PORT (NO SERVICES, NO CLASSES, NO LEAKS)
      */
-    async executePreFlightAndCast(prayerName, audioFileName, targetTimeObj) {
+    async executePreFlightAndCast(prayerName, audioFileName, targetTimeObj, scheduleEntry = null) {
         const log = this.log;
         const CONFIG = this.config;
         const mediaService = this.media;
@@ -87,9 +87,27 @@ class CoreScheduler {
 
         try {
             const today = DateTime.now().setZone(CONFIG.timezone);
+
+            // Extract Hijri date & context from the schedule entry (fixes Hijri calendar regression)
+            let hijriDate = null;
+            let holidays = [];
+            const isFriday = today.weekday === 5;
+            if (scheduleEntry) {
+                try {
+                    const h = scheduleEntry.date.hijri;
+                    hijriDate = `${h.day} ${h.month.en} ${h.year}`;
+                    holidays = h.holidays || [];
+                } catch (e) { log(`⚠️ Hijri parse warning: ${e.message}`); }
+            }
+
             const VisualGenerator = require('../visual_generator.js');
             const vg = new VisualGenerator(CONFIG);
-            const imgBuffer = await vg.generateDashboard(prayerName, targetTimeObj ? targetTimeObj.toFormat('h:mm a') : today.toFormat('h:mm a'), null, {});
+            const imgBuffer = await vg.generateDashboard(
+                prayerName,
+                targetTimeObj ? targetTimeObj.toFormat('h:mm a') : today.toFormat('h:mm a'),
+                hijriDate,
+                { holidays, isFriday }
+            );
             fs.mkdirSync(path.dirname(imgPath), { recursive: true });
             fs.writeFileSync(imgPath, imgBuffer);
             await mediaService.encodeVideoFromImageAndAudio(imgPath, audioPath, outputVideoPath);
@@ -245,11 +263,15 @@ class CoreScheduler {
                             log(`🎶 Playback Started!`);
                             safetyTimer = setTimeout(cleanup, 600000);
                             let lastState = '';
-                            device.on('status', (s) => {
+                            // Use a named handler so we can remove it when transitioning to Dua
+                            // This prevents ADHAN status events from firing spurious cleanup during Dua phase (black screen fix)
+                            const adhanStatusHandler = (s) => {
+                                if (currentPhase !== 'ADHAN') return; // Guard against late-firing events
                                 if (s && s.playerState !== lastState) { log(`📊 Device Status: ${s.playerState}`); lastState = s.playerState; }
-                                if (!s || s.playerState === 'IDLE') { log(`⏹️ Adhan Finished.`); cleanup(); }
-                            });
-                            device.on('finished', () => { log(`⏹️ Adhan Finished.`); cleanup(); });
+                                if (!s || s.playerState === 'IDLE') { log(`⏹️ Adhan Finished.`); device.removeListener('status', adhanStatusHandler); cleanup(); }
+                            };
+                            device.on('status', adhanStatusHandler);
+                            device.on('finished', () => { if (currentPhase === 'ADHAN') { log(`⏹️ Adhan Finished.`); cleanup(); } });
                         }
                     });
                 });
