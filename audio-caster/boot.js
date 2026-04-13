@@ -1,6 +1,7 @@
 const path = require('path');
 const MediaService = require('./services/MediaService');
 const CoreScheduler = require('./services/CoreScheduler');
+const HardwareService = require('./services/HardwareService');
 require('dotenv').config();
 
 // --- CRASH DIAGNOSTICS (Production Stability) ---
@@ -41,13 +42,14 @@ const CONFIG = {
   serverPort: parseInt(process.env.SERVER_PORT || 3001),
 };
 
-// Global Media Service (Used for cache management)
+// Global Services
 const media = new MediaService();
+const hardware = new HardwareService();
 
 // THE SCHEDULER: Now standalone and self-sufficient
 const scheduler = new CoreScheduler(
   CONFIG,
-  null, // No global hardware
+  hardware, 
   media,
   null, // No global cast/scanner
   path.join(__dirname, 'annual_schedule.json')

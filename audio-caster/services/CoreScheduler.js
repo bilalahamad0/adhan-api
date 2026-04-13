@@ -14,6 +14,7 @@ const ChromecastAPI = require('chromecast-api');
 class CoreScheduler {
     constructor(config, hardwareService, mediaService, castService, scheduleFilePath) {
         this.config = config;
+        this.hardware = hardwareService;
         this.media = mediaService;
         this.scheduleFilePath = scheduleFilePath;
         this.log = (msg) => console.log(`[${new Date().toLocaleTimeString()}] ${msg}`);
@@ -74,11 +75,12 @@ class CoreScheduler {
         const log = this.log;
         const CONFIG = this.config;
         const mediaService = this.media;
+        const hardwareService = this.hardware;
         const localIp = require('ip').address();
 
         log(`🚀 TRIGGER: ${prayerName} Time! Starting sequence...`);
 
-        // 1. Assets
+        // 1. Assets Generation
         const outputVideoPath = path.join(__dirname, '..', '..', 'images', 'generated', `${prayerName.toLowerCase()}.mp4`);
         const audioPath = path.join(__dirname, '..', 'audio', audioFileName);
         const imgPath = path.join(__dirname, '..', '..', 'images', 'generated', 'current_dashboard.jpg');
@@ -93,40 +95,66 @@ class CoreScheduler {
             await mediaService.encodeVideoFromImageAndAudio(imgPath, audioPath, outputVideoPath);
         } catch (e) { log(`❌ Generation Failed: ${e.message}`); return; }
 
+        // 2. Start Discovery Early (Fix for Issue 1)
+        const scanner = new ChromecastAPI();
+        let discoveredDevice = null;
+        scanner.on('device', (device) => {
+            if (device.friendlyName === CONFIG.device.name && !discoveredDevice) {
+                discoveredDevice = device;
+                log(`📡 Device Discovered & Cached: ${device.friendlyName}`);
+            }
+        });
+
+        // 3. Wait for target time
         if (targetTimeObj) {
             const delay = targetTimeObj.toMillis() - Date.now();
-            if (delay > 0) { log(`⏳ Waiting ${Math.round(delay/1000)}s...`); await new Promise(r => setTimeout(r, delay)); }
+            if (delay > 0) {
+                log(`⏳ Waiting ${Math.round(delay/1000)}s...`);
+                await new Promise(r => setTimeout(r, delay));
+            }
         }
 
         const castUrl = `http://${localIp}:${CONFIG.serverPort}/images/generated/${prayerName.toLowerCase()}.mp4?t=${Date.now()}`;
 
-        // 2. Hardware (RAW ADB)
+        // 4. Hardware Interruption (Fix for Issue 2 - Muting)
         const tvIp = process.env.TV_IP;
-        let tvWasInterrupted = false;
+        let tvWasPaused = false;
+        let tvWasMuted = false;
 
-        const adbAction = (cmd) => new Promise((resolve) => {
-            if (!tvIp) return resolve();
-            exec(`adb -s ${tvIp}:5555 ${cmd}`, (err, stdout) => resolve(stdout));
-        });
-
-        if (tvIp) {
-            const session = await adbAction('shell dumpsys media_session');
-            if (session && (session.includes('state=3') || session.includes('state=Playing'))) {
-                log(`📺 TV is PLAYING. Sending PAUSE...`);
-                await adbAction('shell input keyevent 127');
-                tvWasInterrupted = true;
-            }
+        if (tvIp && hardwareService) {
+            try {
+                const isTvOn = await hardwareService.isActuallyOn(tvIp);
+                if (isTvOn) {
+                    const status = await hardwareService.getAudioStatus(tvIp);
+                    
+                    if (status.isMediaSessionPlaying) {
+                        log(`📺 TV is playing pause-able media (App). Sending PAUSE...`);
+                        await hardwareService.pauseMedia(tvIp);
+                        tvWasPaused = true;
+                    } else if (status.isAudioActive) {
+                        // Only mute if it's not a pause-able session (e.g. Live TV)
+                        if (!status.isMuted && !status.isSonyMuted) {
+                            log(`🔇 TV is playing non-pausable audio (Live TV). Muting...`);
+                            await hardwareService.setMuteState(tvIp, true);
+                            tvWasMuted = true;
+                        }
+                    } else {
+                        log(`📺 TV is ON but silent.`);
+                    }
+                } else {
+                    log(`📺 TV is OFF. Skipping interruption.`);
+                }
+            } catch (e) { log(`⚠️ TV Control Error: ${e.message}`); }
         }
 
-        // 3. Connect & Cast (STRICT LEGACY)
-        const scanner = new ChromecastAPI();
+        // 5. Connect & Cast
         let adhanDevice = null;
         let isCleanedUp = false;
         let safetyTimer = null;
         let originalVolume = null;
         let currentPhase = 'ADHAN';
 
-        const cleanup = () => {
+        const cleanup = async () => {
             if (isCleanedUp) return;
             if (currentPhase === 'ADHAN') {
                 log(`✨ Adhan Video Finished. Switching to Dua...`);
@@ -141,7 +169,17 @@ class CoreScheduler {
             currentPhase = 'DONE';
             log(`🔄 Playback Ended. Cleaning up...`);
             
-            if (tvWasInterrupted) adbAction('shell input keyevent 126');
+            // Restore TV State
+            if (tvIp && hardwareService) {
+                if (tvWasMuted) {
+                    log(`🔊 Unmuting TV...`);
+                    await hardwareService.setMuteState(tvIp, false);
+                }
+                if (tvWasPaused) {
+                    log(`▶️ Resuming TV...`);
+                    await hardwareService.resumeMedia(tvIp);
+                }
+            }
 
             const finalize = () => {
                 log(`🔄 Finalize: Hard destroying session...`);
@@ -188,37 +226,52 @@ class CoreScheduler {
             }).catch(() => cleanup());
         };
 
-        scanner.on('device', (device) => {
-            if (device.friendlyName === CONFIG.device.name) {
-                if (adhanDevice) return;
-                adhanDevice = device;
-                log(`✅ Connected to Adhan Speaker: ${device.friendlyName}`);
+        const startPlayback = (device) => {
+            if (adhanDevice) return;
+            adhanDevice = device;
+            log(`✅ Connected to Adhan Speaker: ${device.friendlyName}`);
 
-                device.getReceiverStatus((err, status) => {
-                    if (!err && status && status.volume) originalVolume = status.volume.level;
-                    device.setVolume(CONFIG.device.targetVolume, () => {
-                        const dashboardUrl = `http://${localIp}:${CONFIG.serverPort}/images/generated/current_dashboard.jpg?t=${Date.now()}`;
-                        const media = {
-                            url: castUrl, contentType: 'video/mp4',
-                            metadata: { type: 1, metadataType: 0, title: `${prayerName} Adhan`, images: [{ url: dashboardUrl }] }
-                        };
-                        device.play(media, (err) => {
-                            if (err) cleanup();
-                            else {
-                                log(`🎶 Playback Started!`);
-                                safetyTimer = setTimeout(cleanup, 600000);
-                                let lastState = '';
-                                device.on('status', (s) => {
-                                    if (s && s.playerState !== lastState) { log(`📊 Device Status: ${s.playerState}`); lastState = s.playerState; }
-                                    if (!s || s.playerState === 'IDLE') { log(`⏹️ Adhan Finished.`); cleanup(); }
-                                });
-                                device.on('finished', () => { log(`⏹️ Adhan Finished.`); cleanup(); });
-                            }
-                        });
+            device.getReceiverStatus((err, status) => {
+                if (!err && status && status.volume) originalVolume = status.volume.level;
+                device.setVolume(CONFIG.device.targetVolume, () => {
+                    const dashboardUrl = `http://${localIp}:${CONFIG.serverPort}/images/generated/current_dashboard.jpg?t=${Date.now()}`;
+                    const media = {
+                        url: castUrl, contentType: 'video/mp4',
+                        metadata: { type: 1, metadataType: 0, title: `${prayerName} Adhan`, images: [{ url: dashboardUrl }] }
+                    };
+                    device.play(media, (err) => {
+                        if (err) cleanup();
+                        else {
+                            log(`🎶 Playback Started!`);
+                            safetyTimer = setTimeout(cleanup, 600000);
+                            let lastState = '';
+                            device.on('status', (s) => {
+                                if (s && s.playerState !== lastState) { log(`📊 Device Status: ${s.playerState}`); lastState = s.playerState; }
+                                if (!s || s.playerState === 'IDLE') { log(`⏹️ Adhan Finished.`); cleanup(); }
+                            });
+                            device.on('finished', () => { log(`⏹️ Adhan Finished.`); cleanup(); });
+                        }
                     });
                 });
-            }
-        });
+            });
+        };
+
+        // If already discovered during wait, start now. Otherwise wait for discovery.
+        if (discoveredDevice) {
+            startPlayback(discoveredDevice);
+        } else {
+            log(`⏳ Still searching for ${CONFIG.device.name}...`);
+            scanner.on('device', (device) => {
+                if (device.friendlyName === CONFIG.device.name) startPlayback(device);
+            });
+            // Safety timeout for discovery
+            setTimeout(() => {
+                if (!adhanDevice) {
+                    log(`❌ Discovery Timeout: Speaker ${CONFIG.device.name} not found.`);
+                    cleanup();
+                }
+            }, 60000); 
+        }
     }
 }
 

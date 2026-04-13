@@ -107,7 +107,7 @@ class HardwareService {
   /**
    * Retrieves a composite audio status (playing state and mute state)
    * @param {string} ip
-   * @returns {Promise<{isPlaying: boolean, isMuted: boolean, isSonyMuted: boolean|null}>}
+   * @returns {Promise<{isPlaying: boolean, isMediaSessionPlaying: boolean, isAudioActive: boolean, isMuted: boolean, isSonyMuted: boolean|null}>}
    */
   async getAudioStatus(ip) {
     const audioRes = await this.adbCommand(ip, "shell dumpsys audio");
@@ -115,8 +115,8 @@ class HardwareService {
     const sonyRes = await this.getSonySpecificStatus(ip);
 
     // 1. Detection of 'Playing' state (Standard + Media Session)
-    const isPlaying = (sessionRes && (sessionRes.includes('state=3') || sessionRes.includes('state=Playing'))) ||
-                      (audioRes && (audioRes.includes('state:started') || audioRes.includes('playerState=2') || audioRes.includes('usage=USAGE_MEDIA')));
+    const isMediaSessionPlaying = !!(sessionRes && (sessionRes.includes('state=3') || sessionRes.includes('state=Playing')));
+    const isAudioActive = !!(audioRes && (audioRes.includes('state:started') || audioRes.includes('playerState=2') || audioRes.includes('usage=USAGE_MEDIA')));
 
     // 2. Detection of 'Muted' state (Stream 3 is usually Music/Media)
     // Looking for blocks like "mStreamStates[3]:" ... until next stream or end of string
@@ -130,7 +130,9 @@ class HardwareService {
     }
 
     return { 
-      isPlaying: !!isPlaying, 
+      isPlaying: isMediaSessionPlaying || isAudioActive,
+      isMediaSessionPlaying,
+      isAudioActive,
       isMuted: isMuted,
       isSonyMuted: sonyRes.isSonyMuted
     };
