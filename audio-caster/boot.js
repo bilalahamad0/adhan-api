@@ -2,7 +2,7 @@ const path = require('path');
 const MediaService = require('./services/MediaService');
 const CoreScheduler = require('./services/CoreScheduler');
 const HardwareService = require('./services/HardwareService');
-require('dotenv').config();
+require('dotenv').config({ path: require('path').join(__dirname, '.env') });
 
 // --- CRASH DIAGNOSTICS (Production Stability) ---
 process.on('unhandledRejection', (reason, promise) => {
