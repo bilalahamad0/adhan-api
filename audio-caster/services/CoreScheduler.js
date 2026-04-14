@@ -94,6 +94,11 @@ class CoreScheduler {
         const hardwareService = this.hardware;
         const localIp = require('ip').address();
         
+        // 1. Assets Generation
+        const outputVideoPath = path.join(__dirname, '..', '..', 'images', 'generated', `${prayerName.toLowerCase()}.mp4`);
+        const audioPath = path.join(__dirname, '..', 'audio', audioFileName);
+        const imgPath = path.join(__dirname, '..', '..', 'images', 'generated', 'current_dashboard.jpg');
+
         this.sessionStatus.set(prayerName, 'GENERATING');
 
         try {
