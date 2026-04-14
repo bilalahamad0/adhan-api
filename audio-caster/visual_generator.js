@@ -110,12 +110,14 @@ class VisualGenerator {
        return this.weatherCache.data;
     }
 
+    console.log('☁️  Fetching latest weather...');
     try {
       // Open-Meteo for Location (Celsius) + is_day
       const lat = this.config.location.lat || '0.0';
       const lon = this.config.location.lon || '0.0';
       const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code,is_day&temperature_unit=celsius&timezone=auto`;
-      const res = await axios.get(url);
+      
+      const res = await axios.get(url, { timeout: 10000 }); // 10s Safety Timeout
       const current = res.data.current;
       
       this.weatherCache.data = {
@@ -125,9 +127,10 @@ class VisualGenerator {
       };
       this.weatherCache.lastFetch = now;
       
+      console.log(`✅ Weather Updated: ${this.weatherCache.data.temp}`);
       return this.weatherCache.data;
     } catch (e) {
-      console.error('⚠️ Weather fetch failed:', e.message);
+      console.warn('⚠️ Weather fetch failed or timed out:', e.message);
       // If we have old data, return it instead of fallback
       if (this.weatherCache.data) return this.weatherCache.data;
       return { temp: '--°C', code: 0, isDay: 1 };
@@ -172,10 +175,12 @@ class VisualGenerator {
 
     // 1. Select & Draw Background
     const bgFile = this.selectBackgroundImage(prayerName, context);
+    console.log(`🎨 Drawing Dashboard for ${prayerName}...`);
 
     let image;
     try {
       image = await loadImage(bgFile);
+      console.log(`✅ Image Loaded: ${path.basename(bgFile)}`);
     } catch (e) {
       console.error(`❌ Failed to load ${bgFile}, falling back to default.`);
       // Ensure default exists

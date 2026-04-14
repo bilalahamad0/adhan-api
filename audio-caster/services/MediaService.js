@@ -43,10 +43,13 @@ class MediaService {
 
   /**
    * Encodes a static image and audio into a lopped MP4 video via fluent-ffmpeg
+   * Returns an object { promise, abort } for timeout management
    */
-  async encodeVideoFromImageAndAudio(imagePath, audioPath, outputVideoPath) {
-    return new Promise((resolve, reject) => {
-      ffmpeg()
+  encodeVideoFromImageAndAudio(imagePath, audioPath, outputVideoPath) {
+    console.log(`🎬 Encoding Video: ${path.basename(outputVideoPath)}...`);
+    let command;
+    const promise = new Promise((resolve, reject) => {
+      command = ffmpeg()
         .input(imagePath)
         .inputOptions(['-loop 1'])
         .input(audioPath)
@@ -64,12 +67,23 @@ class MediaService {
         ])
         .save(outputVideoPath)
         .on('end', () => {
+          console.log('✅ Video Encoding Complete.');
           resolve(outputVideoPath);
         })
         .on('error', (err) => {
+          if (err.message && err.message.includes('ffmpeg was killed')) {
+             console.log('⚠️ Video Encoding Aborted (Timeout).');
+             return; // Don't reject if we killed it intentionally
+          }
+          console.error('❌ Video Encoding Error:', err.message);
           reject(err);
         });
     });
+
+    return {
+       promise,
+       abort: () => { if (command) command.kill('SIGKILL'); }
+    };
   }
 
   getFileSizeMB(filePath) {
