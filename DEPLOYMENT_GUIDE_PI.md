@@ -138,13 +138,27 @@ You need to authorize the Pi to talk to your Android TV.
 
 ## 5. PM2 Setup (Run in Background)
 
-Start the application with PM2 so it runs in the background and restarts automatically.
+The easiest way to manage all services (Adhan Caster and ADB Keeper) is using the ecosystem file.
 
+### Option A: Recommended (Ecosystem Method)
+From the project root (`~/adhan-api`):
 ```bash
-pm2 start boot.js --name adhan-caster
+pm2 start ecosystem.config.cjs
 ```
 
-Save the process list so it survives reboots:
+### Option B: Manual (Individual Service Method)
+If you need to manage services individually:
+```bash
+# Start Adhan Caster
+cd ~/adhan-api/audio-caster
+pm2 start boot.js --name adhan-caster
+
+# Start ADB Keeper
+pm2 start adb_keepalive.js --name adb-keeper
+```
+
+### Save State
+Regardless of the method used, save the process list so it survives reboots:
 
 ```bash
 pm2 save
