@@ -238,16 +238,18 @@ class CoreScheduler {
         // 5. Connect & Cast
         let adhanDevice = null;
         let isCleanedUp = false;
+        let isFinalizing = false;
         let safetyTimer = null;
         let originalVolume = null;
         let currentPhase = 'ADHAN';
 
         const cleanup = async () => {
             if (isCleanedUp) return;
+            
             if (currentPhase === 'ADHAN') {
                 log(`✨ Adhan Video Finished. Switching to Dua...`);
                 if (safetyTimer) clearTimeout(safetyTimer);
-                currentPhase = 'DUA';
+                currentPhase = 'DUA'; // Atomically switch phase
                 
                 const duaUrl = `http://${localIp}:${CONFIG.serverPort}/images/generated/dua.jpg?t=${Date.now()}`;
                 const media = {
@@ -257,65 +259,79 @@ class CoreScheduler {
                 log(`🤲 Casting Pre-generated Dua: ${duaUrl}`);
                 this.sessionStatus.set(prayerName, 'DUA');
                 adhanDevice.play(media, (err) => {
-                    if (err) cleanup();
-                    else safetyTimer = setTimeout(() => { 
-                        log(`✅ Dua Complete.`); 
-                        currentPhase = 'DONE'; 
-                        this.sessionStatus.set(prayerName, 'COMPLETED'); 
-                        cleanup(); 
-                    }, 20000);
+                    if (err) {
+                        log(`⚠️ Dua Play Error: ${err.message}`);
+                        currentPhase = 'DONE';
+                        cleanup();
+                    } else {
+                        safetyTimer = setTimeout(() => { 
+                            log(`✅ Dua Complete.`); 
+                            currentPhase = 'DONE'; 
+                            this.sessionStatus.set(prayerName, 'COMPLETED'); 
+                            cleanup(); 
+                        }, 20000);
+                    }
                 });
                 return;
             }
-            if (currentPhase === 'DUA') return;
 
-            isCleanedUp = true;
-            currentPhase = 'DONE';
-            log(`🔄 Playback Ended. Cleaning up...`);
-            
-            if (tvIp && hardwareService) {
-                if (tvWasMuted) await hardwareService.setMuteState(tvIp, false);
-                if (tvWasPaused) await hardwareService.resumeMedia(tvIp);
-            }
-
-            const finalize = () => {
-                log(`🔄 Finalize: Hard destroying session...`);
+            if (currentPhase === 'DONE') {
+                isCleanedUp = true;
+                log(`🔄 Playback Ended. Cleaning up...`);
                 
-                if (safetyTimer) clearTimeout(safetyTimer);
+                if (tvIp && hardwareService) {
+                    try {
+                        if (tvWasMuted) await hardwareService.setMuteState(tvIp, false);
+                        if (tvWasPaused) await hardwareService.resumeMedia(tvIp);
+                    } catch (e) { log(`⚠️ TV Restore Error: ${e.message}`); }
+                }
 
-                const completeFinalize = () => {
-                    if (process.argv.includes('--test')) {
-                        log("🧪 Test Complete. Exiting.");
-                        setTimeout(() => process.exit(0), 1000);
+                const finalize = () => {
+                    if (isFinalizing) return;
+                    isFinalizing = true;
+                    log(`🔄 Finalize: Hard destroying session...`);
+                    
+                    if (safetyTimer) clearTimeout(safetyTimer);
+
+                    const completeFinalize = () => {
+                        if (process.argv.includes('--test')) {
+                            log("🧪 Test Complete. Exiting.");
+                            setTimeout(() => process.exit(0), 1000);
+                        }
+                    };
+
+                    try {
+                        if (adhanDevice) {
+                            // Sequential Teardown: Stop Application -> then Close Connection
+                            adhanDevice.stop(() => {
+                                log(`⏹️ Receiver Stopped.`);
+                                setTimeout(() => {
+                                    try {
+                                        if (adhanDevice && adhanDevice.close) {
+                                            adhanDevice.close(() => {
+                                                log(`🔌 Connection Closed.`);
+                                                completeFinalize();
+                                            });
+                                        } else { completeFinalize(); }
+                                    } catch (e) { completeFinalize(); }
+                                }, 500);
+                            });
+                        } else {
+                            completeFinalize();
+                        }
+                    } catch (e) { 
+                        log(`⚠️ Finalize warning: ${e.message}`);
+                        completeFinalize();
                     }
                 };
 
-                try {
-                    if (adhanDevice) {
-                        // Sequential Teardown: Stop Application -> then Close Connection
-                        // This prevents the device from hanging on a black screen
-                        adhanDevice.stop(() => {
-                            log(`⏹️ Receiver Stopped.`);
-                            setTimeout(() => {
-                                adhanDevice.close(() => {
-                                    log(`🔌 Connection Closed.`);
-                                    completeFinalize();
-                                });
-                            }, 500); // 500ms grace period for state transition
-                        });
-                    } else {
-                        completeFinalize();
-                    }
-                } catch (e) { 
-                    log(`⚠️ Finalize warning: ${e.message}`);
-                    completeFinalize();
-                }
-            };
-
-            if (adhanDevice && originalVolume !== null) {
-                log(`🔊 Restoring Volume...`);
-                adhanDevice.setVolume(originalVolume, () => setTimeout(finalize, 500));
-            } else { finalize(); }
+                if (adhanDevice && originalVolume !== null) {
+                    log(`🔊 Restoring Volume...`);
+                    try {
+                        adhanDevice.setVolume(originalVolume, () => setTimeout(finalize, 500));
+                    } catch (e) { setTimeout(finalize, 500); }
+                } else { finalize(); }
+            }
         };
 
         const startPlayback = (device) => {
@@ -338,15 +354,20 @@ class CoreScheduler {
                             this.sessionStatus.set(prayerName, 'PLAYING');
                             safetyTimer = setTimeout(cleanup, 600000);
                             let lastState = '';
-                            // Use a named handler so we can remove it when transitioning to Dua
-                            // This prevents ADHAN status events from firing spurious cleanup during Dua phase (black screen fix)
                             const adhanStatusHandler = (s) => {
-                                if (currentPhase !== 'ADHAN') return; // Guard against late-firing events
-                                if (s && s.playerState !== lastState) { log(`📊 Device Status: ${s.playerState}`); lastState = s.playerState; }
-                                if (!s || s.playerState === 'IDLE') { log(`⏹️ Adhan Finished.`); device.removeListener('status', adhanStatusHandler); cleanup(); }
+                                if (currentPhase !== 'ADHAN') return; 
+                                if (s && (s.playerState !== lastState || s.idleReason)) { 
+                                    log(`📊 Device Status: ${s.playerState}${s.idleReason ? ' (Idle Reason: ' + s.idleReason + ')' : ''}`); 
+                                    lastState = s.playerState; 
+                                }
+                                if (!s || s.playerState === 'IDLE') { 
+                                    log(`⏹️ Adhan Finished. (Final State: ${s ? s.playerState : 'UNKNOWN'}, Reason: ${s ? s.idleReason : 'N/A'})`); 
+                                    device.removeListener('status', adhanStatusHandler); 
+                                    cleanup(); 
+                                }
                             };
                             device.on('status', adhanStatusHandler);
-                            device.on('finished', () => { if (currentPhase === 'ADHAN') { log(`⏹️ Adhan Finished.`); cleanup(); } });
+                            device.on('finished', () => { if (currentPhase === 'ADHAN') { log(`⏹️ Adhan Finished (via Finished event).`); cleanup(); } });
                         }
                     });
                 });
