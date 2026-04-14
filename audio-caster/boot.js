@@ -18,6 +18,8 @@ const CONFIG = {
   location: {
     city: process.env.LOCATION_CITY || 'CityName',
     country: process.env.LOCATION_COUNTRY || 'CountryCode',
+    lat: process.env.LATITUDE || null,
+    lon: process.env.LONGITUDE || null,
     method: parseInt(process.env.LOCATION_METHOD || 2), // ISNA
     school: parseInt(process.env.LOCATION_SCHOOL || 1), // Hanafi
   },

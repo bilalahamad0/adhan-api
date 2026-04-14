@@ -280,18 +280,35 @@ class CoreScheduler {
 
             const finalize = () => {
                 log(`🔄 Finalize: Hard destroying session...`);
+                
+                if (safetyTimer) clearTimeout(safetyTimer);
+
+                const completeFinalize = () => {
+                    if (process.argv.includes('--test')) {
+                        log("🧪 Test Complete. Exiting.");
+                        setTimeout(() => process.exit(0), 1000);
+                    }
+                };
+
                 try {
                     if (adhanDevice) {
-                        if (adhanDevice.stop) adhanDevice.stop();
-                        if (adhanDevice.client) adhanDevice.client.close();
-                        adhanDevice.close();
+                        // Sequential Teardown: Stop Application -> then Close Connection
+                        // This prevents the device from hanging on a black screen
+                        adhanDevice.stop(() => {
+                            log(`⏹️ Receiver Stopped.`);
+                            setTimeout(() => {
+                                adhanDevice.close(() => {
+                                    log(`🔌 Connection Closed.`);
+                                    completeFinalize();
+                                });
+                            }, 500); // 500ms grace period for state transition
+                        });
+                    } else {
+                        completeFinalize();
                     }
-                } catch (e) { }
-
-                if (safetyTimer) clearTimeout(safetyTimer);
-                if (process.argv.includes('--test')) {
-                    log("🧪 Test Complete. Exiting.");
-                    setTimeout(() => process.exit(0), 1000);
+                } catch (e) { 
+                    log(`⚠️ Finalize warning: ${e.message}`);
+                    completeFinalize();
                 }
             };
 

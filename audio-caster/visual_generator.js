@@ -104,6 +104,22 @@ class VisualGenerator {
     return path.join(imagesDir, picked);
   }
 
+  async geolocateCity(city, country) {
+    console.log(`🌐 Smart Geocoding: Resolving coordinates for "${city}, ${country}"...`);
+    try {
+      const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1&language=en&format=json`;
+      const res = await axios.get(url, { timeout: 5000 });
+      if (res.data.results && res.data.results.length > 0) {
+        const result = res.data.results[0];
+        console.log(`✅ Geolocated: ${result.name} (${result.admin1}) -> ${result.latitude}, ${result.longitude}`);
+        return { lat: result.latitude, lon: result.longitude };
+      }
+    } catch (e) {
+      console.warn('⚠️ Geocoding failed:', e.message);
+    }
+    return null;
+  }
+
   async getWeather() {
     const now = Date.now();
     if (this.weatherCache.data && (now - this.weatherCache.lastFetch < this.weatherCache.ttl)) {
@@ -112,9 +128,30 @@ class VisualGenerator {
 
     console.log('☁️  Fetching latest weather...');
     try {
-      // Open-Meteo for Location (Celsius) + is_day
-      const lat = this.config.location.lat || '0.0';
-      const lon = this.config.location.lon || '0.0';
+      let lat = this.config.location.lat;
+      let lon = this.config.location.lon;
+
+      // Smart Recovery: Detect placeholders (Default 0,0 or the AlAdhan 8.8, 7.7 bug)
+      const isPlaceholder = !lat || !lon || 
+        (parseFloat(lat) === 0 && parseFloat(lon) === 0) ||
+        (parseFloat(lat).toFixed(4) === '8.8889' && parseFloat(lon).toFixed(4) === '7.7778') ||
+        (parseFloat(lat) === 8.8888888 && parseFloat(lon) === 7.7777777);
+
+      if (isPlaceholder) {
+        const resolved = await this.geolocateCity(this.config.location.city, this.config.location.country);
+        if (resolved) {
+          lat = resolved.lat;
+          lon = resolved.lon;
+          // Cache it in config for this instance's lifetime
+          this.config.location.lat = lat;
+          this.config.location.lon = lon;
+        }
+      }
+
+      // Final fallback to 0,0 if all else fails
+      lat = lat || '0.0';
+      lon = lon || '0.0';
+
       const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code,is_day&temperature_unit=celsius&timezone=auto`;
       
       const res = await axios.get(url, { timeout: 10000 }); // 10s Safety Timeout
