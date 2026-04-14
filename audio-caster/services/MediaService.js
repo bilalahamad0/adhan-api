@@ -43,20 +43,46 @@ class MediaService {
 
   /**
    * Encodes a static image and audio into a lopped MP4 video via fluent-ffmpeg
+   * Restores Phase 16 High-Fidelity Weather Filters (Rain/Snow/Fog)
    * Returns an object { promise, abort } for timeout management
    */
-  encodeVideoFromImageAndAudio(imagePath, audioPath, outputVideoPath) {
-    console.log(`🎬 Encoding Video: ${path.basename(outputVideoPath)}...`);
+  encodeVideoFromImageAndAudio(imagePath, audioPath, outputVideoPath, weatherCode = 0) {
+    console.log(`🎬 Encoding Video: ${path.basename(outputVideoPath)} (Weather Code: ${weatherCode})...`);
+    
+    // Select Procedural Weather Filter (from legacy Phase 16 Master Bake)
+    let weatherFilter = 'color=black:s=1280x800:d=5'; // Default constant black block (Clear)
+    
+    if (weatherCode >= 51 && weatherCode <= 67) {
+        console.log('🌧️  Applying RAIN procedural filter...');
+        weatherFilter = 'color=black:s=1280x800:d=5,noise=alls=100:allf=t+u,dblur=90:60';
+    } else if (weatherCode >= 71 && weatherCode <= 77) {
+        console.log('❄️  Applying SNOW procedural filter...');
+        weatherFilter = 'color=black:s=1280x800:d=5,noise=alls=100:allf=t+u,scale=64:40:flags=neighbor,scale=1280:800:flags=neighbor,gblur=15,setpts=4.0*PTS';
+    } else if (weatherCode >= 45 && weatherCode <= 48) {
+        console.log('≡  Applying FOG procedural filter...');
+        weatherFilter = 'color=black:s=1280x800:d=5,noise=alls=100:allf=t+u,scale=32:20:flags=neighbor,scale=1280:800:flags=neighbor,boxblur=50,scroll=h=0.03';
+    }
+
     let command;
     const promise = new Promise((resolve, reject) => {
       command = ffmpeg()
         .input(imagePath)
         .inputOptions(['-loop 1'])
         .input(audioPath)
-        .videoCodec('libx264')
-        .audioCodec('aac')
-        .audioFrequency(44100)
+        .complexFilter([
+          // Background Prep: Scale, Pad, and prepare standard YUV format
+          '[0:v]scale=1280:800,setsar=1,format=yuv420p[base]',
+          
+          // Procedural Weather Mask: Generate black block + Noise/Motion within the same string
+          `${weatherFilter},format=yuv420p[mask]`,
+          
+          // Final Stitch: Additive Luminance only on the brightness channel
+          '[base][mask]lut2=c0=\'x+y\':c1=\'x\':c2=\'x\',format=yuv420p[v]'
+        ])
         .outputOptions([
+          '-map [v]',
+          '-map 1:a',
+          '-c:v libx264',
           '-pix_fmt yuv420p',
           '-preset ultrafast',
           '-profile:v baseline',

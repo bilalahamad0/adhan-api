@@ -114,9 +114,18 @@ class HardwareService {
     const sessionRes = await this.adbCommand(ip, "shell dumpsys media_session");
     const sonyRes = await this.getSonySpecificStatus(ip);
 
-    // 1. Detection of 'Playing' state (Standard + Media Session)
+    // 1. Detection of 'Playing' state (Standard + Media Session + isActive flag)
     const isMediaSessionPlaying = !!(sessionRes && (sessionRes.includes('state=3') || sessionRes.includes('state=Playing')));
-    const isAudioActive = !!(audioRes && (audioRes.includes('state:started') || audioRes.includes('playerState=2') || audioRes.includes('usage=USAGE_MEDIA')));
+    
+    // isActive=true check (Critical for Sony TV Live Audio detection)
+    const isActive = !!(audioRes && audioRes.includes('isActive:true'));
+    
+    const isAudioActive = !!(audioRes && (
+        isActive || 
+        audioRes.includes('state:started') || 
+        audioRes.includes('playerState=2') || 
+        audioRes.includes('usage=USAGE_MEDIA')
+    ));
 
     // 2. Detection of 'Muted' state (Stream 3 is usually Music/Media)
     // Looking for blocks like "mStreamStates[3]:" ... until next stream or end of string

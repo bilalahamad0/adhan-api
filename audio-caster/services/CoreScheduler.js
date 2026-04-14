@@ -119,7 +119,10 @@ class CoreScheduler {
             const VisualGenerator = require('../visual_generator.js');
             const vg = new VisualGenerator(CONFIG);
             
-            // TIER 1 SMART RECOVERY: Weather Bypass (Already handled inside VisualGenerator with 10s timeout)
+            // TIER 1 SMART RECOVERY: Weather Bypass (Already handled inside VisualGenerator)
+            const weather = await vg.getWeather();
+            const weatherCode = weather ? weather.code : 0;
+
             const imgBuffer = await vg.generateDashboard(
                 prayerName,
                 targetTimeObj ? targetTimeObj.toFormat('h:mm a') : today.toFormat('h:mm a'),
@@ -130,9 +133,17 @@ class CoreScheduler {
             fs.mkdirSync(path.dirname(imgPath), { recursive: true });
             fs.writeFileSync(imgPath, imgBuffer);
 
+            // ZERO-LATENCY RESTORATION: Pre-generate Dua in parallel
+            const staticDuaPath = path.join(__dirname, '..', '..', 'images', 'dua_after_adhan.png');
+            const generatedDuaPath = path.join(__dirname, '..', '..', 'images', 'generated', 'dua.jpg');
+            vg.generateDua(staticDuaPath).then(buffer => {
+                fs.writeFileSync(generatedDuaPath, buffer);
+                log(`✅ Checkpoint 1.5: Dua Image Pre-generated.`);
+            }).catch(e => log(`⚠️ Dua generation warning: ${e.message}`));
+
             // TIER 2 SMART RECOVERY: Encoding Guard (60s)
             log(`🎬 Starting Video Encoding...`);
-            const { promise: encodingPromise, abort: abortEncoding } = mediaService.encodeVideoFromImageAndAudio(imgPath, audioPath, outputVideoPath);
+            const { promise: encodingPromise, abort: abortEncoding } = mediaService.encodeVideoFromImageAndAudio(imgPath, audioPath, outputVideoPath, weatherCode);
             
             const timeoutPromise = new Promise((_, reject) => 
                 setTimeout(() => reject(new Error('Encoding Timeout')), 60000)
@@ -194,18 +205,12 @@ class CoreScheduler {
 
         // Determine Final Cast URL (If recovered, use fallback)
         let finalVideoFile = `${prayerName.toLowerCase()}.mp4`;
-        if (this.sessionStatus.get(prayerName) === 'RECOVERING') {
-            finalVideoFile = 'fallback_adhan.mp4';
-        }
         const castUrl = `http://${localIp}:${CONFIG.serverPort}/images/generated/${finalVideoFile}?t=${Date.now()}`;
-        // Note: images/generated symlinks or pathing might need to be verified. 
-        // fallback_adhan.mp4 is in /images, whereas results are in /images/generated.
-        // Let's ensure fallback exists in both or just use /images/ URL.
         const effectiveCastUrl = this.sessionStatus.get(prayerName) === 'RECOVERING' 
             ? `http://${localIp}:${CONFIG.serverPort}/images/fallback_adhan.mp4?t=${Date.now()}`
             : castUrl;
 
-        // 4. Hardware Interruption (Fix for Issue 2 - Muting)
+        // 4. Hardware Interruption
         const tvIp = process.env.TV_IP;
         let tvWasPaused = false;
         let tvWasMuted = false;
@@ -215,23 +220,17 @@ class CoreScheduler {
                 const isTvOn = await hardwareService.isActuallyOn(tvIp);
                 if (isTvOn) {
                     const status = await hardwareService.getAudioStatus(tvIp);
-                    
                     if (status.isMediaSessionPlaying) {
-                        log(`📺 TV is playing pause-able media (App). Sending PAUSE...`);
+                        log(`📺 TV is playing pause-able media. Sending PAUSE...`);
                         await hardwareService.pauseMedia(tvIp);
                         tvWasPaused = true;
                     } else if (status.isAudioActive) {
-                        // Only mute if it's not a pause-able session (e.g. Live TV)
                         if (!status.isMuted && !status.isSonyMuted) {
-                            log(`🔇 TV is playing non-pausable audio (Live TV). Muting...`);
+                            log(`🔇 TV is playing non-pausable audio. Muting...`);
                             await hardwareService.setMuteState(tvIp, true);
                             tvWasMuted = true;
                         }
-                    } else {
-                        log(`📺 TV is ON but silent.`);
                     }
-                } else {
-                    log(`📺 TV is OFF. Skipping interruption.`);
                 }
             } catch (e) { log(`⚠️ TV Control Error: ${e.message}`); }
         }
@@ -249,7 +248,23 @@ class CoreScheduler {
                 log(`✨ Adhan Video Finished. Switching to Dua...`);
                 if (safetyTimer) clearTimeout(safetyTimer);
                 currentPhase = 'DUA';
-                castDuaImage();
+                
+                const duaUrl = `http://${localIp}:${CONFIG.serverPort}/images/generated/dua.jpg?t=${Date.now()}`;
+                const media = {
+                    url: duaUrl, contentType: 'image/jpeg',
+                    metadata: { type: 0, metadataType: 0, title: `Dua After Adhan`, images: [{ url: duaUrl }] }
+                };
+                log(`🤲 Casting Pre-generated Dua: ${duaUrl}`);
+                this.sessionStatus.set(prayerName, 'DUA');
+                adhanDevice.play(media, (err) => {
+                    if (err) cleanup();
+                    else safetyTimer = setTimeout(() => { 
+                        log(`✅ Dua Complete.`); 
+                        currentPhase = 'DONE'; 
+                        this.sessionStatus.set(prayerName, 'COMPLETED'); 
+                        cleanup(); 
+                    }, 20000);
+                });
                 return;
             }
             if (currentPhase === 'DUA') return;
@@ -258,16 +273,9 @@ class CoreScheduler {
             currentPhase = 'DONE';
             log(`🔄 Playback Ended. Cleaning up...`);
             
-            // Restore TV State
             if (tvIp && hardwareService) {
-                if (tvWasMuted) {
-                    log(`🔊 Unmuting TV...`);
-                    await hardwareService.setMuteState(tvIp, false);
-                }
-                if (tvWasPaused) {
-                    log(`▶️ Resuming TV...`);
-                    await hardwareService.resumeMedia(tvIp);
-                }
+                if (tvWasMuted) await hardwareService.setMuteState(tvIp, false);
+                if (tvWasPaused) await hardwareService.resumeMedia(tvIp);
             }
 
             const finalize = () => {
@@ -278,7 +286,6 @@ class CoreScheduler {
                         if (adhanDevice.client) adhanDevice.client.close();
                         adhanDevice.close();
                     }
-                    if (scanner) scanner.destroy();
                 } catch (e) { }
 
                 if (safetyTimer) clearTimeout(safetyTimer);
@@ -292,28 +299,6 @@ class CoreScheduler {
                 log(`🔊 Restoring Volume...`);
                 adhanDevice.setVolume(originalVolume, () => setTimeout(finalize, 500));
             } else { finalize(); }
-        };
-
-        const castDuaImage = () => {
-            const VisualGenerator = require('../visual_generator.js');
-            const vg = new VisualGenerator(CONFIG);
-            const staticDuaPath = path.join(__dirname, '..', '..', 'images', 'dua_after_adhan.png');
-            const generatedDuaPath = path.join(__dirname, '..', '..', 'images', 'generated', 'dua.jpg');
-            
-            vg.generateDua(staticDuaPath).then(buffer => {
-                fs.writeFileSync(generatedDuaPath, buffer);
-                const duaUrl = `http://${localIp}:${CONFIG.serverPort}/images/generated/dua.jpg?t=${Date.now()}`;
-                const media = {
-                    url: duaUrl, contentType: 'image/jpeg',
-                    metadata: { type: 0, metadataType: 0, title: `Dua After Adhan`, images: [{ url: duaUrl }] }
-                };
-                log(`🤲 Casting Stretched Dua: ${duaUrl}`);
-                this.sessionStatus.set(prayerName, 'DUA');
-                adhanDevice.play(media, (err) => {
-                    if (err) cleanup();
-                    else safetyTimer = setTimeout(() => { log(`✅ Dua Complete.`); currentPhase = 'DONE'; this.sessionStatus.set(prayerName, 'COMPLETED'); cleanup(); }, 20000);
-                });
-            }).catch(() => cleanup());
         };
 
         const startPlayback = (device) => {
@@ -381,7 +366,16 @@ class CoreScheduler {
             return; // Already healthy
         }
 
-        log(`🔍 Audit: ${prayerName} state is '${state || 'UNKNOWN'}'. Checking device status...`);
+        if (state === 'GENERATING') {
+            log(`🔍 Audit: System is still GENERATING assets. Giving it 15s extra...`);
+            await new Promise(r => setTimeout(r, 15000));
+            // Re-check state after wait
+            if (this.sessionStatus.get(prayerName) !== 'GENERATING') {
+                 return; // State changed, primary task likely took over
+            }
+        }
+
+        log(`🔍 Audit: ${prayerName} state is '${this.sessionStatus.get(prayerName) || 'UNKNOWN'}'. Checking device status...`);
         
         const scanner = new ChromecastAPI();
         let auditDevice = null;
