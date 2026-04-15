@@ -74,7 +74,11 @@ class FirestoreSync {
       const summary = logger.getDailySummary();
       const events = logger.getTodayEvents();
 
-      // Timeout guard: don't block Pi if network is slow
+      if (events.length === 0 && (!summary || !summary.total || summary.total === 0)) {
+        console.log(`[FirestoreSync] Skip ${today}: no events to sync`);
+        return;
+      }
+
       const writePromise = this._batchWrite(db, today, summary, events);
       const timeout = new Promise((_, reject) =>
         setTimeout(() => reject(new Error('Firestore write timeout')), WRITE_TIMEOUT_MS),

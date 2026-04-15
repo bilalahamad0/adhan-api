@@ -402,15 +402,10 @@ var _latestCache = {};
 function attachListeners() {
     if (!db || _listeners.length > 0) return;
 
-    const today = new Date();
-    const startDate = new Date(today);
-    startDate.setDate(startDate.getDate() - 90);
-    const startStr = localDateStr(startDate);
-    const endStr = localDateStr(today);
-
+    // Listen to ALL data (no date range limit) so nothing ever falls off.
+    // Firestore charges per document; even after years this is only ~365 docs/year.
     _listeners.push(
-        db.collection('dailyMetrics')
-            .where('date', '>=', startStr).where('date', '<=', endStr).orderBy('date')
+        db.collection('dailyMetrics').orderBy('date')
             .onSnapshot(function(snap) {
                 _metricsCache = {};
                 snap.forEach(function(d) { var data = d.data(); _metricsCache[data.date] = data; });
@@ -419,8 +414,7 @@ function attachListeners() {
     );
 
     _listeners.push(
-        db.collection('dailyEvents')
-            .where('date', '>=', startStr).where('date', '<=', endStr).orderBy('date')
+        db.collection('dailyEvents').orderBy('date')
             .onSnapshot(function(snap) {
                 _eventsCache = {};
                 snap.forEach(function(d) { var data = d.data(); _eventsCache[data.date] = data; });
