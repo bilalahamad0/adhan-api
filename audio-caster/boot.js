@@ -106,6 +106,15 @@ async function bootSystem() {
     }
   });
 
+  app.post('/api/metrics/sync', async (req, res) => {
+    try {
+      await firestoreSync.forceSync(playbackLogger);
+      res.status(200).json({ status: 'synced' });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   const server = app.listen(CONFIG.serverPort, () => {
     console.log(`🔊 Media Server running on port ${CONFIG.serverPort}`);
   });
