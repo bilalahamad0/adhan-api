@@ -306,20 +306,16 @@
     </div>
 </div>
 
-<!-- Firebase JS SDK (modular, tree-shaken via CDN) -->
-<script type="module">
-import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.7.1/firebase-app.js';
-import { getFirestore, collection, doc, getDoc, getDocs, query, where, orderBy } from 'https://www.gstatic.com/firebasejs/11.7.1/firebase-firestore.js';
-
-// ── Firebase Config ──
-// REPLACE apiKey with your Firebase web app's API key from:
-// Firebase Console > Project Settings > General > Your Apps > Web App
+<!-- Firebase JS SDK (compat build -- works on any host without ES module support) -->
+<script src="https://www.gstatic.com/firebasejs/11.7.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/11.7.1/firebase-firestore-compat.js"></script>
+<script>
 const firebaseConfig = {
     apiKey: 'AIzaSyCmxmrW4uXjA7RxrQhDzOugy8GjILIexWs',
     projectId: 'adhan-79908',
 };
-const app = initializeApp(firebaseConfig);
-const db = getFirestore(app);
+const app = firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
 
 const API_BASE = 'https://adhan-api.vercel.app';
 const PRAYERS = ['Fajr','Dhuhr','Asr','Maghrib','Isha'];
@@ -356,24 +352,11 @@ async function fetchMetrics() {
         const startStr = startDate.toISOString().slice(0, 10);
         const endStr = today.toISOString().slice(0, 10);
 
-        // Parallel Firestore reads: daily summaries + events
-        const metricsQuery = query(
-            collection(db, 'dailyMetrics'),
-            where('date', '>=', startStr),
-            where('date', '<=', endStr),
-            orderBy('date')
-        );
-        const eventsQuery = query(
-            collection(db, 'dailyEvents'),
-            where('date', '>=', startStr),
-            where('date', '<=', endStr),
-            orderBy('date')
-        );
-
+        // Parallel Firestore reads (compat chained API)
         const [metricsSnap, eventsSnap, latestSnap] = await Promise.all([
-            getDocs(metricsQuery),
-            getDocs(eventsQuery),
-            getDoc(doc(db, 'meta', 'latest'))
+            db.collection('dailyMetrics').where('date', '>=', startStr).where('date', '<=', endStr).orderBy('date').get(),
+            db.collection('dailyEvents').where('date', '>=', startStr).where('date', '<=', endStr).orderBy('date').get(),
+            db.collection('meta').doc('latest').get()
         ]);
 
         // Build dailyStats from summaries
@@ -392,7 +375,7 @@ async function fetchMetrics() {
             }
         });
 
-        const latest = latestSnap.exists() ? latestSnap.data() : {};
+        const latest = latestSnap.exists ? latestSnap.data() : {};
 
         // Client-side aggregation (lightweight -- max 90 docs)
         const aggregate = computeAggregate(dailyStats);
