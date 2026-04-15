@@ -306,23 +306,16 @@
     </div>
 </div>
 
-<!-- Firebase JS SDK (compat build -- works on any host without ES module support) -->
+<!-- Firebase SDK (compat): loaded first but only used if available -->
 <script src="https://www.gstatic.com/firebasejs/11.7.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/11.7.1/firebase-firestore-compat.js"></script>
 <script>
-const firebaseConfig = {
-    apiKey: 'AIzaSyCmxmrW4uXjA7RxrQhDzOugy8GjILIexWs',
-    projectId: 'adhan-79908',
-};
-const app = firebase.initializeApp(firebaseConfig);
-const db = firebase.firestore();
-
 const API_BASE = 'https://adhan-api.vercel.app';
 const PRAYERS = ['Fajr','Dhuhr','Asr','Maghrib','Isha'];
 
-// --- State ---
-let metricsData = null;
-let calendarOffset = 0;
+var metricsData = null;
+var calendarOffset = 0;
+var db = null; // Set later if Firebase loads
 
 // --- Tab Switching ---
 document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -341,10 +334,8 @@ function updateDateDisplay() {
 }
 updateDateDisplay();
 
-// ── Firestore Data Fetcher ──
-// All filtering happens server-side on Google infrastructure.
-// Dashboard only receives matching documents -- zero load on the Pi.
 async function fetchMetrics() {
+    if (!db) { setStatus(false); renderEmpty(); return; }
     try {
         const today = new Date();
         const startDate = new Date(today);
@@ -352,7 +343,6 @@ async function fetchMetrics() {
         const startStr = startDate.toISOString().slice(0, 10);
         const endStr = today.toISOString().slice(0, 10);
 
-        // Parallel Firestore reads (compat chained API)
         const [metricsSnap, eventsSnap, latestSnap] = await Promise.all([
             db.collection('dailyMetrics').where('date', '>=', startStr).where('date', '<=', endStr).orderBy('date').get(),
             db.collection('dailyEvents').where('date', '>=', startStr).where('date', '<=', endStr).orderBy('date').get(),
@@ -719,11 +709,30 @@ async function fetchDevMetrics() {
     }
 }
 
-// --- Init ---
-fetchMetrics();
+// --- Dev Tab Fetch (always runs, independent of Firebase) ---
 fetchDevMetrics();
-setInterval(fetchMetrics, 60000);
 setInterval(fetchDevMetrics, 300000);
+
+// --- Firestore Init (graceful -- UI works even if Firebase SDK is blocked) ---
+try {
+    if (typeof firebase !== 'undefined' && firebase.firestore) {
+        db = firebase.initializeApp({
+            apiKey: 'AIzaSyCmxmrW4uXjA7RxrQhDzOugy8GjILIexWs',
+            projectId: 'adhan-79908',
+        }).firestore();
+        setStatus(true);
+        fetchMetrics();
+        setInterval(fetchMetrics, 60000);
+    } else {
+        console.warn('Firebase SDK not available -- metrics disabled');
+        setStatus(false);
+        renderEmpty();
+    }
+} catch (e) {
+    console.warn('Firebase init failed:', e.message);
+    setStatus(false);
+    renderEmpty();
+}
 </script>
 </body>
 </html>
