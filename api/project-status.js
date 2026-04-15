@@ -7,12 +7,17 @@ export default function handler(req, res) {
     project: "Adhan API v3.0",
     status: "Operational",
     ai_metrics: {
+      agents: [
+        { name: "Antigravity", org: "Google DeepMind", period: "Feb-Apr 2026", phase: "v1-v2" },
+        { name: "Cursor", org: "Anthropic", period: "Apr 2026-Present", phase: "v3" }
+      ],
       agent: "Cursor (Claude Opus 4)",
       organization: "Multi-Agent Pipeline",
       models: [
-        { name: "Claude Opus 4", utility: "Primary Orchestration, Debugging & Architecture", tokens: 150000 },
-        { name: "Gemini 3 Flash", utility: "Rapid Prototyping & Iteration", tokens: 180000 },
-        { name: "Gemini 3 Pro", utility: "Complex Reasoning & Edge Cases", tokens: 75000 }
+        { name: "Gemini 2.5 Flash", utility: "Primary Orchestration & Coding", tokens: 180000, agent: "Antigravity" },
+        { name: "Gemini 2.5 Pro", utility: "Complex Debugging & Reasoning", tokens: 75000, agent: "Antigravity" },
+        { name: "Claude Sonnet 4", utility: "Fast Iteration & Refactors", tokens: 80000, agent: "Cursor" },
+        { name: "Claude Opus 4", utility: "Architecture & Deep Debugging", tokens: 70000, agent: "Cursor" }
       ],
       total_tokens_processed: 405000,
       human_hours_saved: 70,
@@ -22,7 +27,8 @@ export default function handler(req, res) {
       microservices: 8
     },
     quality_metrics: {
-      test_coverage: "62%",
+      test_coverage: "75%",
+      coverage_detail: { scheduling_logic: "75%", hardware_io: "30%", overall: "19%" },
       test_suites: 9,
       total_tests: 22,
       stability_index: "99.9%",

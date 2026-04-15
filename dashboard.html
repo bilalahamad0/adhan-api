@@ -130,7 +130,7 @@
         .gauge-container { position:relative; width:110px; height:110px; margin:0.75rem auto; }
         .gauge-svg { transform:rotate(-90deg); }
         .gauge-bg { fill:none; stroke:rgba(255,255,255,0.05); stroke-width:8; }
-        .gauge-fill { fill:none; stroke:var(--accent-purple); stroke-width:8; stroke-linecap:round; stroke-dasharray:283; stroke-dashoffset:107; transition:stroke-dashoffset 2s ease; }
+        .gauge-fill { fill:none; stroke:var(--accent-purple); stroke-width:8; stroke-linecap:round; stroke-dasharray:283; stroke-dashoffset:71; transition:stroke-dashoffset 2s ease; }
         .progress-container { width:100%; height:10px; background:rgba(255,255,255,0.05); border-radius:8px; margin:1rem 0; overflow:hidden; }
         .progress-bar { height:100%; width:88%; background:linear-gradient(to right,var(--accent-blue),var(--accent-green)); box-shadow:0 0 16px rgba(74,222,128,0.2); }
 
@@ -279,17 +279,21 @@
                 <div class="kpi-sub">Saved 70 hours of specialized IoT engineering</div>
             </div>
             <div class="card" style="text-align:center">
-                <div class="card-title">Test Coverage</div>
+                <div class="card-title">Scheduling Logic Coverage</div>
                 <div class="gauge-container">
                     <svg class="gauge-svg" viewBox="0 0 100 100">
                         <circle class="gauge-bg" cx="50" cy="50" r="45"></circle>
                         <circle id="coverage-gauge" class="gauge-fill" cx="50" cy="50" r="45"></circle>
                     </svg>
                     <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%)">
-                        <span id="coverage-val" style="font-size:1.4rem;font-weight:700">62%</span>
+                        <span id="coverage-val" style="font-size:1.4rem;font-weight:700">75%</span>
                     </div>
                 </div>
-                <div class="kpi-sub">Core Logic Resiliency</div>
+                <div class="kpi-sub">ScheduleService + PrayerTimes API</div>
+                <div style="margin-top:0.5rem;font-size:0.65rem;color:var(--text-muted);line-height:1.5">
+                    Hardware I/O (Cast, ADB, mDNS): 30%<br>
+                    Overall incl. orchestration: 19%
+                </div>
             </div>
         </div>
 
@@ -317,14 +321,43 @@
             </div>
         </div>
 
+        <div class="card" style="margin-bottom:1.5rem">
+            <div class="card-title">AI Agents</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem">
+                <div class="card" style="border-color:rgba(56,189,248,0.2)">
+                    <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.5rem">
+                        <div style="width:8px;height:8px;border-radius:50%;background:var(--accent-blue)"></div>
+                        <span style="font-weight:700;font-size:0.85rem">Antigravity</span>
+                    </div>
+                    <div style="font-size:0.7rem;color:var(--text-dim);margin-bottom:0.5rem">Google DeepMind &middot; Feb&ndash;Apr 2026</div>
+                    <div style="font-size:0.7rem;color:var(--text-muted);line-height:1.6">
+                        <span style="color:var(--accent-green);font-weight:600">Gemini 2.5 Flash</span> &middot; Primary orchestration<br>
+                        <span style="color:var(--accent-green);font-weight:600">Gemini 2.5 Pro</span> &middot; Complex debugging<br>
+                        <span style="font-size:0.65rem;color:var(--text-muted)">255k tokens &middot; v1&ndash;v2 architecture</span>
+                    </div>
+                </div>
+                <div class="card" style="border-color:rgba(192,132,252,0.2)">
+                    <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.5rem">
+                        <div style="width:8px;height:8px;border-radius:50%;background:var(--accent-purple)"></div>
+                        <span style="font-weight:700;font-size:0.85rem" id="agent-name">Cursor</span>
+                    </div>
+                    <div style="font-size:0.7rem;color:var(--text-dim);margin-bottom:0.5rem">Anthropic &middot; Apr 2026&ndash;Present</div>
+                    <div style="font-size:0.7rem;color:var(--text-muted);line-height:1.6">
+                        <span style="color:var(--accent-purple);font-weight:600">Claude Sonnet 4</span> &middot; Fast iteration & refactors<br>
+                        <span style="color:var(--accent-purple);font-weight:600">Claude Opus 4</span> &middot; Architecture & deep debugging<br>
+                        <span style="font-size:0.65rem;color:var(--text-muted)">150k+ tokens &middot; v3 pipeline & dashboard</span>
+                    </div>
+                </div>
+            </div>
+        </div>
         <div class="card">
-            <div class="card-title">AI Provenance & System Health</div>
+            <div class="card-title">System Health</div>
             <div class="health-grid">
-                <div class="health-item"><h4>Primary Agent</h4><p id="agent-name">Cursor</p></div>
-                <div class="health-item"><h4>Model Mix</h4><p id="model-mix">Claude Opus 4 / Gemini 3</p></div>
-                <div class="health-item"><h4>Tokens Processed</h4><p id="token-count">405k+</p></div>
+                <div class="health-item"><h4>Model Mix</h4><p id="model-mix" style="font-size:0.8rem">Gemini 2.5 Flash/Pro + Claude Sonnet/Opus 4</p></div>
+                <div class="health-item"><h4>Total Tokens</h4><p id="token-count">405k+</p></div>
                 <div class="health-item"><h4>Stability Index</h4><p style="color:var(--accent-green)">99.9% Uptime</p></div>
                 <div class="health-item"><h4>Watchdogs Active</h4><p>3 Multi-tier</p></div>
+                <div class="health-item"><h4>Services</h4><p>8 Microservices</p></div>
                 <div class="health-item"><h4>Last Sync</h4><p id="last-sync" style="font-size:0.7rem;font-weight:400">--</p></div>
             </div>
         </div>
@@ -727,8 +760,10 @@ async function fetchDevMetrics() {
     try {
         const resp = await fetch(API_BASE + '/api/project-status');
         const data = await resp.json();
-        document.getElementById('agent-name').innerText = data.ai_metrics.agent.split('(')[0].trim();
-        document.getElementById('model-mix').innerText = data.ai_metrics.models.map(m => m.name).join(' / ');
+        var agentEl = document.getElementById('agent-name');
+        if (agentEl) agentEl.innerText = data.ai_metrics.agent.split('(')[0].trim();
+        var mixEl = document.getElementById('model-mix');
+        if (mixEl) mixEl.innerText = data.ai_metrics.models.map(function(m){ return m.name; }).join(' / ');
         document.getElementById('token-count').innerText = (data.ai_metrics.total_tokens_processed / 1000).toFixed(0) + 'k+';
         document.getElementById('coverage-val').innerText = data.quality_metrics.test_coverage;
         document.getElementById('last-sync').innerText = new Date(data.last_updated).toLocaleString();
