@@ -238,6 +238,22 @@ class PlaybackLogger {
     return all.filter(e => e.date >= startDate && e.date <= endDate);
   }
 
+  upsertHistoricalEvent(eventData) {
+    if (!eventData || !eventData.date || !eventData.prayer) {
+      throw new Error('date and prayer are required');
+    }
+    const log = this._readLog();
+    const idx = log.events.findIndex(
+      e => e.date === eventData.date && String(e.prayer).toLowerCase() === String(eventData.prayer).toLowerCase(),
+    );
+    if (idx >= 0) {
+      log.events[idx] = { ...log.events[idx], ...eventData };
+    } else {
+      log.events.push(eventData);
+    }
+    this._writeLog(log);
+  }
+
   getDailyStats(date) {
     const events = this.getAllEvents().filter(e => e.date === date);
     return this._computeStats(events, date);

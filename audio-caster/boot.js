@@ -81,6 +81,7 @@ async function bootSystem() {
   // 2. Start Media Server (Express)
   const express = require('express');
   const app = express();
+  app.use(express.json());
   app.use('/audio', express.static(audioDirPath));
   app.use('/images', express.static(path.join(__dirname, '..', 'images')));
   
@@ -136,6 +137,61 @@ async function bootSystem() {
       const days = Math.max(1, Math.min(365, parseInt(req.query.days, 10) || 30));
       await firestoreSync.backfillRecentDays(playbackLogger, days);
       res.status(200).json({ status: 'backfill-complete', days });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post('/api/metrics/repair-event', async (req, res) => {
+    try {
+      const body = req.body || {};
+      const date = String(body.date || '').trim();
+      const prayer = String(body.prayer || '').trim();
+      const status = String(body.status || 'PLAYED').trim().toUpperCase();
+
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+        res.status(400).json({ error: 'Invalid date. Use YYYY-MM-DD' });
+        return;
+      }
+      if (!prayer) {
+        res.status(400).json({ error: 'prayer is required' });
+        return;
+      }
+      if (!['PLAYED', 'RECOVERED', 'FAILED', 'PENDING'].includes(status)) {
+        res.status(400).json({ error: 'Invalid status' });
+        return;
+      }
+
+      const nowIso = new Date().toISOString();
+      const event = {
+        date,
+        prayer: prayer.charAt(0).toUpperCase() + prayer.slice(1).toLowerCase(),
+        scheduledTime: body.scheduledTime || null,
+        triggerTime: body.triggerTime || nowIso,
+        playbackStartTime: body.playbackStartTime || nowIso,
+        completedTime: body.completedTime || nowIso,
+        status,
+        triggerLatencyMs: Number.isFinite(Number(body.triggerLatencyMs))
+          ? Number(body.triggerLatencyMs)
+          : null,
+        encodingDurationMs: Number.isFinite(Number(body.encodingDurationMs))
+          ? Number(body.encodingDurationMs)
+          : null,
+        discoveryDurationMs: Number.isFinite(Number(body.discoveryDurationMs))
+          ? Number(body.discoveryDurationMs)
+          : null,
+        recoveryAttempts: Number.isFinite(Number(body.recoveryAttempts))
+          ? Number(body.recoveryAttempts)
+          : (status === 'RECOVERED' ? 1 : 0),
+        auditResult: body.auditResult || (status === 'FAILED' ? 'FAIL' : 'PASS'),
+        failureReason: body.failureReason || null,
+        usedFallback: Boolean(body.usedFallback),
+        deviceName: body.deviceName || CONFIG.device.name,
+      };
+
+      playbackLogger.upsertHistoricalEvent(event);
+      await firestoreSync.syncDate(playbackLogger, date, { updateLatest: false, allowEmpty: false });
+      res.status(200).json({ status: 'repaired', date, prayer: event.prayer });
     } catch (e) {
       res.status(500).json({ error: e.message });
     }
