@@ -49,8 +49,10 @@ const CONFIG = {
 // Global Services
 const media = new MediaService();
 const hardware = new HardwareService();
+const playbackDataDir = process.env.PLAYBACK_DATA_DIR
+  || path.join(process.env.HOME || __dirname, '.adhan-data');
 const playbackLogger = new PlaybackLogger(
-  path.join(__dirname, 'data'),
+  playbackDataDir,
   CONFIG.timezone
 );
 const firestoreSync = new FirestoreSync(
