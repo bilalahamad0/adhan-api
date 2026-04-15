@@ -21,7 +21,8 @@ class CoreScheduler {
         this.log = (msg) => console.log(`[${new Date().toLocaleTimeString()}] ${msg}`);
         this.executePreFlightAndCast = this.executePreFlightAndCast.bind(this);
         this.auditPlayback = this.auditPlayback.bind(this);
-        this.sessionStatus = new Map(); // Tracks: 'IDLE', 'FIXING', 'RECOVERING', 'PLAYING', 'COMPLETED'
+        this.sessionStatus = new Map();
+        this.activeRuns = new Set();
     }
 
     resolveTodayScheduleEntry() {
@@ -81,7 +82,6 @@ class CoreScheduler {
 
             schedule.scheduleJob(triggerTime.toJSDate(), () => this.executePreFlightAndCast(prayer, audioFile, scheduleTime, todayEntry));
             
-            // Audit Job (30s Post-Adhan)
             const auditTime = scheduleTime.plus({ seconds: 30 });
             schedule.scheduleJob(auditTime.toJSDate(), () => this.auditPlayback(prayer, audioFile));
 
@@ -96,10 +96,17 @@ class CoreScheduler {
         const log = this.log;
         const state = this.sessionStatus.get(prayerName);
         
-        // If this is a recovery trigger (targetTimeObj is null), but it's already playing, skip.
+        // Block if ANY active session exists for this prayer (prevents audit race condition).
+        if (this.activeRuns.has(prayerName)) {
+            log(`⏭️ Skipping ${prayerName}: session already active (state: ${state}).`);
+            return;
+        }
+
         if (!targetTimeObj && (state === 'PLAYING' || state === 'DUA' || state === 'COMPLETED')) {
             return;
         }
+
+        this.activeRuns.add(prayerName);
 
         log(`🚀 TRIGGER: ${prayerName} Time! Starting sequence...`);
 
@@ -113,7 +120,6 @@ class CoreScheduler {
         const hardwareService = this.hardware;
         const localIp = require('ip').address();
         
-        // 1. Assets Generation
         const outputVideoPath = path.join(__dirname, '..', '..', 'images', 'generated', `${prayerName.toLowerCase()}.mp4`);
         const audioPath = path.join(__dirname, '..', 'audio', audioFileName);
         const imgPath = path.join(__dirname, '..', '..', 'images', 'generated', 'current_dashboard.jpg');
@@ -123,7 +129,6 @@ class CoreScheduler {
         try {
             const today = DateTime.now().setZone(CONFIG.timezone);
 
-            // Extract Hijri date & context from the schedule entry (fixes Hijri calendar regression)
             let hijriDate = null;
             let holidays = [];
             const isFriday = today.weekday === 5;
@@ -135,7 +140,6 @@ class CoreScheduler {
                 } catch (e) { log(`⚠️ Hijri parse warning: ${e.message}`); }
             }
 
-            // Recovery/test mode can call without scheduleEntry; recover it from annual schedule.
             if (!hijriDate) {
                 const recoveredEntry = this.resolveTodayScheduleEntry();
                 if (recoveredEntry) {
@@ -151,7 +155,6 @@ class CoreScheduler {
             const VisualGenerator = require('../visual_generator.js');
             const vg = new VisualGenerator(CONFIG);
             
-            // TIER 1 SMART RECOVERY: Weather Bypass (Already handled inside VisualGenerator)
             const weather = await vg.getWeather();
             const weatherCode = weather ? weather.code : 0;
 
@@ -165,7 +168,6 @@ class CoreScheduler {
             fs.mkdirSync(path.dirname(imgPath), { recursive: true });
             fs.writeFileSync(imgPath, imgBuffer);
 
-            // ZERO-LATENCY RESTORATION: Pre-generate Dua in parallel
             const staticDuaPath = path.join(__dirname, '..', '..', 'images', 'dua_after_adhan.png');
             const generatedDuaPath = path.join(__dirname, '..', '..', 'images', 'generated', 'dua.jpg');
             vg.generateDua(staticDuaPath).then(buffer => {
@@ -173,7 +175,6 @@ class CoreScheduler {
                 log(`✅ Checkpoint 1.5: Dua Image Pre-generated.`);
             }).catch(e => log(`⚠️ Dua generation warning: ${e.message}`));
 
-            // TIER 2 SMART RECOVERY: Encoding Guard (60s)
             log(`🎬 Starting Video Encoding...`);
             const { promise: encodingPromise, abort: abortEncoding } = mediaService.encodeVideoFromImageAndAudio(imgPath, audioPath, outputVideoPath, weatherCode);
             
@@ -201,23 +202,23 @@ class CoreScheduler {
                     this.playbackLogger.recordEncodingFailed(prayerName, 'ENCODING_TIMEOUT');
                     this.playbackLogger.recordUsedFallback(prayerName);
                 }
-                // Use Fallback Adhan
                 const fallbackPath = path.join(__dirname, '..', '..', 'images', 'fallback_adhan.mp4');
                 if (fs.existsSync(fallbackPath)) {
                     log('🛠️ Smart Reset: Using pre-rendered premium fallback_adhan.mp4');
                 } else {
                     log('❌ Hard Failure: Fallback video missing.');
                     if (this.playbackLogger) this.playbackLogger.recordFailed(prayerName, 'ENCODING_TIMEOUT');
+                    this.activeRuns.delete(prayerName);
                     return;
                 }
             } else {
                 log(`❌ Generation Failed: ${e.message}`);
                 if (this.playbackLogger) this.playbackLogger.recordFailed(prayerName, 'GENERATION_FAILED');
+                this.activeRuns.delete(prayerName);
                 return; 
             }
         }
 
-        // 2. Start Discovery Early (Fix for Issue 1)
         log(`📡 Checkpoint 2: Starting Device Discovery...`);
         if (this.playbackLogger) this.playbackLogger.recordDiscoveryStart(prayerName);
         const scanner = new ChromecastAPI();
@@ -232,7 +233,6 @@ class CoreScheduler {
 
         this.sessionStatus.set(prayerName, 'WAITING');
 
-        // 3. Wait for target time
         if (targetTimeObj) {
             const delay = targetTimeObj.toMillis() - Date.now();
             if (delay > 0) {
@@ -242,14 +242,12 @@ class CoreScheduler {
             }
         }
 
-        // Determine Final Cast URL (If recovered, use fallback)
         let finalVideoFile = `${prayerName.toLowerCase()}.mp4`;
         const castUrl = `http://${localIp}:${CONFIG.serverPort}/images/generated/${finalVideoFile}?t=${Date.now()}`;
         const effectiveCastUrl = this.sessionStatus.get(prayerName) === 'RECOVERING' 
             ? `http://${localIp}:${CONFIG.serverPort}/images/fallback_adhan.mp4?t=${Date.now()}`
             : castUrl;
 
-        // 4. Hardware Interruption
         const tvIp = process.env.TV_IP;
         let tvWasPaused = false;
         let tvWasMuted = false;
@@ -274,7 +272,6 @@ class CoreScheduler {
             } catch (e) { log(`⚠️ TV Control Error: ${e.message}`); }
         }
 
-        // 5. Connect & Cast
         let adhanDevice = null;
         let isCleanedUp = false;
         let isFinalizing = false;
@@ -288,8 +285,15 @@ class CoreScheduler {
             if (currentPhase === 'ADHAN') {
                 log(`✨ Adhan Video Finished. Switching to Dua...`);
                 if (safetyTimer) clearTimeout(safetyTimer);
-                currentPhase = 'DUA'; // Atomically switch phase
+                currentPhase = 'DUA';
                 
+                if (!adhanDevice) {
+                    log(`⚠️ No device connected -- skipping Dua, proceeding to cleanup.`);
+                    currentPhase = 'DONE';
+                    cleanup();
+                    return;
+                }
+
                 const duaUrl = `http://${localIp}:${CONFIG.serverPort}/images/generated/dua.jpg?t=${Date.now()}`;
                 const media = {
                     url: duaUrl, contentType: 'image/jpeg',
@@ -317,6 +321,7 @@ class CoreScheduler {
 
             if (currentPhase === 'DONE') {
                 isCleanedUp = true;
+                this.activeRuns.delete(prayerName);
                 log(`🔄 Playback Ended. Cleaning up...`);
                 
                 if (tvIp && hardwareService) {
@@ -342,7 +347,6 @@ class CoreScheduler {
 
                     try {
                         if (adhanDevice) {
-                            // Sequential Teardown: Stop Application -> then Close Connection
                             adhanDevice.stop(() => {
                                 log(`⏹️ Receiver Stopped.`);
                                 setTimeout(() => {
@@ -417,7 +421,6 @@ class CoreScheduler {
             });
         };
 
-        // If already discovered during wait, start now. Otherwise wait for discovery.
         if (discoveredDevice) {
             startPlayback(discoveredDevice);
         } else {
@@ -425,11 +428,11 @@ class CoreScheduler {
             scanner.on('device', (device) => {
                 if (device.friendlyName === CONFIG.device.name) startPlayback(device);
             });
-            // Safety timeout for discovery
             setTimeout(() => {
                 if (!adhanDevice) {
                     log(`❌ Discovery Timeout: Speaker ${CONFIG.device.name} not found.`);
                     if (this.playbackLogger) this.playbackLogger.recordFailed(prayerName, 'DISCOVERY_TIMEOUT');
+                    this.activeRuns.delete(prayerName);
                     cleanup();
                 }
             }, 60000); 
@@ -444,21 +447,19 @@ class CoreScheduler {
         const log = this.log;
         const state = this.sessionStatus.get(prayerName);
         
+        // If primary session is anywhere in its lifecycle, don't interfere.
+        if (this.activeRuns.has(prayerName)) {
+            log(`✅ Audit: ${prayerName} session is active (state: ${state}). Skipping.`);
+            if (this.playbackLogger) this.playbackLogger.recordAuditResult(prayerName, true);
+            return;
+        }
+
         if (state === 'PLAYING' || state === 'DUA' || state === 'COMPLETED') {
             if (this.playbackLogger) this.playbackLogger.recordAuditResult(prayerName, true);
-            return; // Already healthy
+            return;
         }
 
-        if (state === 'GENERATING') {
-            log(`🔍 Audit: System is still GENERATING assets. Giving it 15s extra...`);
-            await new Promise(r => setTimeout(r, 15000));
-            // Re-check state after wait
-            if (this.sessionStatus.get(prayerName) !== 'GENERATING') {
-                 return; // State changed, primary task likely took over
-            }
-        }
-
-        log(`🔍 Audit: ${prayerName} state is '${this.sessionStatus.get(prayerName) || 'UNKNOWN'}'. Checking device status...`);
+        log(`🔍 Audit: ${prayerName} state is '${state || 'UNKNOWN'}'. Checking device status...`);
         
         const scanner = new ChromecastAPI();
         let auditDevice = null;
@@ -482,7 +483,6 @@ class CoreScheduler {
                     if (err || !status || !status.applications || status.applications.length === 0) {
                         triggerEmergency();
                     } else {
-                        // Check if our Adhan is currently playing in the status
                         const isAdhan = status.applications.some(app => app.statusText && app.statusText.includes('Adhan'));
                         if (!isAdhan) triggerEmergency();
                         else {
@@ -495,7 +495,6 @@ class CoreScheduler {
             }
         });
 
-        // 30s timeout for binary discovery during audit
         setTimeout(() => {
             if (!auditDevice) {
                 log(`⚠️ Audit Discovery Timeout. Resetting system...`);
