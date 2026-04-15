@@ -204,6 +204,126 @@ class VisualGenerator {
     return icons[code] || '🌡'; 
   }
 
+  drawWeatherIcon(ctx, code, isDay, cx, cy, size) {
+    ctx.save();
+    ctx.shadowColor = 'transparent';
+    ctx.shadowBlur = 0;
+    ctx.shadowOffsetX = 0;
+    ctx.shadowOffsetY = 0;
+
+    const r = size / 2;
+    const isNight = isDay === 0;
+
+    const fillCircle = (x, y, radius, color) => {
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(x, y, radius, 0, Math.PI * 2);
+      ctx.fill();
+    };
+
+    const drawCloudShape = (x, y, w) => {
+      ctx.fillStyle = '#E8E8E8';
+      ctx.beginPath();
+      ctx.arc(x - w * 0.2, y + w * 0.05, w * 0.22, 0, Math.PI * 2);
+      ctx.arc(x + w * 0.12, y - w * 0.12, w * 0.28, 0, Math.PI * 2);
+      ctx.arc(x + w * 0.38, y + w * 0.05, w * 0.2, 0, Math.PI * 2);
+      ctx.rect(x - w * 0.42, y + w * 0.05, w * 0.8, w * 0.17);
+      ctx.fill();
+    };
+
+    const drawRainDrops = (x, y, w) => {
+      ctx.strokeStyle = '#87CEEB';
+      ctx.lineWidth = Math.max(1.5, w * 0.05);
+      ctx.lineCap = 'round';
+      [[-0.15, 0.30, -0.22, 0.48],
+       [ 0.10, 0.35,  0.03, 0.53],
+       [ 0.32, 0.30,  0.25, 0.48]].forEach(([x1, y1, x2, y2]) => {
+        ctx.beginPath();
+        ctx.moveTo(x + x1 * w, y + y1 * w);
+        ctx.lineTo(x + x2 * w, y + y2 * w);
+        ctx.stroke();
+      });
+    };
+
+    if (code === 0) {
+      if (isNight) {
+        // 5-point star
+        ctx.fillStyle = '#F5E6A3';
+        ctx.beginPath();
+        for (let i = 0; i < 10; i++) {
+          const angle = (Math.PI * 2 * i) / 10 - Math.PI / 2;
+          const rad = i % 2 === 0 ? r * 0.6 : r * 0.25;
+          const px = cx + Math.cos(angle) * rad;
+          const py = cy + Math.sin(angle) * rad;
+          if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+        }
+        ctx.closePath();
+        ctx.fill();
+      } else {
+        // Sun: circle + 8 rays
+        fillCircle(cx, cy, r * 0.3, '#FFD700');
+        ctx.strokeStyle = '#FFD700';
+        ctx.lineWidth = Math.max(1.5, r * 0.08);
+        ctx.lineCap = 'round';
+        for (let i = 0; i < 8; i++) {
+          const a = (Math.PI / 4) * i;
+          ctx.beginPath();
+          ctx.moveTo(cx + Math.cos(a) * r * 0.45, cy + Math.sin(a) * r * 0.45);
+          ctx.lineTo(cx + Math.cos(a) * r * 0.7, cy + Math.sin(a) * r * 0.7);
+          ctx.stroke();
+        }
+      }
+    } else if (code <= 3) {
+      if (!isNight && code <= 2) {
+        fillCircle(cx - r * 0.25, cy - r * 0.25, r * 0.2, '#FFD700');
+      }
+      drawCloudShape(cx + r * 0.05, cy + r * 0.1, r * 1.1);
+    } else if (code >= 45 && code <= 48) {
+      // Fog: horizontal bars
+      ctx.strokeStyle = 'rgba(220,220,220,0.8)';
+      ctx.lineWidth = Math.max(2, r * 0.1);
+      ctx.lineCap = 'round';
+      for (let i = -1; i <= 1; i++) {
+        ctx.beginPath();
+        ctx.moveTo(cx - r * 0.6, cy + i * r * 0.35);
+        ctx.lineTo(cx + r * 0.6, cy + i * r * 0.35);
+        ctx.stroke();
+      }
+    } else if ((code >= 51 && code <= 67) || (code >= 80 && code <= 82)) {
+      // Rain
+      drawCloudShape(cx, cy - r * 0.15, r);
+      drawRainDrops(cx, cy - r * 0.15, r);
+    } else if (code >= 71 && code <= 77) {
+      // Snow: cloud + dots
+      drawCloudShape(cx, cy - r * 0.15, r);
+      [[-0.12, 0.38], [0.12, 0.45], [0.35, 0.38]].forEach(([dx, dy]) => {
+        fillCircle(cx + dx * r, cy - r * 0.15 + dy * r, r * 0.06, '#FFFFFF');
+      });
+    } else if (code >= 95) {
+      // Thunder: cloud + bolt
+      drawCloudShape(cx, cy - r * 0.2, r);
+      ctx.fillStyle = '#FFD700';
+      ctx.beginPath();
+      ctx.moveTo(cx + r * 0.05, cy + r * 0.15);
+      ctx.lineTo(cx - r * 0.1,  cy + r * 0.35);
+      ctx.lineTo(cx + r * 0.05, cy + r * 0.32);
+      ctx.lineTo(cx - r * 0.08, cy + r * 0.55);
+      ctx.lineTo(cx + r * 0.18, cy + r * 0.28);
+      ctx.lineTo(cx + r * 0.02, cy + r * 0.3);
+      ctx.closePath();
+      ctx.fill();
+    } else {
+      // Fallback: circle outline (thermometer)
+      ctx.strokeStyle = '#FFFFFF';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r * 0.4, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    ctx.restore();
+  }
+
   async generateDashboard(prayerName, prayerTime, hijriDate, context = {}) {
     await this.init();
 
@@ -286,24 +406,20 @@ class VisualGenerator {
 
     // Weather (Bottom Right)
     const weather = await this.getWeather();
-    const icon = this.getWeatherIcon(weather.code, weather.isDay);
 
     ctx.fillStyle = '#FFFFFF';
     ctx.textAlign = 'right';
 
-    // Temp (Moved Down)
     ctx.font = '75px sans-serif';
     const tempText = weather.temp;
     ctx.fillText(tempText, this.width - PADDING, TOP_BASE);
 
-    // Icon - Draw to left of Temp
+    // Canvas-drawn weather icon (font-independent, guaranteed to render)
     const tempWidth = ctx.measureText(tempText).width;
-    ctx.textAlign = 'right';
-
-    ctx.font = '50px sans-serif';
-
-    // Reduced gap from 60 to 25 to bring closer
-    ctx.fillText(icon, this.width - PADDING - tempWidth - 25, TOP_BASE);
+    const iconSize = 50;
+    const iconCenterX = this.width - PADDING - tempWidth - 25 - iconSize / 2;
+    const iconCenterY = TOP_BASE - iconSize * 0.35;
+    this.drawWeatherIcon(ctx, weather.code, weather.isDay, iconCenterX, iconCenterY, iconSize);
 
     // City (Matched with Hijri)
     ctx.font = '40px sans-serif';

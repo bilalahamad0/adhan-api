@@ -50,17 +50,17 @@ class MediaService {
     console.log(`🎬 Encoding Video: ${path.basename(outputVideoPath)} (Weather Code: ${weatherCode})...`);
     
     // Select Procedural Weather Filter (from legacy Phase 16 Master Bake)
-    let weatherFilter = 'color=black:s=1280x800:d=5'; // Default constant black block (Clear)
+    let weatherFilter = 'color=black:s=1280x800'; // Default constant black block (Clear)
     
     if (weatherCode >= 51 && weatherCode <= 67) {
         console.log('🌧️  Applying RAIN procedural filter...');
-        weatherFilter = 'color=black:s=1280x800:d=5,noise=alls=100:allf=t+u,dblur=90:60';
+        weatherFilter = 'color=black:s=1280x800,noise=alls=100:allf=t+u,dblur=90:60';
     } else if (weatherCode >= 71 && weatherCode <= 77) {
         console.log('❄️  Applying SNOW procedural filter...');
-        weatherFilter = 'color=black:s=1280x800:d=5,noise=alls=100:allf=t+u,scale=64:40:flags=neighbor,scale=1280:800:flags=neighbor,gblur=15,setpts=4.0*PTS';
+        weatherFilter = 'color=black:s=1280x800,noise=alls=100:allf=t+u,scale=64:40:flags=neighbor,scale=1280:800:flags=neighbor,gblur=15,setpts=4.0*PTS';
     } else if (weatherCode >= 45 && weatherCode <= 48) {
         console.log('≡  Applying FOG procedural filter...');
-        weatherFilter = 'color=black:s=1280x800:d=5,noise=alls=100:allf=t+u,scale=32:20:flags=neighbor,scale=1280:800:flags=neighbor,boxblur=50,scroll=h=0.03';
+        weatherFilter = 'color=black:s=1280x800,noise=alls=100:allf=t+u,scale=32:20:flags=neighbor,scale=1280:800:flags=neighbor,boxblur=50,scroll=h=0.03';
     }
 
     let command;
@@ -70,24 +70,22 @@ class MediaService {
         .inputOptions(['-loop 1'])
         .input(audioPath)
         .complexFilter([
-          // Background Prep: Scale, Pad, and prepare standard YUV format
           '[0:v]scale=1280:800,setsar=1,format=yuv420p[base]',
-          
-          // Procedural Weather Mask: Generate black block + Noise/Motion within the same string
           `${weatherFilter},format=yuv420p[mask]`,
-          
-          // Final Stitch: Additive Luminance only on the brightness channel
-          '[base][mask]lut2=c0=\'x+y\':c1=\'x\':c2=\'x\',format=yuv420p[v]'
+          '[base][mask]lut2=c0=\'x+y\':c1=\'x\':c2=\'x\',format=yuv420p[v]',
+          // 1.5s silent lead-in absorbs Chromecast initial buffering (fixes audio chop + black flash)
+          '[1:a]adelay=1500|1500[a]'
         ])
         .outputOptions([
           '-map [v]',
-          '-map 1:a',
+          '-map [a]',
           '-c:v libx264',
           '-pix_fmt yuv420p',
           '-preset ultrafast',
           '-profile:v baseline',
           '-level 3.0',
           '-r 10',
+          '-g 10',
           '-movflags +faststart',
           '-shortest',
         ])
