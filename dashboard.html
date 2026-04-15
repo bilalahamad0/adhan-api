@@ -100,6 +100,7 @@
         .cal-day.miss { background:rgba(248,113,113,0.2); color:var(--accent-red); }
         .cal-day.nodata { background:rgba(148,163,184,0.05); color:var(--text-muted); }
         .cal-day.today { box-shadow:inset 0 0 0 1.5px var(--accent-blue); }
+        .cal-day.selected { box-shadow:inset 0 0 0 2px var(--accent-yellow); }
         .cal-tooltip { display:none; position:absolute; bottom:calc(100% + 4px); left:50%; transform:translateX(-50%); background:#1e293b; border:1px solid var(--border); padding:0.35rem 0.6rem; border-radius:0.4rem; font-size:0.65rem; white-space:nowrap; z-index:10; color:var(--text); pointer-events:none; }
         .cal-day:hover .cal-tooltip { display:block; }
 
@@ -185,8 +186,8 @@
     <div id="tab-ops" class="tab-panel active">
 
         <!-- Today's Prayer Status -->
-        <div class="card" style="margin-bottom:1.5rem">
-            <div class="card-title">Today's Prayer Status</div>
+            <div class="card" style="margin-bottom:1.5rem">
+            <div class="card-title" id="prayer-status-title">Today's Prayer Status</div>
             <div class="prayer-grid" id="prayer-grid">
                 <div class="loading">Loading prayer data...</div>
             </div>
@@ -229,6 +230,7 @@
                 <div class="cal-nav">
                     <button id="cal-prev">&larr;</button>
                     <span class="cal-month-label" id="cal-month-label"></span>
+                    <button id="cal-today">Today</button>
                     <button id="cal-next">&rarr;</button>
                 </div>
                 <div class="cal-grid" id="cal-grid"></div>
@@ -237,7 +239,7 @@
 
         <!-- Recent Events -->
         <div class="card" style="margin-bottom:1.5rem">
-            <div class="card-title">Recent Playback Events</div>
+            <div class="card-title" id="events-title">Recent Playback Events</div>
             <div class="events-log" id="events-log">
                 <div class="loading">Loading events...</div>
             </div>
@@ -373,6 +375,7 @@ const PRAYERS = ['Fajr','Dhuhr','Asr','Maghrib','Isha'];
 
 var metricsData = null;
 var calendarOffset = 0;
+var selectedDate = null;
 var db = null; // Set later if Firebase loads
 
 // --- Tab Switching ---
@@ -542,25 +545,35 @@ function localDateStr(d) {
     return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
 }
 
+function getActiveDate() {
+    return selectedDate || localDateStr(new Date());
+}
+
 function renderPrayerGrid() {
     const ds = metricsData.dailyStats;
-    const today = localDateStr(new Date());
-    const todayData = ds.find(d => d.label === today) || null;
+    const activeDate = getActiveDate();
+    const dayData = ds.find(d => d.label === activeDate) || null;
     const grid = document.getElementById('prayer-grid');
+    const title = document.getElementById('prayer-status-title');
+    if (title) {
+        title.textContent = activeDate === localDateStr(new Date())
+            ? "Today's Prayer Status"
+            : `Prayer Status · ${activeDate}`;
+    }
 
-    if (!todayData || !todayData.prayers || Object.keys(todayData.prayers).length === 0) {
+    if (!dayData || !dayData.prayers || Object.keys(dayData.prayers).length === 0) {
         grid.innerHTML = PRAYERS.map(p => `
             <div class="prayer-cell">
                 <div class="prayer-name">${p}</div>
                 <div class="prayer-time" style="color:var(--text-muted)">--:--</div>
                 <div class="prayer-status-icon pending">&#9711;</div>
-                <div class="prayer-detail">Awaiting data</div>
+                <div class="prayer-detail">${activeDate === localDateStr(new Date()) ? 'Awaiting data' : 'No data'}</div>
             </div>`).join('');
         return;
     }
 
     grid.innerHTML = PRAYERS.map(p => {
-        const d = todayData.prayers[p];
+        const d = dayData.prayers[p];
         if (!d) return `
             <div class="prayer-cell">
                 <div class="prayer-name">${p}</div>
@@ -706,6 +719,7 @@ function renderCalendar() {
         const dateStr = `${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
         const st = statsMap[dateStr];
         const isToday = dateStr === todayStr;
+        const isSelected = dateStr === getActiveDate();
         let cls = 'nodata';
         let tip = 'No data';
         if (st && st.total > 0) {
@@ -714,7 +728,7 @@ function renderCalendar() {
             else if (sc > 0) { cls = 'partial'; tip = sc + '/' + st.total + ' played, ' + (st.failed || 0) + ' failed'; }
             else { cls = 'miss'; tip = '0/' + st.total + ' -- all failed'; }
         }
-        html += `<div class="cal-day ${cls}${isToday ? ' today' : ''}">${d}<div class="cal-tooltip">${dateStr}: ${tip}</div></div>`;
+        html += `<div class="cal-day ${cls}${isToday ? ' today' : ''}${isSelected ? ' selected' : ''}" data-date="${dateStr}">${d}<div class="cal-tooltip">${dateStr}: ${tip}</div></div>`;
     }
 
     grid.innerHTML = html;
@@ -722,18 +736,38 @@ function renderCalendar() {
 
 document.getElementById('cal-prev').addEventListener('click', () => { calendarOffset--; renderCalendar(); });
 document.getElementById('cal-next').addEventListener('click', () => { if (calendarOffset < 0) { calendarOffset++; renderCalendar(); } });
+document.getElementById('cal-today').addEventListener('click', () => {
+    selectedDate = localDateStr(new Date());
+    calendarOffset = 0;
+    renderAll();
+});
+document.getElementById('cal-grid').addEventListener('click', (e) => {
+    const day = e.target.closest('.cal-day[data-date]');
+    if (!day) return;
+    selectedDate = day.dataset.date;
+    renderAll();
+});
 
 // --- Events Log ---
 function renderEventsLog() {
     const events = metricsData.events || [];
     const container = document.getElementById('events-log');
+    const activeDate = getActiveDate();
+    const eventsTitle = document.getElementById('events-title');
+    if (eventsTitle) {
+        eventsTitle.textContent = activeDate === localDateStr(new Date())
+            ? 'Recent Playback Events'
+            : `Playback Events · ${activeDate}`;
+    }
 
-    if (events.length === 0) {
+    const filtered = events.filter(e => e.date === activeDate);
+
+    if (filtered.length === 0) {
         container.innerHTML = '<div class="empty-state"><p>No playback events recorded yet.</p></div>';
         return;
     }
 
-    const sorted = [...events].sort((a,b) => {
+    const sorted = [...filtered].sort((a,b) => {
         const da = (a.date || '') + (a.completedTime || a.triggerTime || '');
         const db = (b.date || '') + (b.completedTime || b.triggerTime || '');
         return db.localeCompare(da);
@@ -828,6 +862,7 @@ try {
             apiKey: 'AIzaSyCmxmrW4uXjA7RxrQhDzOugy8GjILIexWs',
             projectId: 'adhan-79908',
         }).firestore();
+        selectedDate = localDateStr(new Date());
         attachListeners();
     } else {
         console.warn('Firebase SDK not available -- metrics disabled');
