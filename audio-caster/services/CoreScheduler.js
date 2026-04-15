@@ -24,6 +24,19 @@ class CoreScheduler {
         this.sessionStatus = new Map(); // Tracks: 'IDLE', 'FIXING', 'RECOVERING', 'PLAYING', 'COMPLETED'
     }
 
+    resolveTodayScheduleEntry() {
+        try {
+            if (!fs.existsSync(this.scheduleFilePath)) return null;
+            const annualData = JSON.parse(fs.readFileSync(this.scheduleFilePath));
+            const today = DateTime.now().setZone(this.config.timezone);
+            const monthData = annualData?.data?.[today.month.toString()];
+            if (!Array.isArray(monthData)) return null;
+            return monthData.find(d => parseInt(d?.date?.gregorian?.day) === today.day) || null;
+        } catch {
+            return null;
+        }
+    }
+
     async scheduleToday() {
         const config = this.config;
         const log = this.log;
@@ -120,6 +133,19 @@ class CoreScheduler {
                     hijriDate = `${h.day} ${h.month.en} ${h.year}`;
                     holidays = h.holidays || [];
                 } catch (e) { log(`⚠️ Hijri parse warning: ${e.message}`); }
+            }
+
+            // Recovery/test mode can call without scheduleEntry; recover it from annual schedule.
+            if (!hijriDate) {
+                const recoveredEntry = this.resolveTodayScheduleEntry();
+                if (recoveredEntry) {
+                    scheduleEntry = recoveredEntry;
+                    try {
+                        const h = recoveredEntry.date.hijri;
+                        hijriDate = `${h.day} ${h.month.en} ${h.year}`;
+                        holidays = h.holidays || [];
+                    } catch (e) { log(`⚠️ Hijri recovery parse warning: ${e.message}`); }
+                }
             }
 
             const VisualGenerator = require('../visual_generator.js');
