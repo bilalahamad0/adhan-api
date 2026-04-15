@@ -115,6 +115,30 @@ async function bootSystem() {
     }
   });
 
+  app.post('/api/metrics/sync-date', async (req, res) => {
+    try {
+      const date = String(req.query.date || '').trim();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+        res.status(400).json({ error: 'Invalid date. Use YYYY-MM-DD' });
+        return;
+      }
+      const synced = await firestoreSync.syncDate(playbackLogger, date, { updateLatest: false });
+      res.status(200).json({ status: synced ? 'synced' : 'skipped', date });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post('/api/metrics/backfill', async (req, res) => {
+    try {
+      const days = Math.max(1, Math.min(365, parseInt(req.query.days, 10) || 30));
+      await firestoreSync.backfillRecentDays(playbackLogger, days);
+      res.status(200).json({ status: 'backfill-complete', days });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   const server = app.listen(CONFIG.serverPort, () => {
     console.log(`🔊 Media Server running on port ${CONFIG.serverPort}`);
   });
@@ -215,6 +239,8 @@ async function bootSystem() {
 
   // Direct Firestore sync (daily at 23:55 + debounced after each prayer)
   schedule.scheduleJob('55 23 * * *', () => firestoreSync.forceSync(playbackLogger));
+  // Fallback reconciliation: resync last 7 days once daily.
+  schedule.scheduleJob('10 0 * * *', () => firestoreSync.backfillRecentDays(playbackLogger, 7));
   const origFinalize = playbackLogger._finalizeEvent.bind(playbackLogger);
   playbackLogger._finalizeEvent = function (key) {
     origFinalize(key);

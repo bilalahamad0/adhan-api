@@ -65,34 +65,17 @@ class FirestoreSync {
   }
 
   async _doSync(logger) {
-    const db = this._initFirestore();
-    if (!db) return;
-
     try {
       const { DateTime } = require('luxon');
       const today = DateTime.now().setZone(this._timezone).toISODate();
-      const summary = logger.getDailySummary();
-      const events = logger.getTodayEvents();
-
-      if (events.length === 0 && (!summary || !summary.total || summary.total === 0)) {
-        console.log(`[FirestoreSync] Skip ${today}: no events to sync`);
-        return;
-      }
-
-      const writePromise = this._batchWrite(db, today, summary, events);
-      const timeout = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('Firestore write timeout')), WRITE_TIMEOUT_MS),
-      );
-
-      await Promise.race([writePromise, timeout]);
+      await this.syncDate(logger, today, { updateLatest: true });
       this._lastWriteMs = Date.now();
-      console.log(`[FirestoreSync] Synced ${today}: ${events.length} events`);
     } catch (e) {
       console.error(`[FirestoreSync] Sync failed: ${e.message}`);
     }
   }
 
-  async _batchWrite(db, date, summary, events) {
+  async _writeDay(db, date, summary, events, { updateLatest = true } = {}) {
     const batch = db.batch();
 
     batch.set(db.collection('dailyMetrics').doc(date), {
@@ -107,14 +90,53 @@ class FirestoreSync {
       updatedAt: new Date().toISOString(),
     });
 
-    batch.set(db.collection('meta').doc('latest'), {
-      date,
-      summary,
-      events,
-      uploadedAt: new Date().toISOString(),
-    });
+    if (updateLatest) {
+      batch.set(db.collection('meta').doc('latest'), {
+        date,
+        summary,
+        events,
+        uploadedAt: new Date().toISOString(),
+      });
+    }
 
     await batch.commit();
+  }
+
+  async syncDate(logger, date, { updateLatest = false, allowEmpty = false } = {}) {
+    const db = this._initFirestore();
+    if (!db) return false;
+
+    const summary = logger.getDailyStats(date);
+    const events = logger.getDateRange(date, date);
+    if (!allowEmpty && events.length === 0 && (!summary || !summary.total || summary.total === 0)) {
+      console.log(`[FirestoreSync] Skip ${date}: no events to sync`);
+      return false;
+    }
+
+    const writePromise = this._writeDay(db, date, summary, events, { updateLatest });
+    const timeout = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('Firestore write timeout')), WRITE_TIMEOUT_MS),
+    );
+
+    await Promise.race([writePromise, timeout]);
+    console.log(`[FirestoreSync] Synced ${date}: ${events.length} events`);
+    return true;
+  }
+
+  async backfillRecentDays(logger, days = 7) {
+    const { DateTime } = require('luxon');
+    const now = DateTime.now().setZone(this._timezone);
+    let syncedCount = 0;
+    for (let i = 0; i < days; i++) {
+      const date = now.minus({ days: i }).toISODate();
+      try {
+        const synced = await this.syncDate(logger, date, { updateLatest: false });
+        if (synced) syncedCount++;
+      } catch (e) {
+        console.error(`[FirestoreSync] Backfill failed for ${date}: ${e.message}`);
+      }
+    }
+    console.log(`[FirestoreSync] Backfill complete: ${syncedCount}/${days} days synced`);
   }
 
   /**
