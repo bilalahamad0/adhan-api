@@ -340,8 +340,8 @@ async function fetchMetrics() {
         const today = new Date();
         const startDate = new Date(today);
         startDate.setDate(startDate.getDate() - 90);
-        const startStr = startDate.toISOString().slice(0, 10);
-        const endStr = today.toISOString().slice(0, 10);
+        const startStr = localDateStr(startDate);
+        const endStr = localDateStr(today);
 
         const [metricsSnap, eventsSnap, latestSnap] = await Promise.all([
             db.collection('dailyMetrics').where('date', '>=', startStr).where('date', '<=', endStr).orderBy('date').get(),
@@ -453,9 +453,13 @@ function renderAll() {
 }
 
 // --- Prayer Grid ---
+function localDateStr(d) {
+    return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+}
+
 function renderPrayerGrid() {
     const ds = metricsData.dailyStats;
-    const today = new Date().toISOString().slice(0,10);
+    const today = localDateStr(new Date());
     const todayData = ds.find(d => d.label === today) || null;
     const grid = document.getElementById('prayer-grid');
 
@@ -595,7 +599,7 @@ function renderCalendar() {
     const viewDate = new Date(now.getFullYear(), now.getMonth() + calendarOffset, 1);
     const year = viewDate.getFullYear();
     const month = viewDate.getMonth();
-    const todayStr = new Date().toISOString().slice(0,10);
+    const todayStr = localDateStr(new Date());
 
     document.getElementById('cal-month-label').textContent = viewDate.toLocaleDateString('en-US', { month:'long', year:'numeric' });
 
