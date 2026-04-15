@@ -21,6 +21,9 @@ exit
 exit.pub
 coverage/
 
+# Playback Metrics Data (local Pi storage)
+audio-caster/data/
+
 # Build Artifacts
 dist/
 *.tar.gz

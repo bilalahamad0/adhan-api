@@ -2,6 +2,8 @@ const path = require('path');
 const MediaService = require('./services/MediaService');
 const CoreScheduler = require('./services/CoreScheduler');
 const HardwareService = require('./services/HardwareService');
+const PlaybackLogger = require('./services/PlaybackLogger');
+const FirestoreSync = require('./services/FirestoreSync');
 require('dotenv').config({ path: require('path').join(__dirname, '.env') });
 
 // --- CRASH DIAGNOSTICS (Production Stability) ---
@@ -47,6 +49,14 @@ const CONFIG = {
 // Global Services
 const media = new MediaService();
 const hardware = new HardwareService();
+const playbackLogger = new PlaybackLogger(
+  path.join(__dirname, 'data'),
+  CONFIG.timezone
+);
+const firestoreSync = new FirestoreSync(
+  process.env.FIREBASE_SERVICE_KEY,
+  CONFIG.timezone
+);
 
 // THE SCHEDULER: Now standalone and self-sufficient
 const scheduler = new CoreScheduler(
@@ -54,7 +64,8 @@ const scheduler = new CoreScheduler(
   hardware, 
   media,
   null, // No global cast/scanner
-  path.join(__dirname, 'annual_schedule.json')
+  path.join(__dirname, 'annual_schedule.json'),
+  playbackLogger
 );
 
 async function bootSystem() {
@@ -73,6 +84,26 @@ async function bootSystem() {
   
   app.get('/health', (req, res) => {
     res.status(200).json({ status: 'OK', version: '2.5.0' });
+  });
+
+  // Metrics API: local access to playback data
+  app.get('/api/metrics', (req, res) => {
+    try {
+      const range = parseInt(req.query.days) || 30;
+      const data = playbackLogger.getMultiDaySummary(range);
+      res.status(200).json(data);
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get('/api/metrics/today', (req, res) => {
+    try {
+      const data = playbackLogger.getDailySummary();
+      res.status(200).json(data);
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
   });
 
   const server = app.listen(CONFIG.serverPort, () => {
@@ -172,7 +203,15 @@ async function bootSystem() {
   // Daily Refresh
   const schedule = require('node-schedule');
   schedule.scheduleJob('0 1 * * *', () => scheduler.scheduleToday());
-  
+
+  // Direct Firestore sync (daily at 23:55 + debounced after each prayer)
+  schedule.scheduleJob('55 23 * * *', () => firestoreSync.forceSync(playbackLogger));
+  const origFinalize = playbackLogger._finalizeEvent.bind(playbackLogger);
+  playbackLogger._finalizeEvent = function (key) {
+    origFinalize(key);
+    setTimeout(() => firestoreSync.syncNow(playbackLogger), 5000);
+  };
+
   // SYSTEM TEST MODE
   if (process.argv.includes('--test')) {
     const prayers = ['fajr', 'dhuhr', 'asr', 'maghrib', 'isha'];

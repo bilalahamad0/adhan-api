@@ -12,11 +12,12 @@ const ChromecastAPI = require('chromecast-api');
  * No classes or services are touched during the casting flow.
  */
 class CoreScheduler {
-    constructor(config, hardwareService, mediaService, castService, scheduleFilePath) {
+    constructor(config, hardwareService, mediaService, castService, scheduleFilePath, playbackLogger) {
         this.config = config;
         this.hardware = hardwareService;
         this.media = mediaService;
         this.scheduleFilePath = scheduleFilePath;
+        this.playbackLogger = playbackLogger || null;
         this.log = (msg) => console.log(`[${new Date().toLocaleTimeString()}] ${msg}`);
         this.executePreFlightAndCast = this.executePreFlightAndCast.bind(this);
         this.auditPlayback = this.auditPlayback.bind(this);
@@ -88,6 +89,11 @@ class CoreScheduler {
         }
 
         log(`🚀 TRIGGER: ${prayerName} Time! Starting sequence...`);
+
+        const scheduledTimeStr = targetTimeObj ? targetTimeObj.toFormat('HH:mm') : null;
+        if (this.playbackLogger) {
+            this.playbackLogger.startEvent(prayerName, scheduledTimeStr);
+        }
 
         const CONFIG = this.config;
         const mediaService = this.media;
@@ -161,33 +167,40 @@ class CoreScheduler {
             }
 
             log(`✅ Checkpoint 1: Assets Generated.`);
+            if (this.playbackLogger) this.playbackLogger.recordEncodingComplete(prayerName);
         } catch (e) { 
             if (e.message.includes('SMART_RECOVERY')) {
                 log(`⚠️ ${e.message}`);
+                if (this.playbackLogger) {
+                    this.playbackLogger.recordEncodingFailed(prayerName, 'ENCODING_TIMEOUT');
+                    this.playbackLogger.recordUsedFallback(prayerName);
+                }
                 // Use Fallback Adhan
                 const fallbackPath = path.join(__dirname, '..', '..', 'images', 'fallback_adhan.mp4');
                 if (fs.existsSync(fallbackPath)) {
                     log('🛠️ Smart Reset: Using pre-rendered premium fallback_adhan.mp4');
-                    // We don't return here, we proceed with the fallback path
-                    // Update the castUrl logically later
                 } else {
                     log('❌ Hard Failure: Fallback video missing.');
+                    if (this.playbackLogger) this.playbackLogger.recordFailed(prayerName, 'ENCODING_TIMEOUT');
                     return;
                 }
             } else {
-                log(`❌ Generation Failed: ${e.message}`); 
+                log(`❌ Generation Failed: ${e.message}`);
+                if (this.playbackLogger) this.playbackLogger.recordFailed(prayerName, 'GENERATION_FAILED');
                 return; 
             }
         }
 
         // 2. Start Discovery Early (Fix for Issue 1)
         log(`📡 Checkpoint 2: Starting Device Discovery...`);
+        if (this.playbackLogger) this.playbackLogger.recordDiscoveryStart(prayerName);
         const scanner = new ChromecastAPI();
         let discoveredDevice = null;
         scanner.on('device', (device) => {
             if (device.friendlyName === CONFIG.device.name && !discoveredDevice) {
                 discoveredDevice = device;
                 log(`📡 Device Discovered & Cached: ${device.friendlyName}`);
+                if (this.playbackLogger) this.playbackLogger.recordDeviceDiscovered(prayerName, device.friendlyName);
             }
         });
 
@@ -267,7 +280,8 @@ class CoreScheduler {
                         safetyTimer = setTimeout(() => { 
                             log(`✅ Dua Complete.`); 
                             currentPhase = 'DONE'; 
-                            this.sessionStatus.set(prayerName, 'COMPLETED'); 
+                            this.sessionStatus.set(prayerName, 'COMPLETED');
+                            if (this.playbackLogger) this.playbackLogger.recordCompleted(prayerName);
                             cleanup(); 
                         }, 20000);
                     }
@@ -348,10 +362,13 @@ class CoreScheduler {
                         metadata: { type: 1, metadataType: 0, title: `${prayerName} Adhan`, images: [{ url: dashboardUrl }] }
                     };
                     device.play(media, (err) => {
-                        if (err) cleanup();
-                        else {
+                        if (err) {
+                            if (this.playbackLogger) this.playbackLogger.recordFailed(prayerName, 'CAST_ERROR');
+                            cleanup();
+                        } else {
                             log(`🎶 Playback Started!`);
                             this.sessionStatus.set(prayerName, 'PLAYING');
+                            if (this.playbackLogger) this.playbackLogger.recordPlaybackStarted(prayerName, targetTimeObj);
                             safetyTimer = setTimeout(cleanup, 600000);
                             let lastState = '';
                             const adhanStatusHandler = (s) => {
@@ -386,6 +403,7 @@ class CoreScheduler {
             setTimeout(() => {
                 if (!adhanDevice) {
                     log(`❌ Discovery Timeout: Speaker ${CONFIG.device.name} not found.`);
+                    if (this.playbackLogger) this.playbackLogger.recordFailed(prayerName, 'DISCOVERY_TIMEOUT');
                     cleanup();
                 }
             }, 60000); 
@@ -401,6 +419,7 @@ class CoreScheduler {
         const state = this.sessionStatus.get(prayerName);
         
         if (state === 'PLAYING' || state === 'DUA' || state === 'COMPLETED') {
+            if (this.playbackLogger) this.playbackLogger.recordAuditResult(prayerName, true);
             return; // Already healthy
         }
 
@@ -424,8 +443,8 @@ class CoreScheduler {
 
         const triggerEmergency = () => {
             log(`🚨 AUDIT FAILURE: Speaker is silent during ${prayerName} time. TRIGGERING SMART RECOVERY...`);
+            if (this.playbackLogger) this.playbackLogger.recordAuditResult(prayerName, false);
             this.sessionStatus.set(prayerName, 'RECOVERING');
-            // Hard trigger with fallback assets
             this.executePreFlightAndCast(prayerName, audioFileName, null);
             finishAudit();
         };
@@ -442,6 +461,7 @@ class CoreScheduler {
                         if (!isAdhan) triggerEmergency();
                         else {
                             log(`✅ Audit Passed: ${prayerName} is confirmed playing.`);
+                            if (this.playbackLogger) this.playbackLogger.recordAuditResult(prayerName, true);
                             finishAudit();
                         }
                     }

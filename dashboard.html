@@ -3,316 +3,744 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Adhan Audio Caster | AI Innovation Dashboard</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <title>Adhan Audio Caster | Operations Dashboard</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
         :root {
             --bg-deep: #0f172a;
+            --bg-card: rgba(255,255,255,0.03);
+            --bg-card-hover: rgba(255,255,255,0.06);
+            --border: rgba(255,255,255,0.08);
+            --border-hover: rgba(255,255,255,0.15);
+            --text: #f1f5f9;
+            --text-dim: #94a3b8;
+            --text-muted: #64748b;
             --accent-blue: #38bdf8;
             --accent-green: #4ade80;
+            --accent-red: #f87171;
+            --accent-yellow: #fbbf24;
             --accent-purple: #c084fc;
-            --glass-bg: rgba(255, 255, 255, 0.03);
-            --glass-border: rgba(255, 255, 255, 0.1);
+            --accent-orange: #fb923c;
+        }
+        * { margin:0; padding:0; box-sizing:border-box; font-family:'Inter',system-ui,sans-serif; }
+        body { background:var(--bg-deep); color:var(--text); min-height:100vh; }
+        .shell { max-width:1120px; margin:0 auto; padding:1.5rem; }
+
+        /* Tabs */
+        .tab-bar { display:flex; gap:0; margin-bottom:1.5rem; border-bottom:1px solid var(--border); }
+        .tab-btn { padding:0.75rem 1.5rem; background:none; border:none; color:var(--text-dim); font-size:0.85rem; font-weight:600; cursor:pointer; border-bottom:2px solid transparent; transition:all 0.2s; letter-spacing:0.02em; }
+        .tab-btn:hover { color:var(--text); }
+        .tab-btn.active { color:var(--accent-blue); border-bottom-color:var(--accent-blue); }
+        .tab-panel { display:none; }
+        .tab-panel.active { display:block; }
+
+        /* Cards */
+        .card { background:var(--bg-card); border:1px solid var(--border); border-radius:1rem; padding:1.25rem; transition:all 0.25s; }
+        .card:hover { border-color:var(--border-hover); background:var(--bg-card-hover); }
+        .card-title { font-size:0.7rem; text-transform:uppercase; letter-spacing:0.06em; color:var(--text-dim); margin-bottom:0.75rem; font-weight:600; }
+
+        /* Header */
+        .header { display:flex; justify-content:space-between; align-items:center; margin-bottom:1.5rem; flex-wrap:wrap; gap:1rem; }
+        .header h1 { font-size:1.5rem; font-weight:700; background:linear-gradient(to right,#fff,var(--accent-blue)); -webkit-background-clip:text; -webkit-text-fill-color:transparent; }
+        .header-meta { display:flex; align-items:center; gap:1.25rem; flex-wrap:wrap; }
+        .status-pill { display:flex; align-items:center; gap:0.5rem; padding:0.35rem 0.85rem; border-radius:2rem; font-size:0.75rem; font-weight:600; }
+        .status-pill.online { background:rgba(74,222,128,0.1); color:var(--accent-green); }
+        .status-pill.offline { background:rgba(248,113,113,0.1); color:var(--accent-red); }
+        .pulse-dot { width:7px; height:7px; border-radius:50%; animation:pulse 2s infinite; }
+        .pulse-dot.green { background:var(--accent-green); box-shadow:0 0 8px var(--accent-green); }
+        .pulse-dot.red { background:var(--accent-red); box-shadow:0 0 8px var(--accent-red); }
+        @keyframes pulse { 0%,100%{transform:scale(.9);opacity:1} 50%{transform:scale(1.2);opacity:.5} }
+        .sync-time { font-size:0.7rem; color:var(--text-muted); }
+
+        /* Prayer Status Grid */
+        .prayer-grid { display:grid; grid-template-columns:repeat(5,1fr); gap:0.75rem; margin-bottom:1.5rem; }
+        .prayer-cell { text-align:center; padding:1rem 0.5rem; }
+        .prayer-name { font-size:0.8rem; font-weight:600; margin-bottom:0.5rem; }
+        .prayer-time { font-size:1.4rem; font-weight:700; margin-bottom:0.25rem; }
+        .prayer-status-icon { width:32px; height:32px; border-radius:50%; display:inline-flex; align-items:center; justify-content:center; margin:0.5rem auto; font-size:0.9rem; }
+        .prayer-status-icon.played { background:rgba(74,222,128,0.15); color:var(--accent-green); }
+        .prayer-status-icon.failed { background:rgba(248,113,113,0.15); color:var(--accent-red); }
+        .prayer-status-icon.recovered { background:rgba(251,191,36,0.15); color:var(--accent-yellow); }
+        .prayer-status-icon.pending { background:rgba(148,163,184,0.1); color:var(--text-muted); }
+        .prayer-detail { font-size:0.65rem; color:var(--text-muted); margin-top:0.25rem; }
+
+        /* KPI Row */
+        .kpi-row { display:grid; grid-template-columns:repeat(4,1fr); gap:0.75rem; margin-bottom:1.5rem; }
+        .kpi-value { font-size:2rem; font-weight:700; line-height:1.1; margin-bottom:0.15rem; }
+        .kpi-sub { font-size:0.75rem; color:var(--text-muted); }
+        .kpi-trend { display:inline-flex; align-items:center; gap:0.2rem; font-size:0.7rem; font-weight:600; padding:0.15rem 0.4rem; border-radius:0.3rem; margin-top:0.35rem; }
+        .kpi-trend.up { background:rgba(74,222,128,0.1); color:var(--accent-green); }
+        .kpi-trend.down { background:rgba(248,113,113,0.1); color:var(--accent-red); }
+        .kpi-trend.neutral { background:rgba(148,163,184,0.08); color:var(--text-dim); }
+
+        /* SVG Chart */
+        .chart-section { display:grid; grid-template-columns:2fr 1fr; gap:0.75rem; margin-bottom:1.5rem; }
+        .chart-card { min-height:220px; }
+        .chart-area { width:100%; height:180px; }
+        .chart-bar { rx:3; transition:all 0.3s; cursor:pointer; }
+        .chart-bar:hover { opacity:0.85; }
+        .chart-label { font-size:10px; fill:var(--text-muted); text-anchor:middle; }
+        .chart-gridline { stroke:rgba(255,255,255,0.04); stroke-width:1; }
+        .chart-value-label { font-size:9px; fill:var(--text-dim); text-anchor:middle; font-weight:600; }
+        .chart-line { fill:none; stroke:var(--accent-purple); stroke-width:2; stroke-linecap:round; stroke-linejoin:round; }
+        .chart-dot { fill:var(--accent-purple); }
+
+        /* Calendar Heatmap */
+        .cal-card { position:relative; }
+        .cal-nav { display:flex; justify-content:space-between; align-items:center; margin-bottom:0.75rem; }
+        .cal-nav button { background:none; border:1px solid var(--border); color:var(--text-dim); padding:0.25rem 0.6rem; border-radius:0.4rem; cursor:pointer; font-size:0.75rem; }
+        .cal-nav button:hover { border-color:var(--border-hover); color:var(--text); }
+        .cal-month-label { font-size:0.85rem; font-weight:600; }
+        .cal-grid { display:grid; grid-template-columns:repeat(7,1fr); gap:3px; }
+        .cal-header { font-size:0.6rem; color:var(--text-muted); text-align:center; padding:0.2rem 0; font-weight:600; }
+        .cal-day { aspect-ratio:1; border-radius:4px; display:flex; align-items:center; justify-content:center; font-size:0.65rem; font-weight:500; position:relative; cursor:default; }
+        .cal-day.empty { background:none; }
+        .cal-day.full { background:rgba(74,222,128,0.25); color:var(--accent-green); }
+        .cal-day.partial { background:rgba(251,191,36,0.2); color:var(--accent-yellow); }
+        .cal-day.miss { background:rgba(248,113,113,0.2); color:var(--accent-red); }
+        .cal-day.nodata { background:rgba(148,163,184,0.05); color:var(--text-muted); }
+        .cal-day.today { box-shadow:inset 0 0 0 1.5px var(--accent-blue); }
+        .cal-tooltip { display:none; position:absolute; bottom:calc(100% + 4px); left:50%; transform:translateX(-50%); background:#1e293b; border:1px solid var(--border); padding:0.35rem 0.6rem; border-radius:0.4rem; font-size:0.65rem; white-space:nowrap; z-index:10; color:var(--text); pointer-events:none; }
+        .cal-day:hover .cal-tooltip { display:block; }
+
+        /* Events Log */
+        .events-log { max-height:320px; overflow-y:auto; }
+        .events-log::-webkit-scrollbar { width:4px; }
+        .events-log::-webkit-scrollbar-track { background:transparent; }
+        .events-log::-webkit-scrollbar-thumb { background:var(--border); border-radius:2px; }
+        .event-row { display:grid; grid-template-columns:90px 70px 70px auto 60px; gap:0.5rem; align-items:center; padding:0.5rem 0; border-bottom:1px solid rgba(255,255,255,0.03); font-size:0.75rem; }
+        .event-row:last-child { border-bottom:none; }
+        .event-date { color:var(--text-muted); font-variant-numeric:tabular-nums; }
+        .event-prayer { font-weight:600; }
+        .event-time { color:var(--text-dim); font-variant-numeric:tabular-nums; }
+        .status-badge { padding:0.15rem 0.5rem; border-radius:1rem; font-size:0.65rem; font-weight:600; text-align:center; }
+        .status-badge.played { background:rgba(74,222,128,0.12); color:var(--accent-green); }
+        .status-badge.failed { background:rgba(248,113,113,0.12); color:var(--accent-red); }
+        .status-badge.recovered { background:rgba(251,191,36,0.12); color:var(--accent-yellow); }
+        .status-badge.pending { background:rgba(148,163,184,0.08); color:var(--text-muted); }
+        .event-latency { color:var(--text-muted); text-align:right; font-variant-numeric:tabular-nums; }
+
+        /* System Health */
+        .health-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:1rem; }
+        .health-item h4 { font-size:0.7rem; color:var(--text-muted); margin-bottom:0.2rem; text-transform:uppercase; letter-spacing:0.04em; }
+        .health-item p { font-size:0.9rem; font-weight:600; }
+
+        /* Dev Tab (legacy) */
+        .dev-grid { display:grid; grid-template-columns:2fr 1fr; gap:0.75rem; margin-bottom:1.5rem; }
+        .gauge-container { position:relative; width:110px; height:110px; margin:0.75rem auto; }
+        .gauge-svg { transform:rotate(-90deg); }
+        .gauge-bg { fill:none; stroke:rgba(255,255,255,0.05); stroke-width:8; }
+        .gauge-fill { fill:none; stroke:var(--accent-purple); stroke-width:8; stroke-linecap:round; stroke-dasharray:283; stroke-dashoffset:33; transition:stroke-dashoffset 2s ease; }
+        .progress-container { width:100%; height:10px; background:rgba(255,255,255,0.05); border-radius:8px; margin:1rem 0; overflow:hidden; }
+        .progress-bar { height:100%; width:88%; background:linear-gradient(to right,var(--accent-blue),var(--accent-green)); box-shadow:0 0 16px rgba(74,222,128,0.2); }
+
+        /* Responsive */
+        @media(max-width:768px) {
+            .prayer-grid { grid-template-columns:repeat(3,1fr); }
+            .kpi-row { grid-template-columns:repeat(2,1fr); }
+            .chart-section { grid-template-columns:1fr; }
+            .health-grid { grid-template-columns:1fr; }
+            .dev-grid { grid-template-columns:1fr; }
+            .event-row { grid-template-columns:80px 60px auto 50px; }
+            .event-time { display:none; }
+        }
+        @media(max-width:480px) {
+            .prayer-grid { grid-template-columns:repeat(2,1fr); }
+            .kpi-row { grid-template-columns:1fr 1fr; }
+            .header { flex-direction:column; align-items:flex-start; }
         }
 
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-            font-family: 'Inter', sans-serif;
-        }
-
-        body {
-            background-color: var(--bg-deep);
-            color: #f1f5f9;
-            padding: 2rem;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            min-height: 100vh;
-            overflow-x: hidden;
-        }
-
-        .dashboard {
-            width: 100%;
-            max-width: 1000px;
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            grid-template-rows: auto auto auto;
-            gap: 1.5rem;
-        }
-
-        .card {
-            background: var(--glass-bg);
-            backdrop-filter: blur(12px);
-            -webkit-backdrop-filter: blur(12px);
-            border: 1px solid var(--glass-border);
-            border-radius: 1.5rem;
-            padding: 1.5rem;
-            position: relative;
-            transition: transform 0.3s ease;
-        }
-
-        .card:hover {
-            transform: translateY(-5px);
-            border-color: rgba(255, 255, 255, 0.2);
-        }
-
-        .header-card {
-            grid-column: span 3;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 2rem;
-        }
-
-        .logo-area h1 {
-            font-size: 1.8rem;
-            font-weight: 700;
-            letter-spacing: -0.025em;
-            background: linear-gradient(to right, #fff, var(--accent-blue));
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-        }
-
-        .status-badge {
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-            background: rgba(74, 222, 128, 0.1);
-            color: var(--accent-green);
-            padding: 0.5rem 1rem;
-            border-radius: 2rem;
-            font-size: 0.85rem;
-            font-weight: 600;
-        }
-
-        .pulse {
-            width: 8px;
-            height: 8px;
-            background: var(--accent-green);
-            border-radius: 50%;
-            box-shadow: 0 0 10px var(--accent-green);
-            animation: pulse-ring 2s infinite;
-        }
-
-        .metric-card {
-            grid-column: span 1;
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-        }
-
-        .metric-title {
-            font-size: 0.75rem;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-            color: #94a3b8;
-            margin-bottom: 0.5rem;
-        }
-
-        .metric-value {
-            font-size: 2.5rem;
-            font-weight: 700;
-            margin-bottom: 0.5rem;
-        }
-
-        .metric-label {
-            font-size: 0.85rem;
-            color: #64748b;
-        }
-
-        .efficiency-card {
-            grid-column: span 2;
-        }
-
-        .progress-container {
-            width: 100%;
-            height: 12px;
-            background: rgba(255, 255, 255, 0.05);
-            border-radius: 10px;
-            margin: 1.5rem 0;
-            overflow: hidden;
-        }
-
-        .progress-bar {
-            height: 100%;
-            width: 88%;
-            background: linear-gradient(to right, var(--accent-blue), var(--accent-green));
-            box-shadow: 0 0 20px rgba(74, 222, 128, 0.3);
-        }
-
-        .info-card {
-            grid-column: span 3;
-            background: linear-gradient(135deg, rgba(56, 189, 248, 0.05), rgba(192, 132, 252, 0.05));
-        }
-
-        .info-grid {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 1.5rem;
-            margin-top: 1rem;
-        }
-
-        .info-item h4 {
-            font-size: 0.8rem;
-            color: #94a3b8;
-            margin-bottom: 0.25rem;
-        }
-
-        .info-item p {
-            font-size: 0.95rem;
-            font-weight: 600;
-        }
-
-        @keyframes pulse-ring {
-            0% { transform: scale(.95); opacity: 1; }
-            50% { transform: scale(1.2); opacity: 0.5; }
-            100% { transform: scale(.95); opacity: 1; }
-        }
-
-        /* Large Gauge Simulation */
-        .gauge-container {
-            position: relative;
-            width: 120px;
-            height: 120px;
-            margin: 1rem auto;
-        }
-
-        .gauge-svg {
-            transform: rotate(-90deg);
-        }
-
-        .gauge-bg {
-            fill: none;
-            stroke: rgba(255, 255, 255, 0.05);
-            stroke-width: 8;
-        }
-
-        .gauge-fill {
-            fill: none;
-            stroke: var(--accent-purple);
-            stroke-width: 8;
-            stroke-linecap: round;
-            stroke-dasharray: 283;
-            stroke-dashoffset: 33; /* Simulated 88% */
-            transition: stroke-dashoffset 2s ease;
-        }
-
-        @media (max-width: 768px) {
-            .dashboard { grid-template-columns: 1fr; }
-            .header-card, .efficiency-card, .info-card { grid-column: span 1; }
-            body { padding: 1rem; }
-        }
+        .empty-state { text-align:center; padding:3rem 1rem; color:var(--text-muted); }
+        .empty-state p { font-size:0.85rem; margin-top:0.5rem; }
+        .loading { text-align:center; padding:2rem; color:var(--text-muted); font-size:0.85rem; }
     </style>
 </head>
 <body>
-    <div class="dashboard">
-        <!-- Header -->
-        <header class="card header-card">
-            <div class="logo-area">
-                <h1>Adhan Audio Caster</h1>
-                <p style="font-size: 0.8rem; color: #94a3b8;">v2.0 Orchestration Engine</p>
-            </div>
-            <div class="status-badge">
-                <div class="pulse"></div>
-                SYSTEM OPERATIONAL
-            </div>
-        </header>
-
-        <!-- Metrics -->
-        <div class="card efficiency-card">
-            <p class="metric-title">AI Efficiency Index</p>
-            <div style="display: flex; justify-content: space-between; align-items: flex-end;">
-                <div>
-                    <span class="metric-value">7h</span>
-                    <span class="metric-label">AI Development</span>
-                </div>
-                <div style="text-align: right;">
-                    <p style="font-size: 0.9rem; color: var(--accent-green); font-weight: 600;">8.4x Acceleration</p>
-                    <span class="metric-value" style="color: #94a3b8;">59h</span>
-                    <span class="metric-label">Manual Baseline</span>
-                </div>
-            </div>
-            <div class="progress-container">
-                <div class="progress-bar"></div>
-            </div>
-            <p class="metric-label">Saved 52 hours of specialized IoT engineering</p>
+<div class="shell">
+    <!-- Header -->
+    <div class="header">
+        <div>
+            <h1>Adhan Audio Caster</h1>
+            <span style="font-size:0.75rem;color:var(--text-muted)">Operations Dashboard</span>
         </div>
-
-        <div class="card metric-card" style="text-align: center;">
-            <p class="metric-title">Test Coverage</p>
-            <div class="gauge-container">
-                <svg class="gauge-svg" viewBox="0 0 100 100">
-                    <circle class="gauge-bg" cx="50" cy="50" r="45"></circle>
-                    <circle id="coverage-gauge" class="gauge-fill" cx="50" cy="50" r="45"></circle>
-                </svg>
-                <div style="position: absolute; top:50%; left:50%; transform: translate(-50%, -50%);">
-                    <span id="coverage-val" style="font-size: 1.5rem; font-weight: 700;">88%</span>
-                </div>
+        <div class="header-meta">
+            <div id="date-display" style="text-align:right">
+                <div style="font-size:0.85rem;font-weight:600" id="gregorian-date"></div>
+                <div style="font-size:0.7rem;color:var(--text-dim)" id="hijri-date"></div>
             </div>
-            <p class="metric-label">Core Logic Resiliency</p>
-        </div>
-
-        <!-- System Analytics -->
-        <div class="card info-card">
-            <p class="metric-title">AI Provenance & System Health</p>
-            <div class="info-grid">
-                <div class="info-item">
-                    <h4>Primary Agent</h4>
-                    <p id="agent-name">Antigravity</p>
-                </div>
-                <div class="info-item">
-                    <h4>Model Mix</h4>
-                    <p id="model-mix">Gemini 3 Flash/Pro</p>
-                </div>
-                <div class="info-item">
-                    <h4>Tokens Processed</h4>
-                    <p id="token-count">255k+</p>
-                </div>
-                <div class="info-item">
-                    <h4>Stability Index</h4>
-                    <p style="color: var(--accent-green);">99.9% Uptime</p>
-                </div>
-                <div class="info-item">
-                    <h4>Watchdogs Active</h4>
-                    <p>3 Multi-tier</p>
-                </div>
-                <div class="info-item">
-                    <h4>Last Sync</h4>
-                    <p id="last-sync" style="font-size: 0.75rem; font-weight: 400;">--</p>
-                </div>
+            <div id="status-indicator" class="status-pill online">
+                <div class="pulse-dot green"></div>
+                <span>CONNECTING</span>
             </div>
         </div>
     </div>
 
-    <script>
-        async function fetchMetrics() {
-            try {
-                // Fetch from the live project status API
-                const response = await fetch('https://adhan-api.vercel.app/api/project-status');
-                const data = await response.json();
+    <!-- Tabs -->
+    <div class="tab-bar">
+        <button class="tab-btn active" data-tab="ops">Operations</button>
+        <button class="tab-btn" data-tab="dev">Development</button>
+    </div>
 
-                // Update UI
-                document.getElementById('agent-name').innerText = data.ai_metrics.agent.split(' ')[0];
-                document.getElementById('token-count').innerText = (data.ai_metrics.total_tokens_processed / 1000).toFixed(0) + 'k+';
-                document.getElementById('coverage-val').innerText = data.quality_metrics.test_coverage;
-                document.getElementById('last-sync').innerText = new Date(data.last_updated).toLocaleString();
+    <!-- ===================== OPERATIONS TAB ===================== -->
+    <div id="tab-ops" class="tab-panel active">
 
-                // Animate gauge
-                const coverage = parseFloat(data.quality_metrics.test_coverage);
-                const offset = 283 - (283 * coverage / 100);
-                document.getElementById('coverage-gauge').style.strokeDashoffset = offset;
+        <!-- Today's Prayer Status -->
+        <div class="card" style="margin-bottom:1.5rem">
+            <div class="card-title">Today's Prayer Status</div>
+            <div class="prayer-grid" id="prayer-grid">
+                <div class="loading">Loading prayer data...</div>
+            </div>
+        </div>
 
-            } catch (error) {
-                console.warn('Dashboard: Live sync failed, using static fallback.');
-                document.getElementById('last-sync').innerText = 'Offline Mode';
+        <!-- KPI Row -->
+        <div class="kpi-row" id="kpi-row">
+            <div class="card">
+                <div class="card-title">Success Rate</div>
+                <div class="kpi-value" id="kpi-success" style="color:var(--accent-green)">--</div>
+                <div class="kpi-sub">Played + Recovered</div>
+                <div class="kpi-trend neutral" id="kpi-success-trend">--</div>
+            </div>
+            <div class="card">
+                <div class="card-title">Streak</div>
+                <div class="kpi-value" id="kpi-streak" style="color:var(--accent-orange)">--</div>
+                <div class="kpi-sub">Consecutive perfect days</div>
+            </div>
+            <div class="card">
+                <div class="card-title">Avg Latency</div>
+                <div class="kpi-value" id="kpi-latency" style="color:var(--accent-blue)">--</div>
+                <div class="kpi-sub">Trigger to playback</div>
+                <div class="kpi-trend neutral" id="kpi-latency-trend">--</div>
+            </div>
+            <div class="card">
+                <div class="card-title">Recovery Rate</div>
+                <div class="kpi-value" id="kpi-recovery" style="color:var(--accent-yellow)">--</div>
+                <div class="kpi-sub">Auto-healed failures</div>
+            </div>
+        </div>
+
+        <!-- Chart + Calendar Row -->
+        <div class="chart-section">
+            <div class="card chart-card">
+                <div class="card-title">7-Day Trend</div>
+                <svg class="chart-area" id="trend-chart" viewBox="0 0 500 180" preserveAspectRatio="xMidYMid meet"></svg>
+            </div>
+            <div class="card cal-card">
+                <div class="card-title">Monthly Heatmap</div>
+                <div class="cal-nav">
+                    <button id="cal-prev">&larr;</button>
+                    <span class="cal-month-label" id="cal-month-label"></span>
+                    <button id="cal-next">&rarr;</button>
+                </div>
+                <div class="cal-grid" id="cal-grid"></div>
+            </div>
+        </div>
+
+        <!-- Recent Events -->
+        <div class="card" style="margin-bottom:1.5rem">
+            <div class="card-title">Recent Playback Events</div>
+            <div class="events-log" id="events-log">
+                <div class="loading">Loading events...</div>
+            </div>
+        </div>
+
+        <!-- System Health -->
+        <div class="card">
+            <div class="card-title">System Health</div>
+            <div class="health-grid" id="health-grid">
+                <div class="health-item"><h4>Total Prayers Tracked</h4><p id="h-total">--</p></div>
+                <div class="health-item"><h4>Overall Uptime</h4><p id="h-uptime" style="color:var(--accent-green)">--</p></div>
+                <div class="health-item"><h4>Data Since</h4><p id="h-since">--</p></div>
+                <div class="health-item"><h4>Avg Encoding</h4><p id="h-encoding">--</p></div>
+                <div class="health-item"><h4>Avg Discovery</h4><p id="h-discovery">--</p></div>
+                <div class="health-item"><h4>Last Upload</h4><p id="h-last-upload" style="font-size:0.7rem;font-weight:400">--</p></div>
+            </div>
+        </div>
+
+        <div class="sync-time" style="text-align:center;margin-top:1rem" id="sync-footer"></div>
+    </div>
+
+    <!-- ===================== DEVELOPMENT TAB ===================== -->
+    <div id="tab-dev" class="tab-panel">
+        <div class="dev-grid">
+            <div class="card">
+                <div class="card-title">AI Efficiency Index</div>
+                <div style="display:flex;justify-content:space-between;align-items:flex-end">
+                    <div>
+                        <span class="kpi-value">7h</span>
+                        <div class="kpi-sub">AI Development</div>
+                    </div>
+                    <div style="text-align:right">
+                        <div style="font-size:0.85rem;color:var(--accent-green);font-weight:600">8.4x Acceleration</div>
+                        <span class="kpi-value" style="color:var(--text-muted)">59h</span>
+                        <div class="kpi-sub">Manual Baseline</div>
+                    </div>
+                </div>
+                <div class="progress-container"><div class="progress-bar"></div></div>
+                <div class="kpi-sub">Saved 52 hours of specialized IoT engineering</div>
+            </div>
+            <div class="card" style="text-align:center">
+                <div class="card-title">Test Coverage</div>
+                <div class="gauge-container">
+                    <svg class="gauge-svg" viewBox="0 0 100 100">
+                        <circle class="gauge-bg" cx="50" cy="50" r="45"></circle>
+                        <circle id="coverage-gauge" class="gauge-fill" cx="50" cy="50" r="45"></circle>
+                    </svg>
+                    <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%)">
+                        <span id="coverage-val" style="font-size:1.4rem;font-weight:700">88%</span>
+                    </div>
+                </div>
+                <div class="kpi-sub">Core Logic Resiliency</div>
+            </div>
+        </div>
+        <div class="card">
+            <div class="card-title">AI Provenance & System Health</div>
+            <div class="health-grid">
+                <div class="health-item"><h4>Primary Agent</h4><p id="agent-name">Antigravity</p></div>
+                <div class="health-item"><h4>Model Mix</h4><p id="model-mix">Gemini 3 Flash/Pro</p></div>
+                <div class="health-item"><h4>Tokens Processed</h4><p id="token-count">255k+</p></div>
+                <div class="health-item"><h4>Stability Index</h4><p style="color:var(--accent-green)">99.9% Uptime</p></div>
+                <div class="health-item"><h4>Watchdogs Active</h4><p>3 Multi-tier</p></div>
+                <div class="health-item"><h4>Last Sync</h4><p id="last-sync" style="font-size:0.7rem;font-weight:400">--</p></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Firebase JS SDK (modular, tree-shaken via CDN) -->
+<script type="module">
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.7.1/firebase-app.js';
+import { getFirestore, collection, doc, getDoc, getDocs, query, where, orderBy } from 'https://www.gstatic.com/firebasejs/11.7.1/firebase-firestore.js';
+
+// ── Firebase Config ──
+// REPLACE apiKey with your Firebase web app's API key from:
+// Firebase Console > Project Settings > General > Your Apps > Web App
+const firebaseConfig = {
+    apiKey: 'AIzaSyCmxmrW4uXjA7RxrQhDzOugy8GjILIexWs',
+    projectId: 'adhan-79908',
+};
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+
+const API_BASE = 'https://adhan-api.vercel.app';
+const PRAYERS = ['Fajr','Dhuhr','Asr','Maghrib','Isha'];
+
+// --- State ---
+let metricsData = null;
+let calendarOffset = 0;
+
+// --- Tab Switching ---
+document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+        btn.classList.add('active');
+        document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+    });
+});
+
+// --- Date Display ---
+function updateDateDisplay() {
+    const now = new Date();
+    document.getElementById('gregorian-date').textContent = now.toLocaleDateString('en-US', { weekday:'long', year:'numeric', month:'long', day:'numeric' });
+}
+updateDateDisplay();
+
+// ── Firestore Data Fetcher ──
+// All filtering happens server-side on Google infrastructure.
+// Dashboard only receives matching documents -- zero load on the Pi.
+async function fetchMetrics() {
+    try {
+        const today = new Date();
+        const startDate = new Date(today);
+        startDate.setDate(startDate.getDate() - 90);
+        const startStr = startDate.toISOString().slice(0, 10);
+        const endStr = today.toISOString().slice(0, 10);
+
+        // Parallel Firestore reads: daily summaries + events
+        const metricsQuery = query(
+            collection(db, 'dailyMetrics'),
+            where('date', '>=', startStr),
+            where('date', '<=', endStr),
+            orderBy('date')
+        );
+        const eventsQuery = query(
+            collection(db, 'dailyEvents'),
+            where('date', '>=', startStr),
+            where('date', '<=', endStr),
+            orderBy('date')
+        );
+
+        const [metricsSnap, eventsSnap, latestSnap] = await Promise.all([
+            getDocs(metricsQuery),
+            getDocs(eventsQuery),
+            getDoc(doc(db, 'meta', 'latest'))
+        ]);
+
+        // Build dailyStats from summaries
+        const dailyStats = [];
+        metricsSnap.forEach(d => {
+            const data = d.data();
+            dailyStats.push({ label: data.date, ...data });
+        });
+
+        // Flatten all events
+        const allEvents = [];
+        eventsSnap.forEach(d => {
+            const data = d.data();
+            if (data.events && Array.isArray(data.events)) {
+                data.events.forEach(ev => allEvents.push({ ...ev, date: data.date }));
             }
+        });
+
+        const latest = latestSnap.exists() ? latestSnap.data() : {};
+
+        // Client-side aggregation (lightweight -- max 90 docs)
+        const aggregate = computeAggregate(dailyStats);
+
+        metricsData = {
+            dailyStats,
+            events: allEvents,
+            aggregate,
+            startDate: dailyStats.length > 0 ? dailyStats[0].label : null,
+            lastUpload: latest.uploadedAt || null,
+        };
+
+        renderAll();
+        setStatus(true);
+    } catch (e) {
+        console.warn('Firestore fetch failed:', e.message);
+        setStatus(false);
+        renderEmpty();
+    }
+}
+
+function computeAggregate(dailyStats) {
+    let totalPlayed = 0, totalRecovered = 0, totalFailed = 0, totalPrayers = 0;
+    let latencySum = 0, latencyCount = 0;
+    let streak = 0, currentStreak = 0;
+
+    const sorted = [...dailyStats].sort((a, b) => a.label.localeCompare(b.label));
+
+    sorted.forEach(d => {
+        const played = d.played || 0;
+        const recovered = d.recovered || 0;
+        const failed = d.failed || 0;
+        const total = d.total || (played + recovered + failed);
+        totalPlayed += played;
+        totalRecovered += recovered;
+        totalFailed += failed;
+        totalPrayers += total;
+
+        if (d.avgLatencyMs != null && total > 0) {
+            latencySum += d.avgLatencyMs * total;
+            latencyCount += total;
         }
 
-        fetchMetrics();
-        // Refresh every 5 minutes
-        setInterval(fetchMetrics, 300000);
-    </script>
+        if (total > 0 && failed === 0) {
+            currentStreak++;
+            streak = Math.max(streak, currentStreak);
+        } else if (total > 0) {
+            currentStreak = 0;
+        }
+    });
+
+    const success = totalPlayed + totalRecovered;
+    const successRate = totalPrayers > 0 ? Math.round((success / totalPrayers) * 100) : null;
+    const recoveryRate = totalFailed + totalRecovered > 0 ? Math.round((totalRecovered / (totalFailed + totalRecovered)) * 100) : null;
+    const avgLatencyMs = latencyCount > 0 ? Math.round(latencySum / latencyCount) : null;
+
+    return { successRate, streak, avgLatencyMs, recoveryRate, totalPrayers };
+}
+
+function setStatus(online) {
+    const el = document.getElementById('status-indicator');
+    if (online) {
+        el.className = 'status-pill online';
+        el.innerHTML = '<div class="pulse-dot green"></div><span>SYSTEM ONLINE</span>';
+    } else {
+        el.className = 'status-pill offline';
+        el.innerHTML = '<div class="pulse-dot red"></div><span>OFFLINE</span>';
+    }
+}
+
+function renderEmpty() {
+    document.getElementById('prayer-grid').innerHTML = '<div class="empty-state" style="grid-column:1/-1"><p>No playback data available yet. Metrics will appear once the Adhan system reports data.</p></div>';
+    document.getElementById('events-log').innerHTML = '<div class="empty-state"><p>No events recorded.</p></div>';
+}
+
+function renderAll() {
+    if (!metricsData) return;
+    renderPrayerGrid();
+    renderKPIs();
+    renderTrendChart();
+    renderCalendar();
+    renderEventsLog();
+    renderHealth();
+    renderSyncFooter();
+}
+
+// --- Prayer Grid ---
+function renderPrayerGrid() {
+    const ds = metricsData.dailyStats;
+    const today = new Date().toISOString().slice(0,10);
+    const todayData = ds.find(d => d.label === today) || null;
+    const grid = document.getElementById('prayer-grid');
+
+    if (!todayData || !todayData.prayers || Object.keys(todayData.prayers).length === 0) {
+        grid.innerHTML = PRAYERS.map(p => `
+            <div class="prayer-cell">
+                <div class="prayer-name">${p}</div>
+                <div class="prayer-time" style="color:var(--text-muted)">--:--</div>
+                <div class="prayer-status-icon pending">&#9711;</div>
+                <div class="prayer-detail">Awaiting data</div>
+            </div>`).join('');
+        return;
+    }
+
+    grid.innerHTML = PRAYERS.map(p => {
+        const d = todayData.prayers[p];
+        if (!d) return `
+            <div class="prayer-cell">
+                <div class="prayer-name">${p}</div>
+                <div class="prayer-time" style="color:var(--text-muted)">--:--</div>
+                <div class="prayer-status-icon pending">&#9711;</div>
+                <div class="prayer-detail">Pending</div>
+            </div>`;
+        const st = (d.status || 'PENDING').toUpperCase();
+        const cls = st === 'PLAYED' ? 'played' : st === 'RECOVERED' ? 'recovered' : st === 'FAILED' ? 'failed' : 'pending';
+        const icon = st === 'PLAYED' ? '&#10003;' : st === 'RECOVERED' ? '&#8635;' : st === 'FAILED' ? '&#10007;' : '&#9711;';
+        const latStr = d.triggerLatencyMs != null ? (d.triggerLatencyMs / 1000).toFixed(1) + 's' : '--';
+        return `
+            <div class="prayer-cell">
+                <div class="prayer-name">${p}</div>
+                <div class="prayer-time">${d.scheduledTime || '--:--'}</div>
+                <div class="prayer-status-icon ${cls}">${icon}</div>
+                <div class="prayer-detail">${st === 'PENDING' ? 'Pending' : 'Latency: ' + latStr}</div>
+                ${d.usedFallback ? '<div class="prayer-detail" style="color:var(--accent-yellow)">Fallback</div>' : ''}
+            </div>`;
+    }).join('');
+}
+
+// --- KPIs ---
+function renderKPIs() {
+    const agg = metricsData.aggregate;
+
+    const srEl = document.getElementById('kpi-success');
+    srEl.textContent = agg.successRate != null ? agg.successRate + '%' : '--';
+    srEl.style.color = agg.successRate >= 95 ? 'var(--accent-green)' : agg.successRate >= 80 ? 'var(--accent-yellow)' : 'var(--accent-red)';
+
+    document.getElementById('kpi-streak').textContent = agg.streak != null ? agg.streak + 'd' : '--';
+
+    const latEl = document.getElementById('kpi-latency');
+    if (agg.avgLatencyMs != null) {
+        latEl.textContent = agg.avgLatencyMs < 1000 ? agg.avgLatencyMs + 'ms' : (agg.avgLatencyMs/1000).toFixed(1) + 's';
+    } else {
+        latEl.textContent = '--';
+    }
+
+    const recEl = document.getElementById('kpi-recovery');
+    recEl.textContent = agg.recoveryRate != null ? agg.recoveryRate + '%' : '--';
+
+    const ds = metricsData.dailyStats;
+    if (ds.length >= 7) {
+        const last7 = ds.slice(-7);
+        const prev7 = ds.slice(-14, -7);
+        const avg = arr => arr.length > 0 ? arr.reduce((s,v) => s+v, 0) / arr.length : null;
+
+        const sr7 = avg(last7.filter(d=>d.total>0).map(d=>d.successRate));
+        const srP = avg(prev7.filter(d=>d.total>0).map(d=>d.successRate));
+        setTrend('kpi-success-trend', sr7, srP, '%');
+
+        const lat7 = avg(last7.filter(d=>d.avgLatencyMs!=null).map(d=>d.avgLatencyMs));
+        const latP = avg(prev7.filter(d=>d.avgLatencyMs!=null).map(d=>d.avgLatencyMs));
+        setTrend('kpi-latency-trend', lat7, latP, 'ms', true);
+    }
+}
+
+function setTrend(id, current, previous, unit, lowerIsBetter) {
+    const el = document.getElementById(id);
+    if (current == null || previous == null) { el.className = 'kpi-trend neutral'; el.textContent = 'No trend data'; return; }
+    const diff = current - previous;
+    const pct = previous !== 0 ? ((diff / previous) * 100).toFixed(1) : 0;
+    const isGood = lowerIsBetter ? diff <= 0 : diff >= 0;
+    el.className = 'kpi-trend ' + (Math.abs(diff) < 0.5 ? 'neutral' : isGood ? 'up' : 'down');
+    const arrow = diff > 0.5 ? '\u2191' : diff < -0.5 ? '\u2193' : '\u2192';
+    el.textContent = arrow + ' ' + Math.abs(pct) + '% vs prev 7d';
+}
+
+// --- 7-Day Trend Chart (SVG) ---
+function renderTrendChart() {
+    const svg = document.getElementById('trend-chart');
+    const ds = metricsData.dailyStats.slice(-7);
+    if (ds.length === 0) { svg.innerHTML = '<text x="250" y="90" text-anchor="middle" fill="#64748b" font-size="12">No data</text>'; return; }
+
+    const W = 500, H = 180, PAD_L = 30, PAD_R = 10, PAD_T = 15, PAD_B = 30;
+    const chartW = W - PAD_L - PAD_R;
+    const chartH = H - PAD_T - PAD_B;
+    const barW = Math.min(40, (chartW / ds.length) * 0.6);
+    const gap = chartW / ds.length;
+
+    let html = '';
+    for (let i = 0; i <= 4; i++) {
+        const y = PAD_T + (chartH / 4) * i;
+        html += `<line x1="${PAD_L}" y1="${y}" x2="${W-PAD_R}" y2="${y}" class="chart-gridline"/>`;
+        if (i % 2 === 0) html += `<text x="${PAD_L-4}" y="${y+3}" font-size="8" fill="#64748b" text-anchor="end">${100-i*25}%</text>`;
+    }
+
+    const points = [];
+    ds.forEach((d, i) => {
+        const x = PAD_L + gap * i + gap/2;
+        const rate = d.successRate != null ? d.successRate : 0;
+        const barH = (rate / 100) * chartH;
+        const y = PAD_T + chartH - barH;
+        const color = rate >= 95 ? 'var(--accent-green)' : rate >= 80 ? 'var(--accent-yellow)' : rate > 0 ? 'var(--accent-red)' : 'rgba(148,163,184,0.15)';
+        html += `<rect class="chart-bar" x="${x-barW/2}" y="${y}" width="${barW}" height="${barH}" fill="${color}" opacity="0.7"/>`;
+        html += `<text class="chart-value-label" x="${x}" y="${y-4}">${d.total > 0 ? rate + '%' : ''}</text>`;
+        const label = d.label ? d.label.slice(5) : '';
+        html += `<text class="chart-label" x="${x}" y="${H-5}">${label}</text>`;
+
+        if (d.avgLatencyMs != null) {
+            const ly = PAD_T + chartH - Math.min(d.avgLatencyMs / 10000, 1) * chartH;
+            points.push(`${x},${ly}`);
+        }
+    });
+
+    if (points.length > 1) {
+        html += `<polyline class="chart-line" points="${points.join(' ')}"/>`;
+        points.forEach(pt => {
+            const [cx, cy] = pt.split(',');
+            html += `<circle class="chart-dot" cx="${cx}" cy="${cy}" r="3"/>`;
+        });
+    }
+
+    svg.innerHTML = html;
+}
+
+// --- Calendar Heatmap ---
+function renderCalendar() {
+    const now = new Date();
+    const viewDate = new Date(now.getFullYear(), now.getMonth() + calendarOffset, 1);
+    const year = viewDate.getFullYear();
+    const month = viewDate.getMonth();
+    const todayStr = new Date().toISOString().slice(0,10);
+
+    document.getElementById('cal-month-label').textContent = viewDate.toLocaleDateString('en-US', { month:'long', year:'numeric' });
+
+    const statsMap = {};
+    if (metricsData && metricsData.dailyStats) {
+        metricsData.dailyStats.forEach(d => { statsMap[d.label] = d; });
+    }
+
+    const grid = document.getElementById('cal-grid');
+    const dayNames = ['Su','Mo','Tu','We','Th','Fr','Sa'];
+    let html = dayNames.map(d => `<div class="cal-header">${d}</div>`).join('');
+
+    const firstDay = new Date(year, month, 1).getDay();
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+    for (let i = 0; i < firstDay; i++) html += '<div class="cal-day empty"></div>';
+
+    for (let d = 1; d <= daysInMonth; d++) {
+        const dateStr = `${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+        const st = statsMap[dateStr];
+        const isToday = dateStr === todayStr;
+        let cls = 'nodata';
+        let tip = 'No data';
+        if (st && st.total > 0) {
+            const sc = (st.played || 0) + (st.recovered || 0);
+            if (sc === st.total) { cls = 'full'; tip = st.total + '/' + st.total + ' played'; }
+            else if (sc > 0) { cls = 'partial'; tip = sc + '/' + st.total + ' played, ' + (st.failed || 0) + ' failed'; }
+            else { cls = 'miss'; tip = '0/' + st.total + ' -- all failed'; }
+        }
+        html += `<div class="cal-day ${cls}${isToday ? ' today' : ''}">${d}<div class="cal-tooltip">${dateStr}: ${tip}</div></div>`;
+    }
+
+    grid.innerHTML = html;
+}
+
+document.getElementById('cal-prev').addEventListener('click', () => { calendarOffset--; renderCalendar(); });
+document.getElementById('cal-next').addEventListener('click', () => { if (calendarOffset < 0) { calendarOffset++; renderCalendar(); } });
+
+// --- Events Log ---
+function renderEventsLog() {
+    const events = metricsData.events || [];
+    const container = document.getElementById('events-log');
+
+    if (events.length === 0) {
+        container.innerHTML = '<div class="empty-state"><p>No playback events recorded yet.</p></div>';
+        return;
+    }
+
+    const sorted = [...events].sort((a,b) => {
+        const da = (a.date || '') + (a.completedTime || a.triggerTime || '');
+        const db = (b.date || '') + (b.completedTime || b.triggerTime || '');
+        return db.localeCompare(da);
+    }).slice(0, 30);
+
+    container.innerHTML = sorted.map(e => {
+        const st = (e.status || 'PENDING').toUpperCase();
+        const cls = st === 'PLAYED' ? 'played' : st === 'RECOVERED' ? 'recovered' : st === 'FAILED' ? 'failed' : 'pending';
+        const lat = e.triggerLatencyMs != null ? (e.triggerLatencyMs/1000).toFixed(1) + 's' : '--';
+        return `<div class="event-row">
+            <span class="event-date">${e.date || '--'}</span>
+            <span class="event-prayer">${e.prayer || '--'}</span>
+            <span class="event-time">${e.scheduledTime || '--'}</span>
+            <span class="status-badge ${cls}">${st}</span>
+            <span class="event-latency">${lat}</span>
+        </div>`;
+    }).join('');
+}
+
+// --- System Health ---
+function renderHealth() {
+    const agg = metricsData.aggregate;
+    document.getElementById('h-total').textContent = agg.totalPrayers || '--';
+
+    const uptime = agg.successRate != null ? agg.successRate + '%' : '--';
+    const el = document.getElementById('h-uptime');
+    el.textContent = uptime;
+    el.style.color = agg.successRate >= 95 ? 'var(--accent-green)' : 'var(--accent-yellow)';
+
+    document.getElementById('h-since').textContent = metricsData.startDate || '--';
+
+    const ds = metricsData.dailyStats || [];
+    const encArr = ds.filter(d => d.avgEncodingMs != null).map(d => d.avgEncodingMs);
+    const discArr = ds.filter(d => d.avgDiscoveryMs != null).map(d => d.avgDiscoveryMs);
+
+    document.getElementById('h-encoding').textContent = encArr.length > 0
+        ? Math.round(encArr.reduce((s,v)=>s+v,0)/encArr.length) + 'ms' : '--';
+    document.getElementById('h-discovery').textContent = discArr.length > 0
+        ? Math.round(discArr.reduce((s,v)=>s+v,0)/discArr.length) + 'ms' : '--';
+
+    document.getElementById('h-last-upload').textContent = metricsData.lastUpload
+        ? new Date(metricsData.lastUpload).toLocaleString() : '--';
+}
+
+function renderSyncFooter() {
+    document.getElementById('sync-footer').textContent = 'Last refreshed: ' + new Date().toLocaleTimeString() + ' \u00B7 Auto-refresh every 60s';
+}
+
+// --- Dev Tab Fetch (legacy project-status via Vercel, unrelated to metrics) ---
+async function fetchDevMetrics() {
+    try {
+        const resp = await fetch(API_BASE + '/api/project-status');
+        const data = await resp.json();
+        document.getElementById('agent-name').innerText = data.ai_metrics.agent.split(' ')[0];
+        document.getElementById('token-count').innerText = (data.ai_metrics.total_tokens_processed / 1000).toFixed(0) + 'k+';
+        document.getElementById('coverage-val').innerText = data.quality_metrics.test_coverage;
+        document.getElementById('last-sync').innerText = new Date(data.last_updated).toLocaleString();
+        const cov = parseFloat(data.quality_metrics.test_coverage);
+        document.getElementById('coverage-gauge').style.strokeDashoffset = 283 - (283 * cov / 100);
+    } catch {
+        document.getElementById('last-sync').innerText = 'Offline Mode';
+    }
+}
+
+// --- Init ---
+fetchMetrics();
+fetchDevMetrics();
+setInterval(fetchMetrics, 60000);
+setInterval(fetchDevMetrics, 300000);
+</script>
 </body>
 </html>
