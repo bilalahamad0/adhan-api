@@ -130,7 +130,7 @@
         .gauge-container { position:relative; width:110px; height:110px; margin:0.75rem auto; }
         .gauge-svg { transform:rotate(-90deg); }
         .gauge-bg { fill:none; stroke:rgba(255,255,255,0.05); stroke-width:8; }
-        .gauge-fill { fill:none; stroke:var(--accent-purple); stroke-width:8; stroke-linecap:round; stroke-dasharray:283; stroke-dashoffset:33; transition:stroke-dashoffset 2s ease; }
+        .gauge-fill { fill:none; stroke:var(--accent-purple); stroke-width:8; stroke-linecap:round; stroke-dasharray:283; stroke-dashoffset:107; transition:stroke-dashoffset 2s ease; }
         .progress-container { width:100%; height:10px; background:rgba(255,255,255,0.05); border-radius:8px; margin:1rem 0; overflow:hidden; }
         .progress-bar { height:100%; width:88%; background:linear-gradient(to right,var(--accent-blue),var(--accent-green)); box-shadow:0 0 16px rgba(74,222,128,0.2); }
 
@@ -266,17 +266,17 @@
                 <div class="card-title">AI Efficiency Index</div>
                 <div style="display:flex;justify-content:space-between;align-items:flex-end">
                     <div>
-                        <span class="kpi-value">7h</span>
+                        <span class="kpi-value">10h</span>
                         <div class="kpi-sub">AI Development</div>
                     </div>
                     <div style="text-align:right">
-                        <div style="font-size:0.85rem;color:var(--accent-green);font-weight:600">8.4x Acceleration</div>
-                        <span class="kpi-value" style="color:var(--text-muted)">59h</span>
+                        <div style="font-size:0.85rem;color:var(--accent-green);font-weight:600">8x Acceleration</div>
+                        <span class="kpi-value" style="color:var(--text-muted)">80h</span>
                         <div class="kpi-sub">Manual Baseline</div>
                     </div>
                 </div>
                 <div class="progress-container"><div class="progress-bar"></div></div>
-                <div class="kpi-sub">Saved 52 hours of specialized IoT engineering</div>
+                <div class="kpi-sub">Saved 70 hours of specialized IoT engineering</div>
             </div>
             <div class="card" style="text-align:center">
                 <div class="card-title">Test Coverage</div>
@@ -286,18 +286,43 @@
                         <circle id="coverage-gauge" class="gauge-fill" cx="50" cy="50" r="45"></circle>
                     </svg>
                     <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%)">
-                        <span id="coverage-val" style="font-size:1.4rem;font-weight:700">88%</span>
+                        <span id="coverage-val" style="font-size:1.4rem;font-weight:700">62%</span>
                     </div>
                 </div>
                 <div class="kpi-sub">Core Logic Resiliency</div>
             </div>
         </div>
+
+        <!-- Project Scale -->
+        <div class="kpi-row" style="margin-bottom:1.5rem">
+            <div class="card">
+                <div class="card-title">Total Commits</div>
+                <div class="kpi-value" style="color:var(--accent-blue)" id="dev-commits">116</div>
+                <div class="kpi-sub">Since Feb 2025</div>
+            </div>
+            <div class="card">
+                <div class="card-title">Codebase</div>
+                <div class="kpi-value" style="color:var(--accent-purple)" id="dev-loc">6.5k</div>
+                <div class="kpi-sub">Lines of JavaScript</div>
+            </div>
+            <div class="card">
+                <div class="card-title">Microservices</div>
+                <div class="kpi-value" style="color:var(--accent-orange)" id="dev-services">8</div>
+                <div class="kpi-sub">Service Architecture</div>
+            </div>
+            <div class="card">
+                <div class="card-title">Test Suites</div>
+                <div class="kpi-value" style="color:var(--accent-green)" id="dev-tests">22</div>
+                <div class="kpi-sub">Across 9 suites</div>
+            </div>
+        </div>
+
         <div class="card">
             <div class="card-title">AI Provenance & System Health</div>
             <div class="health-grid">
-                <div class="health-item"><h4>Primary Agent</h4><p id="agent-name">Antigravity</p></div>
-                <div class="health-item"><h4>Model Mix</h4><p id="model-mix">Gemini 3 Flash/Pro</p></div>
-                <div class="health-item"><h4>Tokens Processed</h4><p id="token-count">255k+</p></div>
+                <div class="health-item"><h4>Primary Agent</h4><p id="agent-name">Cursor</p></div>
+                <div class="health-item"><h4>Model Mix</h4><p id="model-mix">Claude Opus 4 / Gemini 3</p></div>
+                <div class="health-item"><h4>Tokens Processed</h4><p id="token-count">405k+</p></div>
                 <div class="health-item"><h4>Stability Index</h4><p style="color:var(--accent-green)">99.9% Uptime</p></div>
                 <div class="health-item"><h4>Watchdogs Active</h4><p>3 Multi-tier</p></div>
                 <div class="health-item"><h4>Last Sync</h4><p id="last-sync" style="font-size:0.7rem;font-weight:400">--</p></div>
@@ -702,12 +727,29 @@ async function fetchDevMetrics() {
     try {
         const resp = await fetch(API_BASE + '/api/project-status');
         const data = await resp.json();
-        document.getElementById('agent-name').innerText = data.ai_metrics.agent.split(' ')[0];
+        document.getElementById('agent-name').innerText = data.ai_metrics.agent.split('(')[0].trim();
+        document.getElementById('model-mix').innerText = data.ai_metrics.models.map(m => m.name).join(' / ');
         document.getElementById('token-count').innerText = (data.ai_metrics.total_tokens_processed / 1000).toFixed(0) + 'k+';
         document.getElementById('coverage-val').innerText = data.quality_metrics.test_coverage;
         document.getElementById('last-sync').innerText = new Date(data.last_updated).toLocaleString();
         const cov = parseFloat(data.quality_metrics.test_coverage);
         document.getElementById('coverage-gauge').style.strokeDashoffset = 283 - (283 * cov / 100);
+        if (data.ai_metrics.total_commits) {
+            var el = document.getElementById('dev-commits');
+            if (el) el.innerText = data.ai_metrics.total_commits;
+        }
+        if (data.ai_metrics.total_loc) {
+            var el = document.getElementById('dev-loc');
+            if (el) el.innerText = (data.ai_metrics.total_loc / 1000).toFixed(1) + 'k';
+        }
+        if (data.ai_metrics.microservices) {
+            var el = document.getElementById('dev-services');
+            if (el) el.innerText = data.ai_metrics.microservices;
+        }
+        if (data.quality_metrics.total_tests) {
+            var el = document.getElementById('dev-tests');
+            if (el) el.innerText = data.quality_metrics.total_tests;
+        }
     } catch {
         document.getElementById('last-sync').innerText = 'Offline Mode';
     }
