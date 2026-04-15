@@ -392,58 +392,91 @@ function updateDateDisplay() {
 }
 updateDateDisplay();
 
-async function fetchMetrics() {
-    if (!db) { setStatus(false); renderEmpty(); return; }
-    try {
-        const today = new Date();
-        const startDate = new Date(today);
-        startDate.setDate(startDate.getDate() - 90);
-        const startStr = localDateStr(startDate);
-        const endStr = localDateStr(today);
+// --- Real-time Firestore listeners (push-based, no polling) ---
+// Data arrives only when the Pi writes. ~5 reads/day vs ~260k with 60s polling.
+var _listeners = [];
+var _metricsCache = {};
+var _eventsCache = {};
+var _latestCache = {};
 
-        const [metricsSnap, eventsSnap, latestSnap] = await Promise.all([
-            db.collection('dailyMetrics').where('date', '>=', startStr).where('date', '<=', endStr).orderBy('date').get(),
-            db.collection('dailyEvents').where('date', '>=', startStr).where('date', '<=', endStr).orderBy('date').get(),
-            db.collection('meta').doc('latest').get()
-        ]);
+function attachListeners() {
+    if (!db || _listeners.length > 0) return;
 
-        // Build dailyStats from summaries
-        const dailyStats = [];
-        metricsSnap.forEach(d => {
-            const data = d.data();
-            dailyStats.push({ label: data.date, ...data });
-        });
+    const today = new Date();
+    const startDate = new Date(today);
+    startDate.setDate(startDate.getDate() - 90);
+    const startStr = localDateStr(startDate);
+    const endStr = localDateStr(today);
 
-        // Flatten all events
-        const allEvents = [];
-        eventsSnap.forEach(d => {
-            const data = d.data();
-            if (data.events && Array.isArray(data.events)) {
-                data.events.forEach(ev => allEvents.push({ ...ev, date: data.date }));
-            }
-        });
+    _listeners.push(
+        db.collection('dailyMetrics')
+            .where('date', '>=', startStr).where('date', '<=', endStr).orderBy('date')
+            .onSnapshot(function(snap) {
+                _metricsCache = {};
+                snap.forEach(function(d) { var data = d.data(); _metricsCache[data.date] = data; });
+                rebuildAndRender();
+            }, function(err) { console.warn('Metrics listener error:', err.message); })
+    );
 
-        const latest = latestSnap.exists ? latestSnap.data() : {};
+    _listeners.push(
+        db.collection('dailyEvents')
+            .where('date', '>=', startStr).where('date', '<=', endStr).orderBy('date')
+            .onSnapshot(function(snap) {
+                _eventsCache = {};
+                snap.forEach(function(d) { var data = d.data(); _eventsCache[data.date] = data; });
+                rebuildAndRender();
+            }, function(err) { console.warn('Events listener error:', err.message); })
+    );
 
-        // Client-side aggregation (lightweight -- max 90 docs)
-        const aggregate = computeAggregate(dailyStats);
-
-        metricsData = {
-            dailyStats,
-            events: allEvents,
-            aggregate,
-            startDate: dailyStats.length > 0 ? dailyStats[0].label : null,
-            lastUpload: latest.uploadedAt || null,
-        };
-
-        renderAll();
-        setStatus(true);
-    } catch (e) {
-        console.warn('Firestore fetch failed:', e.message);
-        setStatus(false);
-        renderEmpty();
-    }
+    _listeners.push(
+        db.collection('meta').doc('latest')
+            .onSnapshot(function(snap) {
+                _latestCache = snap.exists ? snap.data() : {};
+                rebuildAndRender();
+            }, function(err) { console.warn('Meta listener error:', err.message); })
+    );
 }
+
+function detachListeners() {
+    _listeners.forEach(function(unsub) { unsub(); });
+    _listeners = [];
+}
+
+function rebuildAndRender() {
+    var dailyStats = Object.keys(_metricsCache).sort().map(function(date) {
+        return { label: date, ..._metricsCache[date] };
+    });
+
+    var allEvents = [];
+    Object.keys(_eventsCache).forEach(function(date) {
+        var data = _eventsCache[date];
+        if (data.events && Array.isArray(data.events)) {
+            data.events.forEach(function(ev) { allEvents.push(Object.assign({}, ev, { date: date })); });
+        }
+    });
+
+    var aggregate = computeAggregate(dailyStats);
+
+    metricsData = {
+        dailyStats: dailyStats,
+        events: allEvents,
+        aggregate: aggregate,
+        startDate: dailyStats.length > 0 ? dailyStats[0].label : null,
+        lastUpload: _latestCache.uploadedAt || null,
+    };
+
+    renderAll();
+    setStatus(true);
+}
+
+// Detach when tab is hidden, reattach when visible (saves bandwidth + Firestore reads)
+document.addEventListener('visibilitychange', function() {
+    if (document.hidden) {
+        detachListeners();
+    } else {
+        attachListeners();
+    }
+});
 
 function computeAggregate(dailyStats) {
     let totalPlayed = 0, totalRecovered = 0, totalFailed = 0, totalPrayers = 0;
@@ -752,7 +785,7 @@ function renderHealth() {
 }
 
 function renderSyncFooter() {
-    document.getElementById('sync-footer').textContent = 'Last refreshed: ' + new Date().toLocaleTimeString() + ' \u00B7 Auto-refresh every 60s';
+    document.getElementById('sync-footer').textContent = 'Last updated: ' + new Date().toLocaleTimeString() + ' \u00B7 Real-time sync via Firestore';
 }
 
 // --- Dev Tab Fetch (legacy project-status via Vercel, unrelated to metrics) ---
@@ -801,9 +834,7 @@ try {
             apiKey: 'AIzaSyCmxmrW4uXjA7RxrQhDzOugy8GjILIexWs',
             projectId: 'adhan-79908',
         }).firestore();
-        setStatus(true);
-        fetchMetrics();
-        setInterval(fetchMetrics, 60000);
+        attachListeners();
     } else {
         console.warn('Firebase SDK not available -- metrics disabled');
         setStatus(false);
