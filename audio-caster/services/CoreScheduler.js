@@ -23,6 +23,7 @@ class CoreScheduler {
         this.auditPlayback = this.auditPlayback.bind(this);
         this.sessionStatus = new Map();
         this.activeRuns = new Set();
+        this._scheduledJobs = [];
     }
 
     resolveTodayScheduleEntry() {
@@ -42,6 +43,14 @@ class CoreScheduler {
         const config = this.config;
         const log = this.log;
         log("📅 Loading Schedule...");
+
+        // Cancel prior day's jobs so restarts / re-schedules never double-fire triggers.
+        this._scheduledJobs.forEach((job) => {
+            try {
+                job.cancel();
+            } catch (_) { /* ignore */ }
+        });
+        this._scheduledJobs = [];
 
         let annualData;
         if (fs.existsSync(this.scheduleFilePath)) {
@@ -80,10 +89,14 @@ class CoreScheduler {
                 triggerTime = DateTime.now().setZone(config.timezone).plus({ seconds: 2 });
             }
 
-            schedule.scheduleJob(triggerTime.toJSDate(), () => this.executePreFlightAndCast(prayer, audioFile, scheduleTime, todayEntry));
-            
+            this._scheduledJobs.push(
+                schedule.scheduleJob(triggerTime.toJSDate(), () => this.executePreFlightAndCast(prayer, audioFile, scheduleTime, todayEntry)),
+            );
+
             const auditTime = scheduleTime.plus({ seconds: 30 });
-            schedule.scheduleJob(auditTime.toJSDate(), () => this.auditPlayback(prayer, audioFile));
+            this._scheduledJobs.push(
+                schedule.scheduleJob(auditTime.toJSDate(), () => this.auditPlayback(prayer, audioFile)),
+            );
 
             log(`   - ${prayer}: ${timeStr} (Trigger: ${triggerTime.toFormat('h:mm:ss a')}, Audit: ${auditTime.toFormat('h:mm:ss a')})`);
         });

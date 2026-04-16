@@ -142,6 +142,21 @@ async function bootSystem() {
     }
   });
 
+  app.post('/api/metrics/dedupe-day', async (req, res) => {
+    try {
+      const date = String(req.query.date || '').trim();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+        res.status(400).json({ error: 'Invalid date. Use YYYY-MM-DD' });
+        return;
+      }
+      const uniquePrayers = playbackLogger.dedupeDayForDate(date);
+      await firestoreSync.syncDate(playbackLogger, date, { updateLatest: false });
+      res.status(200).json({ status: 'deduped', date, uniquePrayers });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   app.post('/api/metrics/repair-event', async (req, res) => {
     try {
       const body = req.body || {};

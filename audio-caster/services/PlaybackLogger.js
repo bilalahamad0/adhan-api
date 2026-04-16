@@ -198,6 +198,12 @@ class PlaybackLogger {
     delete record._discoveryStart;
 
     const log = this._readLog();
+    // One canonical finalized row per (date, prayer) — prevents duplicate triggers
+    // (e.g. scheduleToday run twice) from creating multiple dashboard rows.
+    const pKey = String(record.prayer).toLowerCase();
+    log.events = log.events.filter(
+      e => !(e.date === record.date && String(e.prayer).toLowerCase() === pKey),
+    );
     log.events.push(record);
     this._writeLog(log);
     this.pendingEvents.delete(key);
@@ -236,6 +242,40 @@ class PlaybackLogger {
   getDateRange(startDate, endDate) {
     const all = this.getAllEvents();
     return all.filter(e => e.date >= startDate && e.date <= endDate);
+  }
+
+  /**
+   * Collapse duplicate rows for one calendar day (same prayer name case-insensitive).
+   * Keeps the entry with the latest completedTime, else latest triggerTime, else last in file.
+   */
+  dedupeDayForDate(date) {
+    const log = this._readLog();
+    const others = log.events.filter(e => e.date !== date);
+    const day = log.events.filter(e => e.date === date);
+    const best = new Map();
+    const better = (a, b) => {
+      const ac = !!a.completedTime;
+      const bc = !!b.completedTime;
+      if (ac !== bc) return ac ? a : b;
+      const al = a.triggerLatencyMs != null;
+      const bl = b.triggerLatencyMs != null;
+      if (al !== bl) return al ? a : b;
+      const as = a.scheduledTime || '';
+      const bs = b.scheduledTime || '';
+      if (as.length !== bs.length) return as.length > bs.length ? a : b;
+      const at = a.triggerTime || '';
+      const bt = b.triggerTime || '';
+      return at >= bt ? a : b;
+    };
+    for (const e of day) {
+      const k = String(e.prayer).toLowerCase();
+      const cur = best.get(k);
+      if (!cur) best.set(k, e);
+      else best.set(k, better(e, cur));
+    }
+    log.events = others.concat([...best.values()]);
+    this._writeLog(log);
+    return best.size;
   }
 
   upsertHistoricalEvent(eventData) {
