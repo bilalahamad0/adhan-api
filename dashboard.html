@@ -75,7 +75,7 @@
 
         /* SVG Chart */
         .chart-section { display:grid; grid-template-columns:2fr 1fr; gap:0.75rem; margin-bottom:1.5rem; }
-        .chart-card { min-height:220px; }
+        .chart-card { min-height:260px; }
         .chart-area { width:100%; height:180px; }
         .chart-bar { rx:3; transition:all 0.3s; cursor:pointer; }
         .chart-bar:hover { opacity:0.85; }
@@ -223,7 +223,7 @@
         <div class="chart-section">
             <div class="card chart-card">
                 <div class="card-title">7-Day Trend</div>
-                <svg class="chart-area" id="trend-chart" viewBox="0 0 500 180" preserveAspectRatio="xMidYMid meet"></svg>
+                <svg class="chart-area" id="trend-chart" viewBox="0 0 500 230" preserveAspectRatio="xMidYMid meet"></svg>
             </div>
             <div class="card cal-card">
                 <div class="card-title">Monthly Heatmap</div>
@@ -643,48 +643,75 @@ function setTrend(id, current, previous, unit, lowerIsBetter) {
     el.textContent = arrow + ' ' + Math.abs(pct) + '% vs prev 7d';
 }
 
-// --- 7-Day Trend Chart (SVG) ---
+// --- 7-Day Trend Chart (SVG) — two stacked panels so success % and latency never share one misleading axis ---
 function renderTrendChart() {
     const svg = document.getElementById('trend-chart');
     const ds = metricsData.dailyStats.slice(-7);
-    if (ds.length === 0) { svg.innerHTML = '<text x="250" y="90" text-anchor="middle" fill="#64748b" font-size="12">No data</text>'; return; }
+    if (ds.length === 0) { svg.innerHTML = '<text x="250" y="115" text-anchor="middle" fill="#64748b" font-size="12">No data</text>'; return; }
 
-    const W = 500, H = 180, PAD_L = 30, PAD_R = 10, PAD_T = 15, PAD_B = 30;
+    const W = 500;
+    const PAD_L = 36;
+    const PAD_R = 44;
     const chartW = W - PAD_L - PAD_R;
-    const chartH = H - PAD_T - PAD_B;
+
+    const P1_T = 14;
+    const P1_H = 92;
+    const GAP = 10;
+    const P2_T = P1_T + P1_H + GAP;
+    const P2_H = 70;
+    const H = 228;
+
     const barW = Math.min(40, (chartW / ds.length) * 0.6);
     const gap = chartW / ds.length;
 
     let html = '';
+    html += `<text x="${PAD_L}" y="10" font-size="9" fill="#64748b">Success rate</text>`;
+
     for (let i = 0; i <= 4; i++) {
-        const y = PAD_T + (chartH / 4) * i;
+        const y = P1_T + (P1_H / 4) * i;
         html += `<line x1="${PAD_L}" y1="${y}" x2="${W-PAD_R}" y2="${y}" class="chart-gridline"/>`;
-        if (i % 2 === 0) html += `<text x="${PAD_L-4}" y="${y+3}" font-size="8" fill="#64748b" text-anchor="end">${100-i*25}%</text>`;
+        if (i % 2 === 0) {
+            html += `<text x="${PAD_L-6}" y="${y+3}" font-size="8" fill="#64748b" text-anchor="end">${100 - i * 25}%</text>`;
+        }
+    }
+
+    const latVals = ds.map(function (d) { return d.avgLatencyMs; }).filter(function (v) { return v != null; });
+    let maxLat = 10000;
+    if (latVals.length) {
+        maxLat = Math.max(5000, Math.min(30000, Math.max.apply(null, latVals) * 1.15));
+    }
+
+    html += `<text x="${PAD_L}" y="${P2_T - 2}" font-size="9" fill="#64748b">Avg latency (trigger → playback)</text>`;
+    for (let g = 0; g <= 2; g++) {
+        const y = P2_T + (P2_H / 2) * g;
+        html += `<line x1="${PAD_L}" y1="${y}" x2="${W-PAD_R}" y2="${y}" class="chart-gridline"/>`;
+        const sec = (maxLat * (1 - g / 2)) / 1000;
+        html += `<text x="${W - 8}" y="${y+3}" font-size="8" fill="#94a3b8" text-anchor="end">${sec.toFixed(0)}s</text>`;
     }
 
     const points = [];
-    ds.forEach((d, i) => {
-        const x = PAD_L + gap * i + gap/2;
+    ds.forEach(function (d, i) {
+        const x = PAD_L + gap * i + gap / 2;
         const rate = d.successRate != null ? d.successRate : 0;
-        const barH = (rate / 100) * chartH;
-        const y = PAD_T + chartH - barH;
+        const barH = (rate / 100) * P1_H;
+        const y = P1_T + P1_H - barH;
         const color = rate >= 95 ? 'var(--accent-green)' : rate >= 80 ? 'var(--accent-yellow)' : rate > 0 ? 'var(--accent-red)' : 'rgba(148,163,184,0.15)';
-        html += `<rect class="chart-bar" x="${x-barW/2}" y="${y}" width="${barW}" height="${barH}" fill="${color}" opacity="0.7"/>`;
-        html += `<text class="chart-value-label" x="${x}" y="${y-4}">${d.total > 0 ? rate + '%' : ''}</text>`;
+        html += `<rect class="chart-bar" x="${x - barW / 2}" y="${y}" width="${barW}" height="${barH}" fill="${color}" opacity="0.7"/>`;
+        html += `<text class="chart-value-label" x="${x}" y="${y - 4}">${d.total > 0 ? rate + '%' : ''}</text>`;
         const label = d.label ? d.label.slice(5) : '';
-        html += `<text class="chart-label" x="${x}" y="${H-5}">${label}</text>`;
+        html += `<text class="chart-label" x="${x}" y="${H - 6}">${label}</text>`;
 
         if (d.avgLatencyMs != null) {
-            const ly = PAD_T + chartH - Math.min(d.avgLatencyMs / 10000, 1) * chartH;
-            points.push(`${x},${ly}`);
+            const ly = P2_T + P2_H - Math.min(d.avgLatencyMs / maxLat, 1) * P2_H;
+            points.push(x + ',' + ly);
         }
     });
 
     if (points.length > 1) {
         html += `<polyline class="chart-line" points="${points.join(' ')}"/>`;
-        points.forEach(pt => {
-            const [cx, cy] = pt.split(',');
-            html += `<circle class="chart-dot" cx="${cx}" cy="${cy}" r="3"/>`;
+        points.forEach(function (pt) {
+            const parts = pt.split(',');
+            html += `<circle class="chart-dot" cx="${parts[0]}" cy="${parts[1]}" r="3"/>`;
         });
     }
 
