@@ -240,14 +240,8 @@ class CoreScheduler {
                 discoveredDevice = device;
                 log(`📡 Device Discovered & Cached: ${device.friendlyName}`);
                 if (this.playbackLogger) this.playbackLogger.recordDeviceDiscovered(prayerName, device.friendlyName);
-                // #region agent log
-                fetch('http://127.0.0.1:7930/ingest/ceae1dad-11e6-49d0-ac1e-0f746249f70a',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'89839d'},body:JSON.stringify({sessionId:'89839d',runId:'pre-fix',hypothesisId:'H2',location:'CoreScheduler.js:discovery-match',message:'device cached post-wait',data:{prayerName,matched:true},timestamp:Date.now()})}).catch(()=>{});
-                // #endregion
             }
         });
-        // #region agent log
-        fetch('http://127.0.0.1:7930/ingest/ceae1dad-11e6-49d0-ac1e-0f746249f70a',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'89839d'},body:JSON.stringify({sessionId:'89839d',runId:'pre-fix',hypothesisId:'H1',location:'CoreScheduler.js:discovery-start',message:'scanner created after wait',data:{prayerName,expectedName:CONFIG.device.name},timestamp:Date.now()})}).catch(()=>{});
-        // #endregion
 
         let finalVideoFile = `${prayerName.toLowerCase()}.mp4`;
         const castUrl = `http://${localIp}:${CONFIG.serverPort}/images/generated/${finalVideoFile}?t=${Date.now()}`;
@@ -437,9 +431,6 @@ class CoreScheduler {
             });
             setTimeout(() => {
                 if (!adhanDevice) {
-                    // #region agent log
-                    fetch('http://127.0.0.1:7930/ingest/ceae1dad-11e6-49d0-ac1e-0f746249f70a',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'89839d'},body:JSON.stringify({sessionId:'89839d',runId:'pre-fix',hypothesisId:'H1',location:'CoreScheduler.js:discovery-timeout',message:'60s timeout no device',data:{prayerName,hadCachedDevice:!!discoveredDevice},timestamp:Date.now()})}).catch(()=>{});
-                    // #endregion
                     log(`❌ Discovery Timeout: Speaker ${CONFIG.device.name} not found.`);
                     try {
                         if (scanner && typeof scanner.destroy === 'function') scanner.destroy();
