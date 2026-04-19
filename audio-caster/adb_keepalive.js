@@ -21,6 +21,8 @@ class AdbKeepAlive {
     this.timer = null;
     this.pulseCount = 0;
     this.logPrefix = '🛡️ ADB-KEEPER:';
+    /** Throttle BT reconnect attempts when dumpsys reports disconnected */
+    this._lastBtConnectAttemptMs = 0;
   }
 
   log(msg) {
@@ -42,9 +44,11 @@ class AdbKeepAlive {
 
     switch (newState) {
       case 'ONLINE':
+        this.discovery.stop();
         this.setNextCheck(120000); // 2 mins
         break;
       case 'HUNTING':
+        this.discovery.stop();
         this.setNextCheck(60000); // 1 min
         break;
       case 'SLEEPING':
@@ -64,6 +68,39 @@ class AdbKeepAlive {
   setNextCheck(ms) {
     if (this.timer) clearTimeout(this.timer);
     this.timer = setTimeout(() => this.checkAndHeal(), ms);
+  }
+
+  /**
+   * While TV is ON (ONLINE): read connect/disconnect from dumpsys for TV_BT_SPEAKER_MAC (must already be
+   * paired on the TV), and if disconnected request reconnect via ADB. No pairing. Same cadence as TV checks.
+   * Optional TV_BT_CONNECT_COMMAND for OEM-specific "shell …" (use {MAC}).
+   */
+  async maintainBluetoothWhileTvOn() {
+    const mac = HardwareService.normalizeBluetoothMac(process.env.TV_BT_SPEAKER_MAC || '');
+    if (!mac) return;
+
+    const connected = await this.hardware.isBluetoothSpeakerConnectedForAudio(this.targetIp, mac);
+    if (connected === true) return;
+    if (connected === null) {
+      this.log('🔊 BT: could not read connection state from dumpsys; skipping this cycle.');
+      return;
+    }
+
+    const now = Date.now();
+    const minGapMs = parseInt(process.env.TV_BT_RECONNECT_MIN_MS || '90000', 10);
+    if (now - this._lastBtConnectAttemptMs < minGapMs) return;
+    this._lastBtConnectAttemptMs = now;
+
+    this.log(`🔊 BT: speaker not connected (${mac}); requesting connect via ADB…`);
+    await this.hardware.requestBluetoothSpeakerConnect(this.targetIp, mac);
+  }
+
+  stopService() {
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
+    this.discovery.stop();
   }
 
   async checkAndHeal() {
@@ -131,6 +168,7 @@ class AdbKeepAlive {
 
       // 3. Reschedule heartbeat regardless of branch taken (unless SLEEPING/SAFETY_PULSE handled it)
       if (this.state === 'ONLINE') {
+        await this.maintainBluetoothWhileTvOn();
         this.setNextCheck(120000); // 2 mins
       } else if (this.state === 'HUNTING') {
         this.setNextCheck(60000); // 1 min

@@ -221,6 +221,113 @@ class HardwareService {
     await this.runExec('adb keygen ~/.android/adbkey');
     await this.runExec('adb start-server');
   }
+
+  /**
+   * Normalizes a Bluetooth MAC to AA:BB:CC:DD:EE:FF (returns null if invalid).
+   * @param {string} mac
+   * @returns {string|null}
+   */
+  static normalizeBluetoothMac(mac) {
+    if (!mac || typeof mac !== 'string') return null;
+    const hex = mac.toUpperCase().replace(/[^0-9A-F]/g, '');
+    if (hex.length !== 12) return null;
+    return hex.match(/../g).join(':');
+  }
+
+  /**
+   * Ensures ADB serial uses explicit TCP port when only an IPv4 is given (matches adb connect …:5555).
+   * @param {string} ip
+   */
+  static ensureAdbTcpSerial(ip) {
+    const s = String(ip || '').trim();
+    if (!s) return s;
+    if (/:\d{2,5}$/.test(s)) return s;
+    return `${s}:5555`;
+  }
+
+  /**
+   * Best-effort parse of A2DP / headset connection for a bonded MAC from bluetooth dumpsys output.
+   * OEM formatting varies; returns null only when dumps are unusable (empty / ADB down).
+   * @param {string} text
+   * @param {string} macNorm AA:BB:… from normalizeBluetoothMac
+   * @returns {boolean|null}
+   */
+  static inferBluetoothAudioConnected(text, macNorm) {
+    if (!text || !macNorm) return null;
+    const macLo = macNorm.toLowerCase();
+    const macCompact = macLo.replace(/:/g, '');
+    const hitAt = (hay) => {
+      const h = hay.toLowerCase();
+      let i = h.indexOf(macLo);
+      if (i < 0) i = h.indexOf(macCompact);
+      return i;
+    };
+    const idx = hitAt(text);
+    if (idx < 0) {
+      if (/bonded|paired|device/i.test(text)) return false;
+      return null;
+    }
+    const win = text.slice(Math.max(0, idx - 400), Math.min(text.length, idx + 900));
+    const strongOn =
+      /\bSTATE_CONNECTED\b/i.test(win) ||
+      /A2dpState:\s*connected/i.test(win) ||
+      /(?:A2DP|Headset).{0,120}connected:\s*true/i.test(win) ||
+      /(?:isA2dpPlaying|A2dpPlaying)\(\)\s*:\s*true/i.test(win);
+    const strongOff =
+      /\bSTATE_DISCONNECTED\b/i.test(win) ||
+      /A2dpState:\s*disconnected/i.test(win) ||
+      /(?:A2DP|Headset).{0,120}connected:\s*false/i.test(win);
+    if (strongOn && !strongOff) return true;
+    if (strongOff && !strongOn) return false;
+    const looseOn = /connected:\s*true/i.test(win) || /\bmState[=:]\s*2\b/.test(win);
+    const looseOff = /connected:\s*false/i.test(win) || /\bmState[=:]\s*0\b/.test(win);
+    if (looseOn && !looseOff) return true;
+    if (looseOff && !looseOn) return false;
+    return null;
+  }
+
+  /**
+   * Connect/disconnect status for an already-paired MAC (best-effort from dumpsys). Does not pair.
+   * @param {string} ip ADB target (same convention as adbCommand elsewhere)
+   * @param {string} macNorm
+   * @returns {Promise<boolean|null>} true=connected, false=disconnected/not found in bonded context, null=unknown
+   */
+  async isBluetoothSpeakerConnectedForAudio(ip, macNorm) {
+    const serial = HardwareService.ensureAdbTcpSerial(ip);
+    const parts = [
+      await this.adbCommand(serial, 'shell dumpsys bluetooth_manager'),
+      await this.adbCommand(serial, 'shell dumpsys bluetooth'),
+    ];
+    const text = parts.filter(Boolean).join('\n\n');
+    if (!text) return null;
+    return HardwareService.inferBluetoothAudioConnected(text, macNorm);
+  }
+
+  /**
+   * Requests reconnect for an already-paired speaker only (shell connect). No pairing flow.
+   * Set TV_BT_CONNECT_COMMAND to a full "shell …" fragment for OEM-specific overrides.
+   * @param {string} ip
+   * @param {string} macNorm
+   * @returns {Promise<boolean>} true if a command ran without immediate ADB failure (connection is verified separately)
+   */
+  async requestBluetoothSpeakerConnect(ip, macNorm) {
+    const serial = HardwareService.ensureAdbTcpSerial(ip);
+    const custom = process.env.TV_BT_CONNECT_COMMAND;
+    if (custom && String(custom).trim()) {
+      const out = await this.adbCommand(serial, String(custom).trim().replace(/\{MAC\}/gi, macNorm));
+      return out !== null;
+    }
+    const attempts = [
+      `shell cmd bluetooth_adapter connect ${macNorm}`,
+      `shell cmd bluetooth_manager connect ${macNorm}`,
+      `shell cmd bt_adapter connect ${macNorm}`,
+    ];
+    for (const cmd of attempts) {
+      const out = await this.adbCommand(serial, cmd);
+      if (out !== null) return true;
+    }
+    return false;
+  }
 }
 
 module.exports = HardwareService;
