@@ -82,4 +82,39 @@ describe('CoreScheduler', () => {
       expect.stringContaining('http://10.0.0.100:3000/images/generated/maghrib.mp4')
     );
   });
+
+  it('skips duplicate preflight execution when a session is already active', async () => {
+    scheduler.activeRuns.add('Fajr');
+    scheduler.sessionStatus.set('Fajr', 'WAITING');
+
+    await scheduler.executePreFlightAndCast('Fajr', 'fajr.mp3', null);
+
+    expect(scheduler.log).toHaveBeenCalledWith(expect.stringContaining('Skipping Fajr: session already active'));
+    expect(fakeMedia.encodeVideoFromImageAndAudio).not.toHaveBeenCalled();
+  });
+
+  it('auditPlayback does not trigger recovery while active run is in progress', async () => {
+    const playbackLogger = { recordAuditResult: jest.fn() };
+    scheduler.playbackLogger = playbackLogger;
+    scheduler.activeRuns.add('Asr');
+    scheduler.sessionStatus.set('Asr', 'PLAYING');
+    const executeSpy = jest.spyOn(scheduler, 'executePreFlightAndCast');
+
+    await scheduler.auditPlayback('Asr', 'asr.mp3');
+
+    expect(playbackLogger.recordAuditResult).toHaveBeenCalledWith('Asr', true);
+    expect(executeSpy).not.toHaveBeenCalled();
+  });
+
+  it('auditPlayback treats completed session state as successful and skips recovery', async () => {
+    const playbackLogger = { recordAuditResult: jest.fn() };
+    scheduler.playbackLogger = playbackLogger;
+    scheduler.sessionStatus.set('Isha', 'COMPLETED');
+    const executeSpy = jest.spyOn(scheduler, 'executePreFlightAndCast');
+
+    await scheduler.auditPlayback('Isha', 'isha.mp3');
+
+    expect(playbackLogger.recordAuditResult).toHaveBeenCalledWith('Isha', true);
+    expect(executeSpy).not.toHaveBeenCalled();
+  });
 });
