@@ -215,7 +215,7 @@ class AdbKeepAlive {
         this.log('🔊 BT: TV_BT_CONNECT_COMMAND is set (custom connect).');
       }
       this.log(
-        '🔊 BT: Optional env: TV_BT_LOOSE_PARSE (legacy dumpsys), TV_BT_ALWAYS_CONNECT (nudge every cycle), TV_BT_POST_CONNECT_WAIT_MS.'
+        '🔊 BT: Sony BRAVIA often has no cmd bluetooth_* — try TV_BT_SVC_RESET=1 (BT radio toggle), TV_BT_CONNECT_COMMAND, or TV_BT_SPEAKER_NAME + AndroidTVBluetooth APK.'
       );
       return;
     }

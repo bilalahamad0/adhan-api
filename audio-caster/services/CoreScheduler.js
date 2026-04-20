@@ -332,16 +332,17 @@ class CoreScheduler {
             if (isCleanedUp) return;
             
             if (currentPhase === 'ADHAN') {
-                log(`✨ Adhan Video Finished. Switching to Dua...`);
                 if (safetyTimer) clearTimeout(safetyTimer);
-                currentPhase = 'DUA';
-                
-                if (!adhanDevice) {
+
+                if (!adhanDevice || typeof adhanDevice.play !== 'function') {
                     log(`⚠️ No device connected -- skipping Dua, proceeding to cleanup.`);
                     currentPhase = 'DONE';
                     cleanup();
                     return;
                 }
+
+                log(`✨ Adhan Video Finished. Switching to Dua...`);
+                currentPhase = 'DUA';
 
                 const duaUrl = `http://${localIp}:${CONFIG.serverPort}/images/generated/dua.jpg?t=${Date.now()}`;
                 const media = {

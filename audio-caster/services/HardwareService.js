@@ -376,7 +376,8 @@ class HardwareService {
 
   /**
    * Requests reconnect for an already-paired speaker only (shell connect). No pairing flow.
-   * Set TV_BT_CONNECT_COMMAND to a full "shell …" fragment for OEM-specific overrides.
+   * Order: TV_BT_CONNECT_COMMAND → TV_BT_SPEAKER_NAME (AndroidTVBluetooth broadcast) → stock cmd connect → TV_BT_SVC_RESET.
+   * Sony BRAVIA often reports "Can't find service: bluetooth_adapter"; use TV_BT_SVC_RESET=1 or a custom shell line.
    * @param {string} ip
    * @param {string} macNorm
    * @returns {Promise<boolean>} true if a command ran without immediate ADB failure (connection is verified separately)
@@ -388,6 +389,15 @@ class HardwareService {
       const out = await this.adbCommand(serial, String(custom).trim().replace(/\{MAC\}/gi, macNorm));
       return out !== null;
     }
+
+    const speakerName = process.env.TV_BT_SPEAKER_NAME && String(process.env.TV_BT_SPEAKER_NAME).trim();
+    if (speakerName) {
+      const safeName = speakerName.replace(/"/g, "'");
+      const broadcastCmd = `shell am broadcast -a com.saihgupr.btcontrol.ACTION_CONNECT -n com.saihgupr.btcontrol/.BluetoothControlReceiver -e name "${safeName}"`;
+      const out = await this.adbCommand(serial, broadcastCmd);
+      if (out !== null) return true;
+    }
+
     const attempts = [
       `shell cmd bluetooth_adapter connect ${macNorm}`,
       `shell cmd bluetooth_manager connect ${macNorm}`,
@@ -397,6 +407,23 @@ class HardwareService {
       const out = await this.adbCommand(serial, cmd);
       if (out !== null) return true;
     }
+
+    const svcReset = ['1', 'true', 'yes'].includes(
+      String(process.env.TV_BT_SVC_RESET || '')
+        .trim()
+        .toLowerCase()
+    );
+    if (svcReset) {
+      const out = await this.adbCommand(
+        serial,
+        'shell "svc bluetooth disable; sleep 2; svc bluetooth enable"'
+      );
+      if (out !== null) {
+        await new Promise((r) => setTimeout(r, 4000));
+        return true;
+      }
+    }
+
     return false;
   }
 }
