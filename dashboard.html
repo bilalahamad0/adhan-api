@@ -3,6 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
     <title>Adhan Audio Caster | Operations Dashboard</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
@@ -424,19 +426,27 @@ function attachListeners() {
     // Listen to ALL data (no date range limit) so nothing ever falls off.
     // Firestore charges per document; even after years this is only ~365 docs/year.
     _listeners.push(
-        db.collection('dailyMetrics').orderBy('date')
+        db.collection('dailyMetrics')
             .onSnapshot(function(snap) {
                 _metricsCache = {};
-                snap.forEach(function(d) { var data = d.data(); _metricsCache[data.date] = data; });
+                snap.forEach(function(d) {
+                    var data = d.data();
+                    var key = firestoreDateToYyyyMmDd(data.date) || d.id;
+                    if (key) _metricsCache[key] = data;
+                });
                 rebuildAndRender();
             }, function(err) { console.warn('Metrics listener error:', err.message); })
     );
 
     _listeners.push(
-        db.collection('dailyEvents').orderBy('date')
+        db.collection('dailyEvents')
             .onSnapshot(function(snap) {
                 _eventsCache = {};
-                snap.forEach(function(d) { var data = d.data(); _eventsCache[data.date] = data; });
+                snap.forEach(function(d) {
+                    var data = d.data();
+                    var key = firestoreDateToYyyyMmDd(data.date) || d.id;
+                    if (key) _eventsCache[key] = data;
+                });
                 rebuildAndRender();
             }, function(err) { console.warn('Events listener error:', err.message); })
     );
@@ -472,8 +482,9 @@ function detachListeners() {
 }
 
 function rebuildAndRender() {
-    var dailyStats = Object.keys(_metricsCache).sort().map(function(date) {
-        return { label: date, ..._metricsCache[date] };
+    var dailyStats = Object.keys(_metricsCache).sort().map(function(dateKey) {
+        var row = _metricsCache[dateKey];
+        return Object.assign({}, row, { label: dateKey });
     });
 
     var allEvents = [];
@@ -581,6 +592,15 @@ function getActiveDate() {
     return selectedDate || localDateStr(new Date());
 }
 
+function dayDataForActiveDate(ds, activeDate) {
+    if (!ds || !activeDate) return null;
+    return ds.find(function(row) {
+        var lab = row.label != null ? String(row.label).slice(0, 10) : '';
+        var docDate = firestoreDateToYyyyMmDd(row.date) || (typeof row.date === 'string' ? row.date.slice(0, 10) : '');
+        return lab === activeDate || docDate === activeDate;
+    }) || null;
+}
+
 function displayedPrayerTime(activeDate, prayer, dayData) {
     const d = dayData && dayData.prayers && dayData.prayers[prayer];
     if (d && d.scheduledTime) return d.scheduledTime;
@@ -597,7 +617,7 @@ function displayedPrayerTime(activeDate, prayer, dayData) {
 function renderPrayerGrid() {
     const ds = metricsData.dailyStats;
     const activeDate = getActiveDate();
-    const dayData = ds.find(d => d.label === activeDate) || null;
+    const dayData = dayDataForActiveDate(ds, activeDate);
     const grid = document.getElementById('prayer-grid');
     const title = document.getElementById('prayer-status-title');
     if (title) {

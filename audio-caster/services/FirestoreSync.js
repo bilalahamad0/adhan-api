@@ -61,6 +61,12 @@ class FirestoreSync {
    * Writes meta/prayerSchedule and merges scheduledTimes onto dailyMetrics/{date}
    * so the dashboard shows all HH:mm even before every prayer has logged an event.
    */
+  /** For health/debug: how many prayer HH:mm values resolve from disk for a given YYYY-MM-DD. */
+  scheduleSummaryForDate(isoDate) {
+    const times = this._getScheduledTimesForISODate(isoDate);
+    return { date: isoDate, prayersScheduled: Object.keys(times).length, times };
+  }
+
   async ensureTodayScheduleOnFirestore(isoDate) {
     const times = this._getScheduledTimesForISODate(isoDate);
     if (Object.keys(times).length === 0) {

@@ -114,7 +114,13 @@ async function bootSystem() {
   app.post('/api/metrics/sync', async (req, res) => {
     try {
       await firestoreSync.forceSync(playbackLogger);
-      res.status(200).json({ status: 'synced' });
+      const today = DateTime.now().setZone(CONFIG.timezone).toISODate();
+      const sum = firestoreSync.scheduleSummaryForDate(today);
+      res.status(200).json({
+        status: 'synced',
+        deviceToday: sum.date,
+        prayersScheduled: sum.prayersScheduled,
+      });
     } catch (e) {
       res.status(500).json({ error: e.message });
     }
