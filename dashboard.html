@@ -379,6 +379,8 @@ var metricsData = null;
 var calendarOffset = 0;
 var selectedDate = null;
 var db = null; // Set later if Firebase loads
+/** Canonical HH:mm from Pi (meta/prayerSchedule), same day as `date` in device TZ. */
+var _prayerScheduleCache = { date: null, times: {} };
 
 // --- Tab Switching ---
 document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -433,6 +435,19 @@ function attachListeners() {
                 _latestCache = snap.exists ? snap.data() : {};
                 rebuildAndRender();
             }, function(err) { console.warn('Meta listener error:', err.message); })
+    );
+
+    _listeners.push(
+        db.collection('meta').doc('prayerSchedule')
+            .onSnapshot(function(snap) {
+                if (snap.exists) {
+                    var data = snap.data();
+                    _prayerScheduleCache = { date: data.date || null, times: data.times || {} };
+                } else {
+                    _prayerScheduleCache = { date: null, times: {} };
+                }
+                if (metricsData) renderPrayerGrid();
+            }, function(err) { console.warn('prayerSchedule listener error:', err.message); })
     );
 }
 
@@ -551,6 +566,15 @@ function getActiveDate() {
     return selectedDate || localDateStr(new Date());
 }
 
+function displayedPrayerTime(activeDate, prayer, dayData) {
+    const d = dayData && dayData.prayers && dayData.prayers[prayer];
+    if (d && d.scheduledTime) return d.scheduledTime;
+    if (_prayerScheduleCache.date === activeDate && _prayerScheduleCache.times && _prayerScheduleCache.times[prayer]) {
+        return _prayerScheduleCache.times[prayer];
+    }
+    return null;
+}
+
 function renderPrayerGrid() {
     const ds = metricsData.dailyStats;
     const activeDate = getActiveDate();
@@ -563,36 +587,49 @@ function renderPrayerGrid() {
             : `Prayer Status · ${activeDate}`;
     }
 
-    if (!dayData || !dayData.prayers || Object.keys(dayData.prayers).length === 0) {
-        grid.innerHTML = PRAYERS.map(p => `
+    const hasPlaybackRows = dayData && dayData.prayers && Object.keys(dayData.prayers).length > 0;
+    if (!hasPlaybackRows) {
+        grid.innerHTML = PRAYERS.map(p => {
+            const timeStr = displayedPrayerTime(activeDate, p, dayData);
+            const timeDisp = timeStr || '--:--';
+            const detail = timeStr
+                ? 'Scheduled'
+                : (activeDate === localDateStr(new Date()) ? 'Awaiting data' : 'No data');
+            const timeColor = timeStr ? 'var(--text)' : 'var(--text-muted)';
+            return `
             <div class="prayer-cell">
                 <div class="prayer-name">${p}</div>
-                <div class="prayer-time" style="color:var(--text-muted)">--:--</div>
+                <div class="prayer-time" style="color:${timeColor}">${timeDisp}</div>
                 <div class="prayer-status-icon pending">&#9711;</div>
-                <div class="prayer-detail">${activeDate === localDateStr(new Date()) ? 'Awaiting data' : 'No data'}</div>
-            </div>`).join('');
+                <div class="prayer-detail">${detail}</div>
+            </div>`;
+        }).join('');
         return;
     }
 
     grid.innerHTML = PRAYERS.map(p => {
         const d = dayData.prayers[p];
+        const timeStr = displayedPrayerTime(activeDate, p, dayData);
+        const timeDisp = timeStr || '--:--';
+        const timeColor = timeStr ? 'var(--text)' : 'var(--text-muted)';
         if (!d) return `
             <div class="prayer-cell">
                 <div class="prayer-name">${p}</div>
-                <div class="prayer-time" style="color:var(--text-muted)">--:--</div>
+                <div class="prayer-time" style="color:${timeColor}">${timeDisp}</div>
                 <div class="prayer-status-icon pending">&#9711;</div>
-                <div class="prayer-detail">Pending</div>
+                <div class="prayer-detail">${timeStr ? 'Pending' : 'No data'}</div>
             </div>`;
         const st = (d.status || 'PENDING').toUpperCase();
         const cls = st === 'PLAYED' ? 'played' : st === 'RECOVERED' ? 'recovered' : st === 'FAILED' ? 'failed' : 'pending';
         const icon = st === 'PLAYED' ? '&#10003;' : st === 'RECOVERED' ? '&#8635;' : st === 'FAILED' ? '&#10007;' : '&#9711;';
         const latStr = d.triggerLatencyMs != null ? (d.triggerLatencyMs / 1000).toFixed(1) + 's' : '--';
+        const pendingDetail = timeStr && st === 'PENDING' ? 'Scheduled · pending' : (st === 'PENDING' ? 'Pending' : 'Latency: ' + latStr);
         return `
             <div class="prayer-cell">
                 <div class="prayer-name">${p}</div>
-                <div class="prayer-time">${d.scheduledTime || '--:--'}</div>
+                <div class="prayer-time" style="color:${timeColor}">${timeDisp}</div>
                 <div class="prayer-status-icon ${cls}">${icon}</div>
-                <div class="prayer-detail">${st === 'PENDING' ? 'Pending' : 'Latency: ' + latStr}</div>
+                <div class="prayer-detail">${pendingDetail}</div>
                 ${d.usedFallback ? '<div class="prayer-detail" style="color:var(--accent-yellow)">Fallback</div>' : ''}
             </div>`;
     }).join('');

@@ -1,4 +1,5 @@
 const path = require('path');
+const { DateTime } = require('luxon');
 const MediaService = require('./services/MediaService');
 const CoreScheduler = require('./services/CoreScheduler');
 const HardwareService = require('./services/HardwareService');
@@ -304,11 +305,28 @@ async function bootSystem() {
   // 3. Initiate Scheduler Flow
   console.log('⏳ Awaiting schedules...');
   await new Promise(r => setTimeout(r, 5000));
-  await scheduler.scheduleToday();
 
-  // Daily Refresh
+  async function refreshScheduleAndPublishFirestore() {
+    await scheduler.scheduleToday();
+    const today = DateTime.now().setZone(CONFIG.timezone).toISODate();
+    const entry = scheduler.resolveTodayScheduleEntry();
+    const times = FirestoreSync.extractPrayerTimesHHmm(entry);
+    await firestoreSync.publishPrayerSchedule(today, times);
+  }
+
+  await refreshScheduleAndPublishFirestore();
+
+  // Daily refresh at civil midnight in prayer timezone (avoids OS-local vs TIMEZONE skew around DST).
   const schedule = require('node-schedule');
-  schedule.scheduleJob('0 1 * * *', () => scheduler.scheduleToday());
+  const dailyScheduleRule = new schedule.RecurrenceRule();
+  dailyScheduleRule.hour = 0;
+  dailyScheduleRule.minute = 0;
+  dailyScheduleRule.tz = CONFIG.timezone;
+  schedule.scheduleJob(dailyScheduleRule, () => {
+    refreshScheduleAndPublishFirestore().catch((e) => {
+      console.error('[boot] Daily schedule refresh failed:', e.message);
+    });
+  });
 
   // Direct Firestore sync (daily at 23:55 + debounced after each prayer)
   schedule.scheduleJob('55 23 * * *', () => firestoreSync.forceSync(playbackLogger));

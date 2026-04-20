@@ -1,7 +1,30 @@
 const DEBOUNCE_MS = 30000; // Min 30s between Firestore writes to conserve Pi CPU
 const WRITE_TIMEOUT_MS = 15000;
 
+const PRAYER_NAMES = ['Fajr', 'Dhuhr', 'Asr', 'Maghrib', 'Isha'];
+
 class FirestoreSync {
+  /**
+   * Parse Aladhan `annual_schedule` day entry timings into HH:mm (24h) strings.
+   * @param {object|null} todayEntry — one day from calendarByCity annual payload
+   * @returns {Record<string, string>}
+   */
+  static extractPrayerTimesHHmm(todayEntry) {
+    const times = {};
+    if (!todayEntry || !todayEntry.timings) return times;
+    for (const p of PRAYER_NAMES) {
+      const raw = todayEntry.timings[p];
+      if (raw == null) continue;
+      const token = String(raw).trim().split(/\s+/)[0];
+      const m = token.match(/^(\d{1,2}):(\d{2})/);
+      if (!m) continue;
+      const hh = String(Math.max(0, Math.min(23, parseInt(m[1], 10)))).padStart(2, '0');
+      const mm = String(Math.max(0, Math.min(59, parseInt(m[2], 10)))).padStart(2, '0');
+      times[p] = `${hh}:${mm}`;
+    }
+    return times;
+  }
+
   constructor(serviceKeyBase64, timezone) {
     this._serviceKeyBase64 = serviceKeyBase64;
     this._timezone = timezone;
@@ -150,6 +173,27 @@ class FirestoreSync {
       this._pendingPayload = null;
     }
     await this._doSync(playbackLogger);
+  }
+
+  /**
+   * Publish canonical prayer clock times for a calendar day (Pi timezone).
+   * Lets the operations dashboard show HH:mm before any playback events exist.
+   */
+  async publishPrayerSchedule(date, prayerTimesHHmm) {
+    const db = this._initFirestore();
+    if (!db || !date) return false;
+    try {
+      await db.collection('meta').doc('prayerSchedule').set({
+        date,
+        times: prayerTimesHHmm || {},
+        timezone: this._timezone,
+        updatedAt: new Date().toISOString(),
+      });
+      return true;
+    } catch (e) {
+      console.error(`[FirestoreSync] publishPrayerSchedule failed: ${e.message}`);
+      return false;
+    }
   }
 }
 
