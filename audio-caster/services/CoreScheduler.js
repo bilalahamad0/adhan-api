@@ -188,6 +188,16 @@ class CoreScheduler {
                 log(`✅ Checkpoint 1.5: Dua Image Pre-generated.`);
             }).catch(e => log(`⚠️ Dua generation warning: ${e.message}`));
 
+            const audioDuration = await mediaService.getMediaDuration(audioPath);
+            const minAudioExpected = require('./MediaService').getMinExpectedDuration(prayerName);
+            if (audioDuration === null) {
+                log(`⚠️ Could not read audio duration for ${audioFileName}. Proceeding with encoding anyway.`);
+            } else if (audioDuration < minAudioExpected) {
+                throw new Error(`SMART_RECOVERY: Audio ${audioFileName} is only ${audioDuration.toFixed(1)}s (expected >${minAudioExpected}s). File may be corrupt.`);
+            } else {
+                log(`🎵 Audio verified: ${audioFileName} (${audioDuration.toFixed(1)}s)`);
+            }
+
             log(`🎬 Starting Video Encoding...`);
             const { promise: encodingPromise, abort: abortEncoding } = mediaService.encodeVideoFromImageAndAudio(imgPath, audioPath, outputVideoPath, weatherCode);
             
@@ -206,7 +216,26 @@ class CoreScheduler {
                 throw err;
             }
 
-            log(`✅ Checkpoint 1: Assets Generated.`);
+            const videoDuration = await mediaService.getMediaDuration(outputVideoPath);
+            const minExpected = require('./MediaService').getMinExpectedDuration(prayerName);
+            if (videoDuration !== null && videoDuration < minExpected) {
+                log(`⚠️ Video duration ${videoDuration.toFixed(1)}s is below minimum ${minExpected}s for ${prayerName}. Switching to fallback.`);
+                this.sessionStatus.set(prayerName, 'RECOVERING');
+                if (this.playbackLogger) {
+                    this.playbackLogger.recordEncodingFailed(prayerName, 'SHORT_VIDEO');
+                    this.playbackLogger.recordUsedFallback(prayerName);
+                }
+                const fallbackPath = path.join(__dirname, '..', '..', 'images', 'fallback_adhan.mp4');
+                if (!fs.existsSync(fallbackPath)) {
+                    log('❌ Hard Failure: Fallback video missing.');
+                    if (this.playbackLogger) this.playbackLogger.recordFailed(prayerName, 'SHORT_VIDEO');
+                    this.activeRuns.delete(prayerName);
+                    return;
+                }
+                log('🛠️ Smart Reset: Using pre-rendered premium fallback_adhan.mp4');
+            } else {
+                log(`✅ Checkpoint 1: Assets Generated (video ${videoDuration ? videoDuration.toFixed(1) + 's' : 'unknown duration'}).`);
+            }
             if (this.playbackLogger) this.playbackLogger.recordEncodingComplete(prayerName);
         } catch (e) { 
             if (e.message.includes('SMART_RECOVERY')) {
@@ -436,14 +465,18 @@ class CoreScheduler {
                                     return;
                                 }
                                 const elapsedSec = Math.round((Date.now() - adhanPlayStartMs) / 1000);
-                                if (elapsedSec < 20 && (reason === 'FINISHED' || implicitEnd)) {
+                                const minExpected = require('./MediaService').getMinExpectedDuration(prayerName);
+                                const tooShort = elapsedSec < Math.min(minExpected * 0.5, 25);
+                                if (tooShort && (reason === 'FINISHED' || implicitEnd)) {
                                     log(
-                                        `⚠️ Adhan FINISHED after only ~${elapsedSec}s — if that is wrong, check ${finalVideoFile} duration (ffprobe) and HTTP serving; adb-keeper Bluetooth logic does not affect Cast.`
+                                        `❌ Adhan FAILED: FINISHED after only ~${elapsedSec}s (expected >${minExpected}s). Video file or stream is corrupt/truncated.`
+                                    );
+                                    if (this.playbackLogger) this.playbackLogger.recordFailed(prayerName, 'SHORT_PLAYBACK');
+                                } else {
+                                    log(
+                                        `⏹️ Adhan Finished. (Final State: ${s.playerState}, Reason: ${reason || (implicitEnd ? 'implicit-after-PLAYING' : 'N/A')}, elapsed: ${elapsedSec}s)`
                                     );
                                 }
-                                log(
-                                    `⏹️ Adhan Finished. (Final State: ${s.playerState}, Reason: ${reason || (implicitEnd ? 'implicit-after-PLAYING' : 'N/A')})`
-                                );
                                 device.removeListener('status', adhanStatusHandler);
                                 cleanup();
                             };

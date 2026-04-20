@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { promisify } = require('util');
+const { exec } = require('child_process');
 const stream = require('stream');
 const pipeline = promisify(stream.pipeline);
 const axios = require('axios');
@@ -117,6 +118,38 @@ class MediaService {
     } catch {
       return '0.00';
     }
+  }
+
+  /**
+   * Returns the duration of a media file in seconds (via ffprobe).
+   * @param {string} filePath
+   * @returns {Promise<number|null>}
+   */
+  getMediaDuration(filePath) {
+    return new Promise((resolve) => {
+      exec(
+        `ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${filePath}"`,
+        { timeout: 10000 },
+        (err, stdout) => {
+          if (err) {
+            console.error(`⚠️ ffprobe error for ${filePath}: ${err.message}`);
+            resolve(null);
+            return;
+          }
+          const dur = parseFloat(stdout);
+          resolve(Number.isFinite(dur) ? dur : null);
+        }
+      );
+    });
+  }
+
+  /**
+   * Minimum expected Adhan video durations (seconds). Fajr is longer.
+   */
+  static getMinExpectedDuration(prayerName) {
+    const name = (prayerName || '').toLowerCase();
+    if (name === 'fajr') return 180; // ~3-4 min, be conservative
+    return 45; // Regular adhans are typically 60-90s; 45s is safe floor
   }
 }
 
