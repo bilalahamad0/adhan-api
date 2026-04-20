@@ -287,6 +287,59 @@ class HardwareService {
   }
 
   /**
+   * Pulls only dump lines near the MAC so unrelated "connected: true" elsewhere does not false-positive.
+   * @param {string|null|undefined} blob
+   * @param {string} macNorm
+   */
+  static extractBluetoothMacContext(blob, macNorm) {
+    if (!blob || !macNorm) return '';
+    const macLo = macNorm.toLowerCase();
+    const compact = macLo.replace(/:/g, '');
+    const lines = blob.split(/\r?\n/);
+    const keep = new Set();
+    lines.forEach((line, i) => {
+      const l = line.toLowerCase();
+      if (!l.includes(macLo) && !l.includes(compact)) return;
+      for (let j = Math.max(0, i - 6); j <= Math.min(lines.length - 1, i + 12); j++) keep.add(j);
+    });
+    return [...keep]
+      .sort((a, b) => a - b)
+      .map((i) => lines[i])
+      .join('\n');
+  }
+
+  /**
+   * Strict: only strong A2DP/ACL style signals; ambiguous -> false (prefer reconnect).
+   * Set TV_BT_LOOSE_PARSE=1 to use inferBluetoothAudioConnected (legacy, wider false positives).
+   */
+  static inferBluetoothAudioConnectedStrict(text, macNorm) {
+    if (!text || !macNorm) return null;
+    const t = text.toLowerCase();
+    const macLo = macNorm.toLowerCase();
+    const compact = macLo.replace(/:/g, '');
+    if (!t.includes(macLo) && !t.includes(compact)) return null;
+    const strongOn =
+      /\bSTATE_CONNECTED\b/i.test(text) ||
+      /A2dpState:\s*connected/i.test(text) ||
+      /\bBOND_CONNECTED\b/i.test(text) ||
+      /\bprofile.*a2dp.*\bconnected\b/i.test(t) ||
+      /\bisconnected\(\)\s*true\b/i.test(text) ||
+      /\bconnectionstate[=:]\s*2\b/i.test(t) ||
+      /\bmconnectstate[=:]\s*2\b/i.test(t);
+    const strongOff =
+      /\bSTATE_DISCONNECTED\b/i.test(text) ||
+      /A2dpState:\s*disconnected/i.test(text) ||
+      /\bBOND_NONE\b/i.test(text) ||
+      /\bprofile.*a2dp.*\bdisconnected\b/i.test(t) ||
+      /\bisconnected\(\)\s*false\b/i.test(text) ||
+      /\bconnectionstate[=:]\s*0\b/i.test(t) ||
+      /\bmconnectstate[=:]\s*0\b/i.test(t);
+    if (strongOn && !strongOff) return true;
+    if (strongOff && !strongOn) return false;
+    return false;
+  }
+
+  /**
    * Connect/disconnect status for an already-paired MAC (best-effort from dumpsys). Does not pair.
    * @param {string} ip ADB target (same convention as adbCommand elsewhere)
    * @param {string} macNorm
@@ -294,13 +347,31 @@ class HardwareService {
    */
   async isBluetoothSpeakerConnectedForAudio(ip, macNorm) {
     const serial = HardwareService.ensureAdbTcpSerial(ip);
-    const parts = [
-      await this.adbCommand(serial, 'shell dumpsys bluetooth_manager'),
-      await this.adbCommand(serial, 'shell dumpsys bluetooth'),
-    ];
-    const text = parts.filter(Boolean).join('\n\n');
-    if (!text) return null;
-    return HardwareService.inferBluetoothAudioConnected(text, macNorm);
+    const full1 = await this.adbCommand(serial, 'shell dumpsys bluetooth_manager');
+    const full2 = await this.adbCommand(serial, 'shell dumpsys bluetooth');
+    const full3 = await this.adbCommand(serial, 'shell dumpsys media.bluetooth_a2dp');
+    const mergedFull = [full1, full2, full3].filter(Boolean).join('\n');
+    if (!mergedFull) return null;
+
+    const ctx1 = HardwareService.extractBluetoothMacContext(full1, macNorm);
+    const ctx2 = HardwareService.extractBluetoothMacContext(full2, macNorm);
+    const ctx3 = HardwareService.extractBluetoothMacContext(full3, macNorm);
+    const narrow = [ctx1, ctx2, ctx3].filter(Boolean).join('\n\n');
+
+    if (!narrow) {
+      if (/bonded|paired|device/i.test(mergedFull)) return false;
+      return null;
+    }
+
+    const loose = ['1', 'true', 'yes'].includes(
+      String(process.env.TV_BT_LOOSE_PARSE || '')
+        .trim()
+        .toLowerCase()
+    );
+    if (loose) {
+      return HardwareService.inferBluetoothAudioConnected(narrow, macNorm);
+    }
+    return HardwareService.inferBluetoothAudioConnectedStrict(narrow, macNorm);
   }
 
   /**

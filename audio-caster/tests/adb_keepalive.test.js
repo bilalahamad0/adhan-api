@@ -73,37 +73,52 @@ describe('AdbKeepAlive', () => {
 
   it('runs Bluetooth maintenance when ONLINE and TV_BT_SPEAKER_MAC is set', async () => {
     process.env.TV_BT_SPEAKER_MAC = 'AA:BB:CC:DD:EE:FF';
+    process.env.TV_BT_POST_CONNECT_WAIT_MS = '0';
     fakeHardware.isActuallyOn.mockResolvedValue(true);
     fakeHardware.getAdbDevices.mockResolvedValue(
       'List of devices attached\n1.2.3.4:5555\tdevice'
     );
     fakeHardware.checkScreenState.mockResolvedValue('ON');
-    fakeHardware.isBluetoothSpeakerConnectedForAudio.mockResolvedValue(false);
+    let btProbe = 0;
+    fakeHardware.isBluetoothSpeakerConnectedForAudio.mockImplementation(async () => {
+      btProbe += 1;
+      if (btProbe === 1) return false;
+      return true;
+    });
     fakeHardware.requestBluetoothSpeakerConnect.mockResolvedValue(true);
     await service.checkAndHeal();
     expect(fakeHardware.isBluetoothSpeakerConnectedForAudio).toHaveBeenCalledWith(
       '1.2.3.4',
       'AA:BB:CC:DD:EE:FF'
     );
-    expect(fakeHardware.requestBluetoothSpeakerConnect).toHaveBeenCalled();
+    expect(fakeHardware.requestBluetoothSpeakerConnect).toHaveBeenCalledTimes(1);
     delete process.env.TV_BT_SPEAKER_MAC;
+    delete process.env.TV_BT_POST_CONNECT_WAIT_MS;
   });
 
   it('attempts reconnect when Bluetooth state is unknown', async () => {
     process.env.TV_BT_SPEAKER_MAC = 'AA:BB:CC:DD:EE:FF';
+    process.env.TV_BT_POST_CONNECT_WAIT_MS = '0';
     fakeHardware.isActuallyOn.mockResolvedValue(true);
     fakeHardware.getAdbDevices.mockResolvedValue(
       'List of devices attached\n1.2.3.4:5555\tdevice'
     );
     fakeHardware.checkScreenState.mockResolvedValue('ON');
-    fakeHardware.isBluetoothSpeakerConnectedForAudio.mockResolvedValue(null);
+    let btProbe = 0;
+    fakeHardware.isBluetoothSpeakerConnectedForAudio.mockImplementation(async () => {
+      btProbe += 1;
+      if (btProbe === 1) return null;
+      return false;
+    });
     fakeHardware.requestBluetoothSpeakerConnect.mockResolvedValue(true);
     await service.checkAndHeal();
     expect(fakeHardware.requestBluetoothSpeakerConnect).toHaveBeenCalledWith(
       '1.2.3.4',
       'AA:BB:CC:DD:EE:FF'
     );
+    expect(fakeHardware.requestBluetoothSpeakerConnect).toHaveBeenCalledTimes(2);
     delete process.env.TV_BT_SPEAKER_MAC;
+    delete process.env.TV_BT_POST_CONNECT_WAIT_MS;
   });
 
   it('logBluetoothConfigSummary reports disabled when MAC missing', () => {

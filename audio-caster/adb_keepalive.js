@@ -80,7 +80,15 @@ class AdbKeepAlive {
     if (!mac) return;
 
     const connected = await this.hardware.isBluetoothSpeakerConnectedForAudio(this.targetIp, mac);
-    if (connected === true) return;
+    this.log(
+      `🔊 BT: dumpsys probe -> ${connected === true ? 'CONNECTED' : connected === false ? 'DISCONNECTED' : 'UNKNOWN'}`
+    );
+    if (connected === true && !['1', 'true', 'yes'].includes(String(process.env.TV_BT_ALWAYS_CONNECT || '').trim().toLowerCase())) {
+      return;
+    }
+    if (connected === true && ['1', 'true', 'yes'].includes(String(process.env.TV_BT_ALWAYS_CONNECT || '').trim().toLowerCase())) {
+      this.log('🔊 BT: TV_BT_ALWAYS_CONNECT set; sending connect nudge anyway.');
+    }
     if (connected === null) {
       this.log('🔊 BT: connection state unknown from dumpsys; attempting reconnect anyway.');
     }
@@ -94,6 +102,17 @@ class AdbKeepAlive {
     const requested = await this.hardware.requestBluetoothSpeakerConnect(this.targetIp, mac);
     if (!requested) {
       this.log('🔊 BT: reconnect command failed to execute (ADB shell command returned null).');
+    } else {
+      const delayMs = Math.max(0, parseInt(process.env.TV_BT_POST_CONNECT_WAIT_MS || '1500', 10));
+      if (delayMs > 0) await new Promise((r) => setTimeout(r, delayMs));
+      const after = await this.hardware.isBluetoothSpeakerConnectedForAudio(this.targetIp, mac);
+      this.log(
+        `🔊 BT: post-reconnect probe -> ${after === true ? 'CONNECTED' : after === false ? 'DISCONNECTED' : 'UNKNOWN'}`
+      );
+      if (after !== true) {
+        this.log('🔊 BT: retrying connect once more…');
+        await this.hardware.requestBluetoothSpeakerConnect(this.targetIp, mac);
+      }
     }
   }
 
@@ -195,6 +214,9 @@ class AdbKeepAlive {
       if (process.env.TV_BT_CONNECT_COMMAND && String(process.env.TV_BT_CONNECT_COMMAND).trim()) {
         this.log('🔊 BT: TV_BT_CONNECT_COMMAND is set (custom connect).');
       }
+      this.log(
+        '🔊 BT: Optional env: TV_BT_LOOSE_PARSE (legacy dumpsys), TV_BT_ALWAYS_CONNECT (nudge every cycle), TV_BT_POST_CONNECT_WAIT_MS.'
+      );
       return;
     }
 
