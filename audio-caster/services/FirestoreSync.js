@@ -18,7 +18,8 @@ class FirestoreSync {
       const raw = todayEntry.timings[p];
       if (raw == null) continue;
       const token = String(raw).trim().split(/\s+/)[0];
-      const m = token.match(/^(\d{1,2}):(\d{2})/);
+      // Minutes may be one or two digits from some API responses (e.g. 21:5).
+      const m = token.match(/^(\d{1,2}):(\d{1,2})/);
       if (!m) continue;
       const hh = String(Math.max(0, Math.min(23, parseInt(m[1], 10)))).padStart(2, '0');
       const mm = String(Math.max(0, Math.min(59, parseInt(m[2], 10)))).padStart(2, '0');
@@ -167,7 +168,9 @@ class FirestoreSync {
       ...(Object.keys(scheduledTimes).length > 0 ? { scheduledTimes } : {}),
     };
 
-    batch.set(db.collection('dailyMetrics').doc(date), metricsDoc);
+    // merge: true so a metrics write never drops fields written earlier in the same flow
+    // (e.g. scheduledTimes from ensureTodayScheduleOnFirestore) if this payload omits them.
+    batch.set(db.collection('dailyMetrics').doc(date), metricsDoc, { merge: true });
 
     batch.set(db.collection('dailyEvents').doc(date), {
       events,
