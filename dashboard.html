@@ -382,6 +382,18 @@ var db = null; // Set later if Firebase loads
 /** Canonical HH:mm from Pi (meta/prayerSchedule), same day as `date` in device TZ. */
 var _prayerScheduleCache = { date: null, times: {} };
 
+function firestoreDateToYyyyMmDd(val) {
+    if (val == null) return null;
+    if (typeof val === 'string') return val.slice(0, 10);
+    try {
+        if (typeof val.toDate === 'function') {
+            var d = val.toDate();
+            return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+        }
+    } catch (_) { /* ignore */ }
+    return null;
+}
+
 // --- Tab Switching ---
 document.querySelectorAll('.tab-btn').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -442,7 +454,10 @@ function attachListeners() {
             .onSnapshot(function(snap) {
                 if (snap.exists) {
                     var data = snap.data();
-                    _prayerScheduleCache = { date: data.date || null, times: data.times || {} };
+                    _prayerScheduleCache = {
+                        date: firestoreDateToYyyyMmDd(data.date),
+                        times: data.times || {},
+                    };
                 } else {
                     _prayerScheduleCache = { date: null, times: {} };
                 }
@@ -569,7 +584,11 @@ function getActiveDate() {
 function displayedPrayerTime(activeDate, prayer, dayData) {
     const d = dayData && dayData.prayers && dayData.prayers[prayer];
     if (d && d.scheduledTime) return d.scheduledTime;
-    if (_prayerScheduleCache.date === activeDate && _prayerScheduleCache.times && _prayerScheduleCache.times[prayer]) {
+    if (dayData && dayData.scheduledTimes && dayData.scheduledTimes[prayer]) {
+        return dayData.scheduledTimes[prayer];
+    }
+    var schedDate = _prayerScheduleCache.date;
+    if (schedDate === activeDate && _prayerScheduleCache.times && _prayerScheduleCache.times[prayer]) {
         return _prayerScheduleCache.times[prayer];
     }
     return null;

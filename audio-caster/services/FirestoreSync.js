@@ -1,3 +1,5 @@
+const fs = require('fs');
+const path = require('path');
 const DEBOUNCE_MS = 30000; // Min 30s between Firestore writes to conserve Pi CPU
 const WRITE_TIMEOUT_MS = 15000;
 
@@ -25,13 +27,63 @@ class FirestoreSync {
     return times;
   }
 
-  constructor(serviceKeyBase64, timezone) {
+  constructor(serviceKeyBase64, timezone, scheduleFilePath) {
     this._serviceKeyBase64 = serviceKeyBase64;
     this._timezone = timezone;
+    this._scheduleFilePath = scheduleFilePath || path.join(__dirname, '..', 'annual_schedule.json');
     this._db = null; // Lazy: firebase-admin loaded only on first write
     this._pendingTimer = null;
     this._pendingPayload = null;
     this._lastWriteMs = 0;
+  }
+
+  _resolveScheduleEntryForLuxonDate(dt) {
+    try {
+      if (!fs.existsSync(this._scheduleFilePath)) return null;
+      const annualData = JSON.parse(fs.readFileSync(this._scheduleFilePath, 'utf8'));
+      const monthData = annualData?.data?.[dt.month.toString()];
+      if (!Array.isArray(monthData)) return null;
+      return monthData.find((d) => parseInt(d?.date?.gregorian?.day, 10) === dt.day) || null;
+    } catch {
+      return null;
+    }
+  }
+
+  _getScheduledTimesForISODate(isoDate) {
+    const { DateTime } = require('luxon');
+    const dt = DateTime.fromISO(isoDate, { zone: this._timezone });
+    if (!dt.isValid) return {};
+    const entry = this._resolveScheduleEntryForLuxonDate(dt);
+    return FirestoreSync.extractPrayerTimesHHmm(entry);
+  }
+
+  /**
+   * Writes meta/prayerSchedule and merges scheduledTimes onto dailyMetrics/{date}
+   * so the dashboard shows all HH:mm even before every prayer has logged an event.
+   */
+  async ensureTodayScheduleOnFirestore(isoDate) {
+    const times = this._getScheduledTimesForISODate(isoDate);
+    if (Object.keys(times).length === 0) {
+      console.warn(`[FirestoreSync] No schedule times in file for ${isoDate}`);
+      return false;
+    }
+    const db = this._initFirestore();
+    if (!db) return false;
+    try {
+      await this.publishPrayerSchedule(isoDate, times);
+      await db.collection('dailyMetrics').doc(isoDate).set(
+        {
+          date: isoDate,
+          scheduledTimes: times,
+          scheduleUpdatedAt: new Date().toISOString(),
+        },
+        { merge: true },
+      );
+      return true;
+    } catch (e) {
+      console.error(`[FirestoreSync] ensureTodayScheduleOnFirestore failed: ${e.message}`);
+      return false;
+    }
   }
 
   _initFirestore() {
@@ -91,6 +143,7 @@ class FirestoreSync {
     try {
       const { DateTime } = require('luxon');
       const today = DateTime.now().setZone(this._timezone).toISODate();
+      await this.ensureTodayScheduleOnFirestore(today);
       await this.syncDate(logger, today, { updateLatest: true });
       this._lastWriteMs = Date.now();
     } catch (e) {
@@ -100,12 +153,15 @@ class FirestoreSync {
 
   async _writeDay(db, date, summary, events, { updateLatest = true } = {}) {
     const batch = db.batch();
-
-    batch.set(db.collection('dailyMetrics').doc(date), {
+    const scheduledTimes = this._getScheduledTimesForISODate(date);
+    const metricsDoc = {
       ...summary,
       date,
       updatedAt: new Date().toISOString(),
-    });
+      ...(Object.keys(scheduledTimes).length > 0 ? { scheduledTimes } : {}),
+    };
+
+    batch.set(db.collection('dailyMetrics').doc(date), metricsDoc);
 
     batch.set(db.collection('dailyEvents').doc(date), {
       events,

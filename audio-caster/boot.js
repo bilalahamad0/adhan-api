@@ -58,7 +58,8 @@ const playbackLogger = new PlaybackLogger(
 );
 const firestoreSync = new FirestoreSync(
   process.env.FIREBASE_SERVICE_KEY,
-  CONFIG.timezone
+  CONFIG.timezone,
+  path.join(__dirname, 'annual_schedule.json'),
 );
 
 // THE SCHEDULER: Now standalone and self-sufficient
@@ -309,9 +310,7 @@ async function bootSystem() {
   async function refreshScheduleAndPublishFirestore() {
     await scheduler.scheduleToday();
     const today = DateTime.now().setZone(CONFIG.timezone).toISODate();
-    const entry = scheduler.resolveTodayScheduleEntry();
-    const times = FirestoreSync.extractPrayerTimesHHmm(entry);
-    await firestoreSync.publishPrayerSchedule(today, times);
+    await firestoreSync.ensureTodayScheduleOnFirestore(today);
   }
 
   await refreshScheduleAndPublishFirestore();
