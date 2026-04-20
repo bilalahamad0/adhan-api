@@ -415,17 +415,37 @@ class CoreScheduler {
                             if (this.playbackLogger) this.playbackLogger.recordPlaybackStarted(prayerName, targetTimeObj);
                             safetyTimer = setTimeout(cleanup, 600000);
                             let lastState = '';
+                            const adhanPlayStartMs = Date.now();
                             const adhanStatusHandler = (s) => {
-                                if (currentPhase !== 'ADHAN') return; 
-                                if (s && (s.playerState !== lastState || s.idleReason)) { 
-                                    log(`📊 Device Status: ${s.playerState}${s.idleReason ? ' (Idle Reason: ' + s.idleReason + ')' : ''}`); 
-                                    lastState = s.playerState; 
+                                if (currentPhase !== 'ADHAN') return;
+                                // Never treat a missing status object as "finished" — chromecast-api can emit null/empty updates.
+                                if (!s) return;
+                                const prevState = lastState;
+                                if (s.playerState !== lastState || s.idleReason) {
+                                    log(`📊 Device Status: ${s.playerState}${s.idleReason ? ' (Idle Reason: ' + s.idleReason + ')' : ''}`);
+                                    lastState = s.playerState;
                                 }
-                                if (!s || s.playerState === 'IDLE') { 
-                                    log(`⏹️ Adhan Finished. (Final State: ${s ? s.playerState : 'UNKNOWN'}, Reason: ${s ? s.idleReason : 'N/A'})`); 
-                                    device.removeListener('status', adhanStatusHandler); 
-                                    cleanup(); 
+                                if (s.playerState !== 'IDLE') return;
+                                const reason = (s.idleReason || '').toString();
+                                const terminal = ['FINISHED', 'ERROR', 'INTERRUPTED', 'CANCELLED'].includes(reason);
+                                const implicitEnd = !reason && prevState === 'PLAYING';
+                                if (!terminal && !implicitEnd) {
+                                    if (reason || prevState) {
+                                        log(`📊 Ignoring IDLE (idleReason="${reason || 'none'}", prevState=${prevState || 'none'})`);
+                                    }
+                                    return;
                                 }
+                                const elapsedSec = Math.round((Date.now() - adhanPlayStartMs) / 1000);
+                                if (elapsedSec < 20 && (reason === 'FINISHED' || implicitEnd)) {
+                                    log(
+                                        `⚠️ Adhan FINISHED after only ~${elapsedSec}s — if that is wrong, check ${finalVideoFile} duration (ffprobe) and HTTP serving; adb-keeper Bluetooth logic does not affect Cast.`
+                                    );
+                                }
+                                log(
+                                    `⏹️ Adhan Finished. (Final State: ${s.playerState}, Reason: ${reason || (implicitEnd ? 'implicit-after-PLAYING' : 'N/A')})`
+                                );
+                                device.removeListener('status', adhanStatusHandler);
+                                cleanup();
                             };
                             device.on('status', adhanStatusHandler);
                             device.on('finished', () => { if (currentPhase === 'ADHAN') { log(`⏹️ Adhan Finished (via Finished event).`); cleanup(); } });
