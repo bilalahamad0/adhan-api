@@ -189,13 +189,17 @@ class CoreScheduler {
             }).catch(e => log(`⚠️ Dua generation warning: ${e.message}`));
 
             const audioDuration = await mediaService.getMediaDuration(audioPath);
-            const minAudioExpected = require('./MediaService').getMinExpectedDuration(prayerName);
+            const MediaServiceCls = require('./MediaService');
+            const nominalSec = MediaServiceCls.getNominalAdhanSeconds(prayerName);
+            const minAudioExpected = MediaServiceCls.getMinExpectedDuration(prayerName);
             if (audioDuration === null) {
                 log(`⚠️ Could not read audio duration for ${audioFileName}. Proceeding with encoding anyway.`);
             } else if (audioDuration < minAudioExpected) {
-                throw new Error(`SMART_RECOVERY: Audio ${audioFileName} is only ${audioDuration.toFixed(1)}s (expected >${minAudioExpected}s). File may be corrupt.`);
+                throw new Error(
+                    `SMART_RECOVERY: Audio ${audioFileName} is only ${audioDuration.toFixed(1)}s (nominal ${nominalSec}s, pre-encode floor ${minAudioExpected}s). File may be corrupt.`
+                );
             } else {
-                log(`🎵 Audio verified: ${audioFileName} (${audioDuration.toFixed(1)}s)`);
+                log(`🎵 Audio verified: ${audioFileName} (${audioDuration.toFixed(1)}s, nominal ${nominalSec}s)`);
             }
 
             log(`🎬 Starting Video Encoding...`);
@@ -217,9 +221,11 @@ class CoreScheduler {
             }
 
             const videoDuration = await mediaService.getMediaDuration(outputVideoPath);
-            const minExpected = require('./MediaService').getMinExpectedDuration(prayerName);
-            if (videoDuration !== null && videoDuration < minExpected) {
-                log(`⚠️ Video duration ${videoDuration.toFixed(1)}s is below minimum ${minExpected}s for ${prayerName}. Switching to fallback.`);
+            const minVideoExpected = MediaServiceCls.getMinExpectedDuration(prayerName);
+            if (videoDuration !== null && videoDuration < minVideoExpected) {
+                log(
+                    `⚠️ Video duration ${videoDuration.toFixed(1)}s is below pre-encode floor ${minVideoExpected}s (nominal ${nominalSec}s) for ${prayerName}. Switching to fallback.`
+                );
                 this.sessionStatus.set(prayerName, 'RECOVERING');
                 if (this.playbackLogger) {
                     this.playbackLogger.recordEncodingFailed(prayerName, 'SHORT_VIDEO');
@@ -465,11 +471,14 @@ class CoreScheduler {
                                     return;
                                 }
                                 const elapsedSec = Math.round((Date.now() - adhanPlayStartMs) / 1000);
-                                const minExpected = require('./MediaService').getMinExpectedDuration(prayerName);
-                                const tooShort = elapsedSec < Math.min(minExpected * 0.5, 25);
-                                if (tooShort && (reason === 'FINISHED' || implicitEnd)) {
+                                const MS = require('./MediaService');
+                                const nominal = MS.getNominalAdhanSeconds(prayerName);
+                                const playbackTooShortSec = MS.getPlaybackTooShortThresholdSeconds(prayerName);
+                                const tooShort =
+                                    (reason === 'FINISHED' || implicitEnd) && elapsedSec < playbackTooShortSec;
+                                if (tooShort) {
                                     log(
-                                        `❌ Adhan FAILED: FINISHED after only ~${elapsedSec}s (expected >${minExpected}s). Video file or stream is corrupt/truncated.`
+                                        `❌ Adhan FAILED: FINISHED after ~${elapsedSec}s (threshold <${playbackTooShortSec}s = half of nominal ${nominal}s for ${prayerName}).`
                                     );
                                     if (this.playbackLogger) this.playbackLogger.recordFailed(prayerName, 'SHORT_PLAYBACK');
                                 } else {

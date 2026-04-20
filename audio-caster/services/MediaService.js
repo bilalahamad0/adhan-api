@@ -143,13 +143,40 @@ class MediaService {
     });
   }
 
+  /** Nominal full Adhan audio length (seconds): Fajr ~4 min, other prayers ~2 min */
+  static NOMINAL_ADHAN_SEC_FAJR = 4 * 60;
+  static NOMINAL_ADHAN_SEC_REGULAR = 2 * 60;
+
   /**
-   * Minimum expected Adhan video durations (seconds). Fajr is longer.
+   * Nominal duration for this prayer (exact schedule intent).
+   * @param {string} prayerName
+   * @returns {number}
+   */
+  static getNominalAdhanSeconds(prayerName) {
+    return (prayerName || '').toLowerCase() === 'fajr'
+      ? MediaService.NOMINAL_ADHAN_SEC_FAJR
+      : MediaService.NOMINAL_ADHAN_SEC_REGULAR;
+  }
+
+  /**
+   * Pre-encoding floor (seconds): ffprobe must be at least this long or we treat source/encode as bad.
+   * Slightly under nominal to allow MP3 rounding, ffprobe variance, and the ~1.5s adelay in the graph
+   * (encoded MP4 can be a few seconds longer than raw audio).
+   * @param {string} prayerName
    */
   static getMinExpectedDuration(prayerName) {
-    const name = (prayerName || '').toLowerCase();
-    if (name === 'fajr') return 180; // ~3-4 min, be conservative
-    return 45; // Regular adhans are typically 60-90s; 45s is safe floor
+    const nominal = MediaService.getNominalAdhanSeconds(prayerName);
+    const slack = nominal === MediaService.NOMINAL_ADHAN_SEC_FAJR ? 12 : 10;
+    return nominal - slack;
+  }
+
+  /**
+   * Runtime: if Cast reports FINISHED (or implicit end) with wall time under this many seconds, treat as failure.
+   * Set to one half of nominal (2 min → 60s, 4 min → 120s).
+   * @param {string} prayerName
+   */
+  static getPlaybackTooShortThresholdSeconds(prayerName) {
+    return Math.floor(MediaService.getNominalAdhanSeconds(prayerName) / 2);
   }
 }
 

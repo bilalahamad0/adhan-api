@@ -69,4 +69,20 @@ describe('MediaService', () => {
     const size = service.getFileSizeMB('foo.mp4');
     expect(size).toBe('0.00');
   });
+
+  it('nominal adhan: Fajr 4min, others 2min', () => {
+    expect(MediaService.getNominalAdhanSeconds('Fajr')).toBe(240);
+    expect(MediaService.getNominalAdhanSeconds('Isha')).toBe(120);
+    expect(MediaService.getNominalAdhanSeconds('Maghrib')).toBe(120);
+  });
+
+  it('pre-encode floor is slightly below nominal', () => {
+    expect(MediaService.getMinExpectedDuration('Fajr')).toBe(228);
+    expect(MediaService.getMinExpectedDuration('Dhuhr')).toBe(110);
+  });
+
+  it('playback too-short threshold is half nominal (rounded down)', () => {
+    expect(MediaService.getPlaybackTooShortThresholdSeconds('Fajr')).toBe(120);
+    expect(MediaService.getPlaybackTooShortThresholdSeconds('Asr')).toBe(60);
+  });
 });
