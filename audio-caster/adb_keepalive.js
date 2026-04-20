@@ -82,8 +82,7 @@ class AdbKeepAlive {
     const connected = await this.hardware.isBluetoothSpeakerConnectedForAudio(this.targetIp, mac);
     if (connected === true) return;
     if (connected === null) {
-      this.log('🔊 BT: could not read connection state from dumpsys; skipping this cycle.');
-      return;
+      this.log('🔊 BT: connection state unknown from dumpsys; attempting reconnect anyway.');
     }
 
     const now = Date.now();
@@ -92,7 +91,10 @@ class AdbKeepAlive {
     this._lastBtConnectAttemptMs = now;
 
     this.log(`🔊 BT: speaker not connected (${mac}); requesting connect via ADB…`);
-    await this.hardware.requestBluetoothSpeakerConnect(this.targetIp, mac);
+    const requested = await this.hardware.requestBluetoothSpeakerConnect(this.targetIp, mac);
+    if (!requested) {
+      this.log('🔊 BT: reconnect command failed to execute (ADB shell command returned null).');
+    }
   }
 
   stopService() {
@@ -179,9 +181,35 @@ class AdbKeepAlive {
     }
   }
 
+  /**
+   * Always logs once at startup so Pi/production issues are obvious without ripgrep.
+   */
+  logBluetoothConfigSummary() {
+    const raw = process.env.TV_BT_SPEAKER_MAC;
+    const mac = HardwareService.normalizeBluetoothMac(raw || '');
+    const throttleMs = parseInt(process.env.TV_BT_RECONNECT_MIN_MS || '90000', 10);
+    const throttle = Number.isFinite(throttleMs) && throttleMs >= 0 ? throttleMs : 90000;
+
+    if (mac) {
+      this.log(`🔊 BT: Auto-reconnect ENABLED for ${mac} (reconnect throttle ${throttle}ms).`);
+      if (process.env.TV_BT_CONNECT_COMMAND && String(process.env.TV_BT_CONNECT_COMMAND).trim()) {
+        this.log('🔊 BT: TV_BT_CONNECT_COMMAND is set (custom connect).');
+      }
+      return;
+    }
+
+    this.log(
+      '🔊 BT: Auto-reconnect DISABLED — set TV_BT_SPEAKER_MAC in audio-caster/.env (paired speaker Bluetooth MAC), then: pm2 restart adb-keeper --update-env'
+    );
+    if (raw != null && String(raw).trim() !== '') {
+      this.log(`🔊 BT: TV_BT_SPEAKER_MAC is not a valid 12-hex MAC (value: "${String(raw).trim()}").`);
+    }
+  }
+
   startService() {
     this.log(`🚀 Adhan-Smart KeepAlive Starting. Target: ${this.targetIp}`);
-    
+    this.logBluetoothConfigSummary();
+
     // Listen for beacons (Passive discovery)
     this.discovery.on('device-awake', () => {
       if (this.state === 'SLEEPING' || this.state === 'SAFETY_PULSE') {

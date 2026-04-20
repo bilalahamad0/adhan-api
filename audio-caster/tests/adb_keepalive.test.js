@@ -88,4 +88,41 @@ describe('AdbKeepAlive', () => {
     expect(fakeHardware.requestBluetoothSpeakerConnect).toHaveBeenCalled();
     delete process.env.TV_BT_SPEAKER_MAC;
   });
+
+  it('attempts reconnect when Bluetooth state is unknown', async () => {
+    process.env.TV_BT_SPEAKER_MAC = 'AA:BB:CC:DD:EE:FF';
+    fakeHardware.isActuallyOn.mockResolvedValue(true);
+    fakeHardware.getAdbDevices.mockResolvedValue(
+      'List of devices attached\n1.2.3.4:5555\tdevice'
+    );
+    fakeHardware.checkScreenState.mockResolvedValue('ON');
+    fakeHardware.isBluetoothSpeakerConnectedForAudio.mockResolvedValue(null);
+    fakeHardware.requestBluetoothSpeakerConnect.mockResolvedValue(true);
+    await service.checkAndHeal();
+    expect(fakeHardware.requestBluetoothSpeakerConnect).toHaveBeenCalledWith(
+      '1.2.3.4',
+      'AA:BB:CC:DD:EE:FF'
+    );
+    delete process.env.TV_BT_SPEAKER_MAC;
+  });
+
+  it('logBluetoothConfigSummary reports disabled when MAC missing', () => {
+    delete process.env.TV_BT_SPEAKER_MAC;
+    service.logBluetoothConfigSummary();
+    expect(service.log).toHaveBeenCalledWith(
+      expect.stringMatching(/🔊 BT: Auto-reconnect DISABLED/),
+    );
+  });
+
+  it('does not run Bluetooth reconnect when TV_BT_SPEAKER_MAC is missing', async () => {
+    delete process.env.TV_BT_SPEAKER_MAC;
+    fakeHardware.isActuallyOn.mockResolvedValue(true);
+    fakeHardware.getAdbDevices.mockResolvedValue(
+      'List of devices attached\n1.2.3.4:5555\tdevice'
+    );
+    fakeHardware.checkScreenState.mockResolvedValue('ON');
+    await service.checkAndHeal();
+    expect(fakeHardware.isBluetoothSpeakerConnectedForAudio).not.toHaveBeenCalled();
+    expect(fakeHardware.requestBluetoothSpeakerConnect).not.toHaveBeenCalled();
+  });
 });
