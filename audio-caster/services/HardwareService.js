@@ -375,9 +375,29 @@ class HardwareService {
   }
 
   /**
+   * Parses TV_BT_EXTRA_CONNECT_COMMANDS: newline- or || -separated adb "shell …" fragments (optional "shell " prefix).
+   * Each line may include `{MAC}`.
+   * @param {string|undefined} raw
+   * @param {string} macNorm
+   * @returns {string[]}
+   */
+  static parseExtraBluetoothConnectCommands(raw, macNorm) {
+    if (!raw || typeof raw !== 'string') return [];
+    const sub = (s) => s.replace(/\{MAC\}/gi, macNorm).trim();
+    return raw
+      .split(/\|\||\r?\n/)
+      .map((s) => sub(s))
+      .filter(Boolean)
+      .map((line) => (line.startsWith('shell ') ? line : `shell ${line}`));
+  }
+
+  /**
    * Requests reconnect for an already-paired speaker only (shell connect). No pairing flow.
-   * Order: TV_BT_CONNECT_COMMAND → TV_BT_SPEAKER_NAME (AndroidTVBluetooth broadcast) → stock cmd connect → TV_BT_SVC_RESET.
-   * Sony BRAVIA often reports "Can't find service: bluetooth_adapter"; use TV_BT_SVC_RESET=1 or a custom shell line.
+   * Order: TV_BT_CONNECT_COMMAND → stock `cmd` connect variants (AOSP names differ by release/OEM) →
+   * TV_BT_EXTRA_CONNECT_COMMANDS → optional TV_BT_SVC_RESET (`svc bluetooth` radio bounce).
+   * Many retail TVs (including some Sony BRAVIA builds) ship **no** `cmd bluetooth_*` implementation; in that case
+   * only `dumpsys` status, `svc bluetooth`, or a device-specific `TV_BT_CONNECT_COMMAND` from `adb shell cmd -l` /
+   * `cmd <name> help` on *your* firmware can work — there is no single cross-OEM MAC connect API exposed to shell.
    * @param {string} ip
    * @param {string} macNorm
    * @returns {Promise<boolean>} true if a command ran without immediate ADB failure (connection is verified separately)
@@ -390,20 +410,33 @@ class HardwareService {
       return out !== null;
     }
 
-    const speakerName = process.env.TV_BT_SPEAKER_NAME && String(process.env.TV_BT_SPEAKER_NAME).trim();
-    if (speakerName) {
-      const safeName = speakerName.replace(/"/g, "'");
-      const broadcastCmd = `shell am broadcast -a com.saihgupr.btcontrol.ACTION_CONNECT -n com.saihgupr.btcontrol/.BluetoothControlReceiver -e name "${safeName}"`;
-      const out = await this.adbCommand(serial, broadcastCmd);
-      if (out !== null) return true;
+    const enableNudges = [
+      'shell cmd bluetooth_adapter enable',
+      'shell cmd bluetooth enable',
+      'shell cmd bluetooth_manager enable',
+    ];
+    for (const cmd of enableNudges) {
+      await this.adbCommand(serial, cmd);
     }
 
     const attempts = [
+      `shell cmd bluetooth connect ${macNorm}`,
+      `shell cmd bluetooth connect-a2dp ${macNorm}`,
+      `shell cmd bluetooth connect_a2dp ${macNorm}`,
       `shell cmd bluetooth_adapter connect ${macNorm}`,
       `shell cmd bluetooth_manager connect ${macNorm}`,
       `shell cmd bt_adapter connect ${macNorm}`,
     ];
     for (const cmd of attempts) {
+      const out = await this.adbCommand(serial, cmd);
+      if (out !== null) return true;
+    }
+
+    const extras = HardwareService.parseExtraBluetoothConnectCommands(
+      process.env.TV_BT_EXTRA_CONNECT_COMMANDS,
+      macNorm
+    );
+    for (const cmd of extras) {
       const out = await this.adbCommand(serial, cmd);
       if (out !== null) return true;
     }

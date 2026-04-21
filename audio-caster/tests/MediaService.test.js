@@ -41,6 +41,7 @@ describe('MediaService', () => {
     const mockFFmpeg = {
       input: jest.fn().mockReturnThis(),
       inputOptions: jest.fn().mockReturnThis(),
+      complexFilter: jest.fn().mockReturnThis(),
       videoCodec: jest.fn().mockReturnThis(),
       audioCodec: jest.fn().mockReturnThis(),
       audioFrequency: jest.fn().mockReturnThis(),
@@ -53,7 +54,8 @@ describe('MediaService', () => {
     };
     ffmpeg.mockImplementation(() => mockFFmpeg);
 
-    const result = await service.encodeVideoFromImageAndAudio('img.jpg', 'aud.mp3', 'out.mp4');
+    const { promise } = service.encodeVideoFromImageAndAudio('img.jpg', 'aud.mp3', 'out.mp4');
+    const result = await promise;
     expect(result).toBe('out.mp4');
     expect(mockFFmpeg.save).toHaveBeenCalledWith('out.mp4');
   });
@@ -84,5 +86,13 @@ describe('MediaService', () => {
   it('playback too-short threshold is half nominal (rounded down)', () => {
     expect(MediaService.getPlaybackTooShortThresholdSeconds('Fajr')).toBe(120);
     expect(MediaService.getPlaybackTooShortThresholdSeconds('Asr')).toBe(60);
+  });
+
+  it('encoding timeout scales with audio length (Fajr vs regular)', () => {
+    expect(MediaService.getEncodingTimeoutMs('Fajr', 240)).toBe(1_050_000);
+    expect(MediaService.getEncodingTimeoutMs('Fajr', 200)).toBe(890_000);
+    expect(MediaService.getEncodingTimeoutMs('Dhuhr', 120)).toBe(570_000);
+    expect(MediaService.getEncodingTimeoutMs('Dhuhr', null)).toBe(570_000);
+    expect(MediaService.getEncodingTimeoutMs('Fajr', 400)).toBe(25 * 60 * 1000);
   });
 });

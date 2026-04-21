@@ -111,6 +111,68 @@ async function bootSystem() {
     }
   });
 
+  app.post('/api/trigger/prayer', async (req, res) => {
+    try {
+      const rawPrayer = String(req.query.prayer || req.body?.prayer || '').trim().toLowerCase();
+      const allowed = ['fajr', 'dhuhr', 'asr', 'maghrib', 'isha'];
+      if (!allowed.includes(rawPrayer)) {
+        res.status(400).json({ error: 'Invalid prayer. Use fajr|dhuhr|asr|maghrib|isha' });
+        return;
+      }
+
+      const prayerName = rawPrayer.charAt(0).toUpperCase() + rawPrayer.slice(1);
+      const schedulePath = path.join(__dirname, 'annual_schedule.json');
+      if (!require('fs').existsSync(schedulePath)) {
+        res.status(500).json({ error: 'annual_schedule.json missing' });
+        return;
+      }
+
+      const annualData = JSON.parse(require('fs').readFileSync(schedulePath));
+      const today = DateTime.now().setZone(CONFIG.timezone);
+      const monthData = annualData?.data?.[today.month.toString()];
+      const todayEntry = Array.isArray(monthData)
+        ? monthData.find((d) => parseInt(d?.date?.gregorian?.day, 10) === today.day)
+        : null;
+      if (!todayEntry) {
+        res.status(500).json({ error: 'No schedule entry found for today' });
+        return;
+      }
+
+      const timing = String(todayEntry?.timings?.[prayerName] || '').split(' ')[0];
+      const [hourStr, minuteStr] = timing.split(':');
+      const hour = parseInt(hourStr, 10);
+      const minute = parseInt(minuteStr, 10);
+      if (!Number.isFinite(hour) || !Number.isFinite(minute)) {
+        res.status(500).json({ error: `Invalid schedule time for ${prayerName}: ${timing}` });
+        return;
+      }
+
+      const scheduledPrayerTime = today.set({ hour, minute, second: 0, millisecond: 0 });
+      const audioKey = prayerName === 'Fajr' ? CONFIG.audio.fajrCurrent : CONFIG.audio.regularCurrent;
+      const audioFile = `${audioKey}.mp3`;
+
+      // Immediate production trigger while preserving scheduled prayer time in logs/dashboard.
+      const immediateTargetTime = {
+        toFormat: (fmt) => scheduledPrayerTime.toFormat(fmt),
+        toMillis: () => Date.now(),
+      };
+
+      scheduler.executePreFlightAndCast(prayerName, audioFile, immediateTargetTime, todayEntry)
+        .catch((e) => console.error('[manual-trigger] Execution failed:', e.message));
+
+      res.status(202).json({
+        status: 'triggered',
+        mode: 'production-manual',
+        prayer: prayerName,
+        scheduledTime: scheduledPrayerTime.toFormat('HH:mm'),
+        audioFile,
+        targetVolume: CONFIG.device.targetVolume,
+      });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   app.post('/api/metrics/sync', async (req, res) => {
     try {
       await firestoreSync.forceSync(playbackLogger);

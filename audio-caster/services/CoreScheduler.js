@@ -26,6 +26,54 @@ class CoreScheduler {
         this._scheduledJobs = [];
     }
 
+    async discoverDeviceByName(deviceName, log, prayerName) {
+        return new Promise((resolve) => {
+            const totalTimeoutMs = 120000;
+            const scannerCycleMs = 25000;
+            const startMs = Date.now();
+            let resolved = false;
+            let scanner = null;
+            let cycleTimer = null;
+            let hardTimeout = null;
+
+            const finish = (device) => {
+                if (resolved) return;
+                resolved = true;
+                if (cycleTimer) clearInterval(cycleTimer);
+                if (hardTimeout) clearTimeout(hardTimeout);
+                try {
+                    if (scanner && typeof scanner.destroy === 'function') scanner.destroy();
+                } catch (_) { /* ignore */ }
+                resolve(device || null);
+            };
+
+            const startScanner = () => {
+                try {
+                    if (scanner && typeof scanner.destroy === 'function') scanner.destroy();
+                } catch (_) { /* ignore */ }
+
+                scanner = new ChromecastAPI();
+                scanner.on('device', (device) => {
+                    if (device && device.friendlyName === deviceName) {
+                        log(`📡 Device Discovered & Cached: ${device.friendlyName}`);
+                        if (this.playbackLogger) this.playbackLogger.recordDeviceDiscovered(prayerName, device.friendlyName);
+                        finish(device);
+                    }
+                });
+            };
+
+            startScanner();
+            cycleTimer = setInterval(() => {
+                if (resolved) return;
+                const elapsedSec = Math.floor((Date.now() - startMs) / 1000);
+                log(`⏳ Still searching for ${deviceName}... (${elapsedSec}s elapsed)`);
+                startScanner();
+            }, scannerCycleMs);
+
+            hardTimeout = setTimeout(() => finish(null), totalTimeoutMs);
+        });
+    }
+
     resolveTodayScheduleEntry() {
         try {
             if (!fs.existsSync(this.scheduleFilePath)) return null;
@@ -204,10 +252,14 @@ class CoreScheduler {
 
             log(`🎬 Starting Video Encoding...`);
             const { promise: encodingPromise, abort: abortEncoding } = mediaService.encodeVideoFromImageAndAudio(imgPath, audioPath, outputVideoPath, weatherCode);
-            
-            const timeoutPromise = new Promise((_, reject) => 
-                setTimeout(() => reject(new Error('Encoding Timeout')), 60000)
-            );
+
+            const encodeTimeoutMs = MediaServiceCls.getEncodingTimeoutMs(prayerName, audioDuration);
+            log(`⏱️ Encode timeout: ${Math.round(encodeTimeoutMs / 1000)}s (audio ${audioDuration != null ? `${audioDuration.toFixed(1)}s` : 'unknown'})`);
+
+            let encodeTimeoutId;
+            const timeoutPromise = new Promise((_, reject) => {
+                encodeTimeoutId = setTimeout(() => reject(new Error('Encoding Timeout')), encodeTimeoutMs);
+            });
 
             try {
                 await Promise.race([encodingPromise, timeoutPromise]);
@@ -215,9 +267,13 @@ class CoreScheduler {
                 if (err.message === 'Encoding Timeout') {
                     abortEncoding();
                     this.sessionStatus.set(prayerName, 'RECOVERING');
-                    throw new Error('SMART_RECOVERY: Encoding hung. Switching to fallback.');
+                    throw new Error(
+                        `SMART_RECOVERY: Encoding exceeded ${Math.round(encodeTimeoutMs / 1000)}s (not necessarily hung — host may be CPU-bound). Switching to fallback.`
+                    );
                 }
                 throw err;
+            } finally {
+                clearTimeout(encodeTimeoutId);
             }
 
             const videoDuration = await mediaService.getMediaDuration(outputVideoPath);
@@ -281,15 +337,7 @@ class CoreScheduler {
 
         log(`📡 Starting Device Discovery (post-wait)...`);
         if (this.playbackLogger) this.playbackLogger.recordDiscoveryStart(prayerName);
-        const scanner = new ChromecastAPI();
-        let discoveredDevice = null;
-        scanner.on('device', (device) => {
-            if (device.friendlyName === CONFIG.device.name && !discoveredDevice) {
-                discoveredDevice = device;
-                log(`📡 Device Discovered & Cached: ${device.friendlyName}`);
-                if (this.playbackLogger) this.playbackLogger.recordDeviceDiscovered(prayerName, device.friendlyName);
-            }
-        });
+        const discoveredDevice = await this.discoverDeviceByName(CONFIG.device.name, log, prayerName);
 
         let finalVideoFile = `${prayerName.toLowerCase()}.mp4`;
         const castUrl = `http://${localIp}:${CONFIG.serverPort}/images/generated/${finalVideoFile}?t=${Date.now()}`;
@@ -327,6 +375,7 @@ class CoreScheduler {
         let safetyTimer = null;
         let originalVolume = null;
         let currentPhase = 'ADHAN';
+        let skipDua = false;
 
         const cleanup = async () => {
             if (isCleanedUp) return;
@@ -334,7 +383,17 @@ class CoreScheduler {
             if (currentPhase === 'ADHAN') {
                 if (safetyTimer) clearTimeout(safetyTimer);
 
-                if (!adhanDevice || typeof adhanDevice.play !== 'function') {
+                if (skipDua) {
+                    log(`⏭️ Skipping Dua due to failed/aborted Adhan playback.`);
+                    currentPhase = 'DONE';
+                    cleanup();
+                    return;
+                }
+
+                const playFn = adhanDevice && typeof adhanDevice.play === 'function'
+                    ? adhanDevice.play.bind(adhanDevice)
+                    : null;
+                if (!playFn) {
                     log(`⚠️ No device connected -- skipping Dua, proceeding to cleanup.`);
                     currentPhase = 'DONE';
                     cleanup();
@@ -351,7 +410,7 @@ class CoreScheduler {
                 };
                 log(`🤲 Casting Pre-generated Dua: ${duaUrl}`);
                 this.sessionStatus.set(prayerName, 'DUA');
-                adhanDevice.play(media, (err) => {
+                playFn(media, (err) => {
                     if (err) {
                         log(`⚠️ Dua Play Error: ${err.message}`);
                         currentPhase = 'DONE';
@@ -463,9 +522,19 @@ class CoreScheduler {
                                 }
                                 if (s.playerState !== 'IDLE') return;
                                 const reason = (s.idleReason || '').toString();
-                                const terminal = ['FINISHED', 'ERROR', 'INTERRUPTED', 'CANCELLED'].includes(reason);
+                                const terminalSuccess = ['FINISHED'].includes(reason);
                                 const implicitEnd = !reason && prevState === 'PLAYING';
-                                if (!terminal && !implicitEnd) {
+                                const terminalFailure = ['ERROR', 'INTERRUPTED', 'CANCELLED'].includes(reason);
+                                if (terminalFailure) {
+                                    skipDua = true;
+                                    log(`❌ Adhan FAILED: Receiver ended with ${reason}.`);
+                                    if (this.playbackLogger) this.playbackLogger.recordFailed(prayerName, `CAST_${reason}`);
+                                    device.removeListener('status', adhanStatusHandler);
+                                    currentPhase = 'DONE';
+                                    cleanup();
+                                    return;
+                                }
+                                if (!terminalSuccess && !implicitEnd) {
                                     if (reason || prevState) {
                                         log(`📊 Ignoring IDLE (idleReason="${reason || 'none'}", prevState=${prevState || 'none'})`);
                                     }
@@ -476,12 +545,14 @@ class CoreScheduler {
                                 const nominal = MS.getNominalAdhanSeconds(prayerName);
                                 const playbackTooShortSec = MS.getPlaybackTooShortThresholdSeconds(prayerName);
                                 const tooShort =
-                                    (reason === 'FINISHED' || implicitEnd) && elapsedSec < playbackTooShortSec;
+                                    (terminalSuccess || implicitEnd) && elapsedSec < playbackTooShortSec;
                                 if (tooShort) {
+                                    skipDua = true;
                                     log(
                                         `❌ Adhan FAILED: FINISHED after ~${elapsedSec}s (threshold <${playbackTooShortSec}s = half of nominal ${nominal}s for ${prayerName}).`
                                     );
                                     if (this.playbackLogger) this.playbackLogger.recordFailed(prayerName, 'SHORT_PLAYBACK');
+                                    currentPhase = 'DONE';
                                 } else {
                                     log(
                                         `⏹️ Adhan Finished. (Final State: ${s.playerState}, Reason: ${reason || (implicitEnd ? 'implicit-after-PLAYING' : 'N/A')}, elapsed: ${elapsedSec}s)`
@@ -500,23 +571,20 @@ class CoreScheduler {
 
         if (discoveredDevice) {
             startPlayback(discoveredDevice);
-        } else {
-            log(`⏳ Still searching for ${CONFIG.device.name}...`);
-            scanner.on('device', (device) => {
-                if (device.friendlyName === CONFIG.device.name) startPlayback(device);
-            });
-            setTimeout(() => {
-                if (!adhanDevice) {
-                    log(`❌ Discovery Timeout: Speaker ${CONFIG.device.name} not found.`);
-                    try {
-                        if (scanner && typeof scanner.destroy === 'function') scanner.destroy();
-                    } catch (_) { /* ignore */ }
-                    if (this.playbackLogger) this.playbackLogger.recordFailed(prayerName, 'DISCOVERY_TIMEOUT');
-                    this.activeRuns.delete(prayerName);
-                    cleanup();
-                }
-            }, 60000); 
+            return;
         }
+
+        log(`⚠️ Discovery window expired for ${CONFIG.device.name}. Retrying one final short pass...`);
+        const retryDevice = await this.discoverDeviceByName(CONFIG.device.name, log, prayerName);
+        if (retryDevice) {
+            startPlayback(retryDevice);
+            return;
+        }
+
+        log(`❌ Discovery Timeout: Speaker ${CONFIG.device.name} not found after retries.`);
+        if (this.playbackLogger) this.playbackLogger.recordFailed(prayerName, 'DISCOVERY_TIMEOUT');
+        this.activeRuns.delete(prayerName);
+        cleanup();
     }
 
     /**

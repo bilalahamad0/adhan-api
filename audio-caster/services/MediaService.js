@@ -178,6 +178,21 @@ class MediaService {
   static getPlaybackTooShortThresholdSeconds(prayerName) {
     return Math.floor(MediaService.getNominalAdhanSeconds(prayerName) / 2);
   }
+
+  /**
+   * Wall-clock cap for ffmpeg encode (libx264 + weather overlay). Fajr runs ~4× longer than
+   * regular prayers; a fixed short timeout falsely triggers SMART_RECOVERY on slow hosts.
+   * @param {string} prayerName
+   * @param {number|null|undefined} audioDurationSec from ffprobe, or null if unknown
+   * @returns {number}
+   */
+  static getEncodingTimeoutMs(prayerName, audioDurationSec) {
+    const nominal = MediaService.getNominalAdhanSeconds(prayerName);
+    const base =
+      Number.isFinite(audioDurationSec) && audioDurationSec > 0 ? audioDurationSec : nominal;
+    const ms = Math.round(base * 1000 * 4 + 90_000);
+    return Math.min(25 * 60 * 1000, Math.max(120_000, ms));
+  }
 }
 
 module.exports = MediaService;

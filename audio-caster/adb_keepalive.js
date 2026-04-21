@@ -214,8 +214,11 @@ class AdbKeepAlive {
       if (process.env.TV_BT_CONNECT_COMMAND && String(process.env.TV_BT_CONNECT_COMMAND).trim()) {
         this.log('🔊 BT: TV_BT_CONNECT_COMMAND is set (custom connect).');
       }
+      if (process.env.TV_BT_EXTRA_CONNECT_COMMANDS && String(process.env.TV_BT_EXTRA_CONNECT_COMMANDS).trim()) {
+        this.log('🔊 BT: TV_BT_EXTRA_CONNECT_COMMANDS is set (extra shell lines after stock cmd attempts).');
+      }
       this.log(
-        '🔊 BT: Sony BRAVIA often has no cmd bluetooth_* — try TV_BT_SVC_RESET=1 (BT radio toggle), TV_BT_CONNECT_COMMAND, or TV_BT_SPEAKER_NAME + AndroidTVBluetooth APK.'
+        '🔊 BT: If stock cmd bluetooth_* is missing on the TV, use dumpsys for status and TV_BT_SVC_RESET=1 and/or TV_BT_CONNECT_COMMAND from `adb shell cmd -l` + `cmd <svc> help` on that firmware.'
       );
       return;
     }

@@ -457,7 +457,11 @@ async function scheduleToday() {
 
 log(`🚀 Adhan System Starting (Zero-Latency Restore)...`);
 scheduleToday();
-schedule.scheduleJob('0 1 * * *', scheduleToday);
+const dailyScheduleRule = new schedule.RecurrenceRule();
+dailyScheduleRule.hour = 0;
+dailyScheduleRule.minute = 0;
+dailyScheduleRule.tz = CONFIG.timezone;
+schedule.scheduleJob(dailyScheduleRule, scheduleToday);
 
 if (process.argv.includes('--test')) {
     log("🧪 TEST TRIGGERED");
