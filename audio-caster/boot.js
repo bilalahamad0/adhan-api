@@ -341,7 +341,11 @@ async function bootSystem() {
 
       // 5. Weather check (non-null temp)
       const weather = await vg.getWeather();
-      check('Weather Data', weather && weather.temp && !weather.temp.startsWith('--'), `Got: ${JSON.stringify(weather)}`);
+      check(
+        'Weather Data',
+        weather && weather.temp && /\d/.test(String(weather.temp)),
+        `Got: ${JSON.stringify(weather)}`
+      );
       check('Weather Icon', !!vg.getWeatherIcon(weather.code, weather.isDay), 'No icon returned');
     } catch (e) {
       check('Dashboard Generation', false, e.message);

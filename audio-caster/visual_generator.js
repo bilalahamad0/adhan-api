@@ -21,6 +21,37 @@ class VisualGenerator {
     };
   }
 
+  /**
+   * Open-Meteo returns is_day as 0|1; coerce so strict equality works (avoids "0" string → wrong sun at night).
+   * @param {unknown} v
+   * @returns {0|1}
+   */
+  static normalizeIsDay(v) {
+    const n = Number(v);
+    return n === 0 ? 0 : 1;
+  }
+
+  /**
+   * When the API fails, avoid showing clear-day (code 0) at night — that was the misleading sun + "--°C" case.
+   * Rough civil heuristic: local 06:00–19:59 treated as "day" for icon purposes only.
+   */
+  inferApproxIsDayFromClock() {
+    const h = DateTime.now().setZone(this.config.timezone || 'UTC').hour;
+    return h >= 6 && h <= 19 ? 1 : 0;
+  }
+
+  /**
+   * If current conditions show measurable precip but WMO code is only clouds/clear, bias icon toward rain.
+   */
+  static adjustCodeForPrecipitation(code, precipitationMm, rainMm) {
+    const c = Number(code);
+    if (!Number.isFinite(c)) return 3;
+    const p = Number(precipitationMm) || 0;
+    const r = Number(rainMm) || 0;
+    if ((p > 0.05 || r > 0.05) && c >= 0 && c <= 48) return 61;
+    return c;
+  }
+
   // ... (methods remain same) use lines from original file for context ...
 
   async init() {
@@ -127,6 +158,21 @@ class VisualGenerator {
     }
 
     console.log('☁️  Fetching latest weather...');
+    const httpOpts = {
+      timeout: 12000,
+      headers: {
+        'User-Agent': 'adhan-api/visual-generator (https://github.com/bilalahamad0/adhan-api)',
+        Accept: 'application/json',
+      },
+      validateStatus: (s) => s >= 200 && s < 300,
+    };
+
+    const weatherFallback = () => {
+      const isDay = this.inferApproxIsDayFromClock();
+      // Cloudy unknown — never "clear sky" sun at night when API is down
+      return { temp: '\u2014 °C', code: 3, isDay };
+    };
+
     try {
       let lat = this.config.location.lat;
       let lon = this.config.location.lon;
@@ -152,31 +198,70 @@ class VisualGenerator {
       lat = lat || '0.0';
       lon = lon || '0.0';
 
-      const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code,is_day&temperature_unit=celsius&timezone=auto`;
-      
-      const res = await axios.get(url, { timeout: 10000 }); // 10s Safety Timeout
-      const current = res.data.current;
-      
+      const tz = encodeURIComponent(this.config.timezone || 'UTC');
+      const url =
+        `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
+        '&current=temperature_2m,weather_code,is_day,precipitation,rain' +
+        '&temperature_unit=celsius' +
+        `&timezone=${tz}`;
+
+      let lastErr = null;
+      let res = null;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          res = await axios.get(url, httpOpts);
+          break;
+        } catch (e) {
+          lastErr = e;
+          if (attempt < 3) await new Promise((r) => setTimeout(r, 400 * attempt));
+        }
+      }
+      if (!res) throw lastErr || new Error('Open-Meteo: no response');
+
+      const current = res.data?.current;
+      if (!current || typeof current !== 'object') {
+        throw new Error('Open-Meteo: missing current block');
+      }
+
+      const codeRaw = current.weather_code;
+      const codeNum = Number(codeRaw);
+      if (!Number.isFinite(codeNum)) {
+        throw new Error('Open-Meteo: invalid weather_code');
+      }
+
+      const precip = current.precipitation;
+      const rain = current.rain;
+      const code = VisualGenerator.adjustCodeForPrecipitation(codeNum, precip, rain);
+
+      const tRaw = current.temperature_2m;
+      const temp =
+        tRaw != null && Number.isFinite(Number(tRaw))
+          ? `${Math.round(Number(tRaw))}°C`
+          : '\u2014 °C';
+
+      const isDay = VisualGenerator.normalizeIsDay(current.is_day);
+
       this.weatherCache.data = {
-        temp: Math.round(current.temperature_2m) + '°C',
-        code: current.weather_code,
-        isDay: current.is_day, // 1 = Day, 0 = Night
+        temp,
+        code,
+        isDay,
       };
       this.weatherCache.lastFetch = now;
-      
-      console.log(`✅ Weather Updated: ${this.weatherCache.data.temp}`);
+
+      console.log(`✅ Weather Updated: ${this.weatherCache.data.temp} (code ${code}, isDay ${isDay})`);
       return this.weatherCache.data;
     } catch (e) {
       console.warn('⚠️ Weather fetch failed or timed out:', e.message);
       // If we have old data, return it instead of fallback
       if (this.weatherCache.data) return this.weatherCache.data;
-      return { temp: '--°C', code: 0, isDay: 1 };
+      return weatherFallback();
     }
   }
 
   getWeatherIcon(code, isDay) {
+    const day = VisualGenerator.normalizeIsDay(isDay);
     // Night Overwrite
-    if (isDay === 0) {
+    if (day === 0) {
       if (code === 0) return '☾'; // Crescent Moon (U+263E)
       if (code <= 3) return '☁'; // Night Cloud (Standard Unicode)
     }
@@ -212,7 +297,7 @@ class VisualGenerator {
     ctx.shadowOffsetY = 0;
 
     const r = size / 2;
-    const isNight = isDay === 0;
+    const isNight = VisualGenerator.normalizeIsDay(isDay) === 0;
 
     const fillCircle = (x, y, radius, color) => {
       ctx.fillStyle = color;
