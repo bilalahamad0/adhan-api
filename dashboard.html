@@ -215,10 +215,10 @@
                 <div class="kpi-sub">Trigger to playback</div>
                 <div class="kpi-trend neutral" id="kpi-latency-trend">--</div>
             </div>
-            <div class="card">
+            <div class="card" title="Recovery rate = prayers with status RECOVERED (audit thought playback failed and a replay was attempted). Yellow Fallback on a row means a pre-built video was used because encoding was slow or the clip was too short; that still counts as PLAYED, not recovered.">
                 <div class="card-title">Recovery Rate</div>
                 <div class="kpi-value" id="kpi-recovery" style="color:var(--accent-yellow)">--</div>
-                <div class="kpi-sub">Auto-healed failures</div>
+                <div class="kpi-sub">Audit replay wins (not encode fallback)</div>
             </div>
         </div>
 
@@ -673,7 +673,7 @@ function renderPrayerGrid() {
                 <div class="prayer-time" style="color:${timeColor}">${timeDisp}</div>
                 <div class="prayer-status-icon ${cls}">${icon}</div>
                 <div class="prayer-detail">${pendingDetail}</div>
-                ${d.usedFallback ? '<div class="prayer-detail" style="color:var(--accent-yellow)">Fallback</div>' : ''}
+                ${d.usedFallback ? '<div class="prayer-detail" style="color:var(--accent-yellow)">Fallback video (encode)</div>' : ''}
             </div>`;
     }).join('');
 }
