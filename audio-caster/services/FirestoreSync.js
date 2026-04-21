@@ -11,6 +11,15 @@ class FirestoreSync {
    * @param {object|null} todayEntry — one day from calendarByCity annual payload
    * @returns {Record<string, string>}
    */
+  /** Top-level Firestore fields `st_Fajr` … `st_Isha` (avoids nested-map merge/client quirks). */
+  static flattenScheduleFields(times) {
+    const flat = {};
+    for (const p of PRAYER_NAMES) {
+      if (times[p]) flat[`st_${p}`] = times[p];
+    }
+    return flat;
+  }
+
   static extractPrayerTimesHHmm(todayEntry) {
     const times = {};
     if (!todayEntry || !todayEntry.timings) return times;
@@ -78,11 +87,13 @@ class FirestoreSync {
     if (!db) return false;
     try {
       await this.publishPrayerSchedule(isoDate, times);
+      const flat = FirestoreSync.flattenScheduleFields(times);
       await db.collection('dailyMetrics').doc(isoDate).set(
         {
           date: isoDate,
           scheduledTimes: times,
           scheduleUpdatedAt: new Date().toISOString(),
+          ...flat,
         },
         { merge: true },
       );
@@ -161,11 +172,12 @@ class FirestoreSync {
   async _writeDay(db, date, summary, events, { updateLatest = true } = {}) {
     const batch = db.batch();
     const scheduledTimes = this._getScheduledTimesForISODate(date);
+    const flatSchedule = FirestoreSync.flattenScheduleFields(scheduledTimes);
     const metricsDoc = {
       ...summary,
       date,
       updatedAt: new Date().toISOString(),
-      ...(Object.keys(scheduledTimes).length > 0 ? { scheduledTimes } : {}),
+      ...(Object.keys(scheduledTimes).length > 0 ? { scheduledTimes, ...flatSchedule } : {}),
     };
 
     // merge: true so a metrics write never drops fields written earlier in the same flow

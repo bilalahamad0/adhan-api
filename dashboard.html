@@ -604,12 +604,16 @@ function dayDataForActiveDate(ds, activeDate) {
 function displayedPrayerTime(activeDate, prayer, dayData) {
     const d = dayData && dayData.prayers && dayData.prayers[prayer];
     if (d && d.scheduledTime) return d.scheduledTime;
-    if (dayData && dayData.scheduledTimes && dayData.scheduledTimes[prayer]) {
-        return dayData.scheduledTimes[prayer];
+    // Top-level st_* strings from Pi (reliable); nested scheduledTimes map as fallback.
+    var flatKey = 'st_' + prayer;
+    if (dayData && dayData[flatKey]) return String(dayData[flatKey]);
+    if (dayData && dayData.scheduledTimes) {
+        var st = dayData.scheduledTimes;
+        if (typeof st.get === 'function' && st.get(prayer)) return String(st.get(prayer));
+        if (st[prayer]) return String(st[prayer]);
     }
-    var schedDate = _prayerScheduleCache.date;
-    if (schedDate === activeDate && _prayerScheduleCache.times && _prayerScheduleCache.times[prayer]) {
-        return _prayerScheduleCache.times[prayer];
+    if (_prayerScheduleCache.date === activeDate && _prayerScheduleCache.times && _prayerScheduleCache.times[prayer]) {
+        return String(_prayerScheduleCache.times[prayer]);
     }
     return null;
 }
