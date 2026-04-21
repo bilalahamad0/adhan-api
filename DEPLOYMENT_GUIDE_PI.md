@@ -171,6 +171,28 @@ pm2 startup
 # Run the command it outputs!
 ```
 
+### After updating code (`git pull`, tarball, or `scp`)
+
+Node does not hot-reload your changes. Until you restart the process, the Pi keeps running the **old** `boot.js` and services (including Firestore sync and any new HTTP routes).
+
+```bash
+pm2 restart adhan-caster --update-env
+```
+
+Restart `adb-keeper` only if you changed `adb_keepalive.js`. To restart everything:
+
+```bash
+pm2 restart all --update-env
+```
+
+**Operations dashboard:** After deploying caster changes that affect Firestore, push metrics once from the Pi (still on port `3001` unless you changed `SERVER_PORT`):
+
+```bash
+curl -sS -X POST "http://localhost:3001/api/metrics/sync"
+```
+
+You should see JSON like `"status":"synced"` and `"prayersScheduled":5` when today’s row in `annual_schedule.json` resolves all five prayers.
+
 ## 6. Verification
 
 Check the logs to ensure everything is working:

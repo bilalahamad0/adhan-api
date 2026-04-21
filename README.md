@@ -94,6 +94,14 @@ pm2 start boot.js --name adhan-caster
 pm2 save
 ```
 
+After you change any `audio-caster` files on the Pi (`git pull`, tarball, or copy), **restart the process** or Node will still be running the old code:
+
+```bash
+pm2 restart adhan-caster --update-env
+```
+
+Then, if you rely on the [Operations Dashboard](https://bilalahamad0.github.io/adhan-api/dashboard.html) and Firestore metrics, trigger a sync from the Pi: `curl -sS -X POST "http://localhost:3001/api/metrics/sync"` (expect `"prayersScheduled":5` when the schedule file is current). See `DEPLOYMENT_GUIDE_PI.md` for full detail.
+
 ## 🧪 Local Testing
 Verify hardware handshake and media state logic before deployment:
 
