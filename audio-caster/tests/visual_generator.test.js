@@ -1,6 +1,5 @@
 const axios = require('axios');
 
-jest.mock('axios', () => ({ get: jest.fn() }));
 jest.mock('canvas', () => ({
   createCanvas: jest.fn(() => ({
     getContext: jest.fn(() => ({})),
@@ -14,9 +13,11 @@ const VisualGenerator = require('../visual_generator');
 
 describe('VisualGenerator weather parsing', () => {
   let generator;
+  let axiosGet;
 
   beforeEach(() => {
     jest.clearAllMocks();
+    axiosGet = jest.spyOn(axios, 'get').mockReset();
     generator = new VisualGenerator({
       timezone: 'America/Los_Angeles',
       location: {
@@ -29,7 +30,7 @@ describe('VisualGenerator weather parsing', () => {
   });
 
   test('geolocates placeholder coordinates and normalizes rainy night weather', async () => {
-    axios.get
+    axiosGet
       .mockResolvedValueOnce({
         data: {
           results: [{ name: 'San Jose', admin1: 'California', latitude: 37.3382, longitude: -121.8863 }],
@@ -52,7 +53,7 @@ describe('VisualGenerator weather parsing', () => {
     expect(weather).toEqual({ temp: '57°C', code: 61, isDay: 0 });
     expect(generator.config.location.lat).toBe(37.3382);
     expect(generator.config.location.lon).toBe(-121.8863);
-    expect(axios.get).toHaveBeenLastCalledWith(
+    expect(axiosGet).toHaveBeenLastCalledWith(
       expect.stringContaining('latitude=37.3382&longitude=-121.8863'),
       expect.objectContaining({
         headers: expect.objectContaining({ Accept: 'application/json' }),
@@ -65,7 +66,7 @@ describe('VisualGenerator weather parsing', () => {
     generator.config.location.lat = 37.3382;
     generator.config.location.lon = -121.8863;
     jest.spyOn(generator, 'inferApproxIsDayFromClock').mockReturnValue(0);
-    axios.get.mockResolvedValueOnce({ data: { current: { weather_code: 'not-a-code' } } });
+    axiosGet.mockResolvedValueOnce({ data: { current: { weather_code: 'not-a-code' } } });
 
     await expect(generator.getWeather()).resolves.toEqual({ temp: '\u2014 °C', code: 3, isDay: 0 });
   });
@@ -73,7 +74,7 @@ describe('VisualGenerator weather parsing', () => {
   test('serves cached weather without repeating Open-Meteo calls', async () => {
     generator.config.location.lat = 37.3382;
     generator.config.location.lon = -121.8863;
-    axios.get.mockResolvedValueOnce({
+    axiosGet.mockResolvedValueOnce({
       data: {
         current: {
           temperature_2m: 21.2,
@@ -87,6 +88,6 @@ describe('VisualGenerator weather parsing', () => {
     const second = await generator.getWeather();
 
     expect(second).toBe(first);
-    expect(axios.get).toHaveBeenCalledTimes(1);
+    expect(axiosGet).toHaveBeenCalledTimes(1);
   });
 });
