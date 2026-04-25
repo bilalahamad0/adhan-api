@@ -1,5 +1,4 @@
 const axios = require('axios');
-const VisualGenerator = require('../visual_generator');
 
 jest.mock('axios');
 jest.mock('canvas', () => ({
@@ -9,7 +8,9 @@ jest.mock('canvas', () => ({
   })),
   loadImage: jest.fn(),
   registerFont: jest.fn(),
-}));
+}), { virtual: true });
+
+const VisualGenerator = require('../visual_generator');
 
 describe('VisualGenerator weather parsing', () => {
   let generator;
