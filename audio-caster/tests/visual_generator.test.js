@@ -1,6 +1,6 @@
 const axios = require('axios');
 
-jest.mock('axios');
+jest.mock('axios', () => ({ get: jest.fn() }));
 jest.mock('canvas', () => ({
   createCanvas: jest.fn(() => ({
     getContext: jest.fn(() => ({})),
