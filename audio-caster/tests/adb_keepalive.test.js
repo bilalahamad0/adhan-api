@@ -11,8 +11,6 @@ describe('AdbKeepAlive', () => {
       getAdbDevices: jest.fn(),
       checkScreenState: jest.fn(),
       runExec: jest.fn(),
-      isBluetoothSpeakerConnectedForAudio: jest.fn(),
-      requestBluetoothSpeakerConnect: jest.fn(),
     };
     service = new AdbKeepAlive(fakeHardware, '1.2.3.4');
     service.log = jest.fn();
@@ -69,104 +67,5 @@ describe('AdbKeepAlive', () => {
     fakeHardware.isActuallyOn.mockRejectedValue(new Error('Network Crash'));
     await service.checkAndHeal();
     expect(service.log).toHaveBeenCalledWith('🔥 Error during check: Network Crash');
-  });
-
-  it('runs Bluetooth maintenance when ONLINE and TV_BT_SPEAKER_MAC is set', async () => {
-    process.env.TV_BT_SPEAKER_MAC = 'AA:BB:CC:DD:EE:FF';
-    process.env.TV_BT_POST_CONNECT_WAIT_MS = '0';
-    fakeHardware.isActuallyOn.mockResolvedValue(true);
-    fakeHardware.getAdbDevices.mockResolvedValue(
-      'List of devices attached\n1.2.3.4:5555\tdevice'
-    );
-    fakeHardware.checkScreenState.mockResolvedValue('ON');
-    let btProbe = 0;
-    fakeHardware.isBluetoothSpeakerConnectedForAudio.mockImplementation(async () => {
-      btProbe += 1;
-      if (btProbe === 1) return false;
-      return true;
-    });
-    fakeHardware.requestBluetoothSpeakerConnect.mockResolvedValue(true);
-    await service.checkAndHeal();
-    expect(fakeHardware.isBluetoothSpeakerConnectedForAudio).toHaveBeenCalledWith(
-      '1.2.3.4',
-      'AA:BB:CC:DD:EE:FF'
-    );
-    expect(fakeHardware.requestBluetoothSpeakerConnect).toHaveBeenCalledTimes(1);
-    delete process.env.TV_BT_SPEAKER_MAC;
-    delete process.env.TV_BT_POST_CONNECT_WAIT_MS;
-  });
-
-  it('attempts reconnect when Bluetooth state is unknown', async () => {
-    process.env.TV_BT_SPEAKER_MAC = 'AA:BB:CC:DD:EE:FF';
-    process.env.TV_BT_POST_CONNECT_WAIT_MS = '0';
-    fakeHardware.isActuallyOn.mockResolvedValue(true);
-    fakeHardware.getAdbDevices.mockResolvedValue(
-      'List of devices attached\n1.2.3.4:5555\tdevice'
-    );
-    fakeHardware.checkScreenState.mockResolvedValue('ON');
-    let btProbe = 0;
-    fakeHardware.isBluetoothSpeakerConnectedForAudio.mockImplementation(async () => {
-      btProbe += 1;
-      if (btProbe === 1) return null;
-      return false;
-    });
-    fakeHardware.requestBluetoothSpeakerConnect.mockResolvedValue(true);
-    await service.checkAndHeal();
-    expect(fakeHardware.requestBluetoothSpeakerConnect).toHaveBeenCalledWith(
-      '1.2.3.4',
-      'AA:BB:CC:DD:EE:FF'
-    );
-    expect(fakeHardware.requestBluetoothSpeakerConnect).toHaveBeenCalledTimes(2);
-    delete process.env.TV_BT_SPEAKER_MAC;
-    delete process.env.TV_BT_POST_CONNECT_WAIT_MS;
-  });
-
-  it('logBluetoothConfigSummary reports disabled when MAC missing', () => {
-    delete process.env.TV_BT_SPEAKER_MAC;
-    service.logBluetoothConfigSummary();
-    expect(service.log).toHaveBeenCalledWith(
-      expect.stringMatching(/🔊 BT: Auto-reconnect DISABLED/),
-    );
-  });
-
-  it('does not run Bluetooth reconnect when TV_BT_SPEAKER_MAC is missing', async () => {
-    delete process.env.TV_BT_SPEAKER_MAC;
-    fakeHardware.isActuallyOn.mockResolvedValue(true);
-    fakeHardware.getAdbDevices.mockResolvedValue(
-      'List of devices attached\n1.2.3.4:5555\tdevice'
-    );
-    fakeHardware.checkScreenState.mockResolvedValue('ON');
-    await service.checkAndHeal();
-    expect(fakeHardware.isBluetoothSpeakerConnectedForAudio).not.toHaveBeenCalled();
-    expect(fakeHardware.requestBluetoothSpeakerConnect).not.toHaveBeenCalled();
-  });
-
-  it('skips Bluetooth reconnect attempts when dumpsys state is unknown', async () => {
-    process.env.TV_BT_SPEAKER_MAC = 'AA:BB:CC:DD:EE:FF';
-    fakeHardware.isBluetoothSpeakerConnectedForAudio.mockResolvedValue(null);
-
-    await service.maintainBluetoothWhileTvOn();
-
-    expect(fakeHardware.requestBluetoothSpeakerConnect).not.toHaveBeenCalled();
-    expect(service.log).toHaveBeenCalledWith(
-      '🔊 BT: could not read connection state from dumpsys; skipping this cycle.'
-    );
-    delete process.env.TV_BT_SPEAKER_MAC;
-  });
-
-  it('throttles repeated Bluetooth reconnect requests within minimum gap', async () => {
-    process.env.TV_BT_SPEAKER_MAC = 'AA:BB:CC:DD:EE:FF';
-    process.env.TV_BT_RECONNECT_MIN_MS = '90000';
-    fakeHardware.isBluetoothSpeakerConnectedForAudio.mockResolvedValue(false);
-    fakeHardware.requestBluetoothSpeakerConnect.mockResolvedValue(true);
-    const nowSpy = jest.spyOn(Date, 'now').mockReturnValue(1_000_000);
-
-    await service.maintainBluetoothWhileTvOn();
-    await service.maintainBluetoothWhileTvOn();
-
-    expect(fakeHardware.requestBluetoothSpeakerConnect).toHaveBeenCalledTimes(1);
-    nowSpy.mockRestore();
-    delete process.env.TV_BT_RECONNECT_MIN_MS;
-    delete process.env.TV_BT_SPEAKER_MAC;
   });
 });

@@ -21,8 +21,6 @@ class AdbKeepAlive {
     this.timer = null;
     this.pulseCount = 0;
     this.logPrefix = '🛡️ ADB-KEEPER:';
-    /** Throttle BT reconnect attempts when dumpsys reports disconnected */
-    this._lastBtConnectAttemptMs = 0;
   }
 
   log(msg) {
@@ -68,52 +66,6 @@ class AdbKeepAlive {
   setNextCheck(ms) {
     if (this.timer) clearTimeout(this.timer);
     this.timer = setTimeout(() => this.checkAndHeal(), ms);
-  }
-
-  /**
-   * While TV is ON (ONLINE): read connect/disconnect from dumpsys for TV_BT_SPEAKER_MAC (must already be
-   * paired on the TV), and if disconnected request reconnect via ADB. No pairing. Same cadence as TV checks.
-   * Optional TV_BT_CONNECT_COMMAND for OEM-specific "shell …" (use {MAC}).
-   */
-  async maintainBluetoothWhileTvOn() {
-    const mac = HardwareService.normalizeBluetoothMac(process.env.TV_BT_SPEAKER_MAC || '');
-    if (!mac) return;
-
-    const connected = await this.hardware.isBluetoothSpeakerConnectedForAudio(this.targetIp, mac);
-    this.log(
-      `🔊 BT: dumpsys probe -> ${connected === true ? 'CONNECTED' : connected === false ? 'DISCONNECTED' : 'UNKNOWN'}`
-    );
-    if (connected === true && !['1', 'true', 'yes'].includes(String(process.env.TV_BT_ALWAYS_CONNECT || '').trim().toLowerCase())) {
-      return;
-    }
-    if (connected === true && ['1', 'true', 'yes'].includes(String(process.env.TV_BT_ALWAYS_CONNECT || '').trim().toLowerCase())) {
-      this.log('🔊 BT: TV_BT_ALWAYS_CONNECT set; sending connect nudge anyway.');
-    }
-    if (connected === null) {
-      this.log('🔊 BT: connection state unknown from dumpsys; attempting reconnect anyway.');
-    }
-
-    const now = Date.now();
-    const minGapMs = parseInt(process.env.TV_BT_RECONNECT_MIN_MS || '90000', 10);
-    if (now - this._lastBtConnectAttemptMs < minGapMs) return;
-    this._lastBtConnectAttemptMs = now;
-
-    this.log(`🔊 BT: speaker not connected (${mac}); requesting connect via ADB…`);
-    const requested = await this.hardware.requestBluetoothSpeakerConnect(this.targetIp, mac);
-    if (!requested) {
-      this.log('🔊 BT: reconnect command failed to execute (ADB shell command returned null).');
-    } else {
-      const delayMs = Math.max(0, parseInt(process.env.TV_BT_POST_CONNECT_WAIT_MS || '1500', 10));
-      if (delayMs > 0) await new Promise((r) => setTimeout(r, delayMs));
-      const after = await this.hardware.isBluetoothSpeakerConnectedForAudio(this.targetIp, mac);
-      this.log(
-        `🔊 BT: post-reconnect probe -> ${after === true ? 'CONNECTED' : after === false ? 'DISCONNECTED' : 'UNKNOWN'}`
-      );
-      if (after !== true) {
-        this.log('🔊 BT: retrying connect once more…');
-        await this.hardware.requestBluetoothSpeakerConnect(this.targetIp, mac);
-      }
-    }
   }
 
   stopService() {
@@ -189,7 +141,6 @@ class AdbKeepAlive {
 
       // 3. Reschedule heartbeat regardless of branch taken (unless SLEEPING/SAFETY_PULSE handled it)
       if (this.state === 'ONLINE') {
-        await this.maintainBluetoothWhileTvOn();
         this.setNextCheck(120000); // 2 mins
       } else if (this.state === 'HUNTING') {
         this.setNextCheck(60000); // 1 min
@@ -200,40 +151,8 @@ class AdbKeepAlive {
     }
   }
 
-  /**
-   * Always logs once at startup so Pi/production issues are obvious without ripgrep.
-   */
-  logBluetoothConfigSummary() {
-    const raw = process.env.TV_BT_SPEAKER_MAC;
-    const mac = HardwareService.normalizeBluetoothMac(raw || '');
-    const throttleMs = parseInt(process.env.TV_BT_RECONNECT_MIN_MS || '90000', 10);
-    const throttle = Number.isFinite(throttleMs) && throttleMs >= 0 ? throttleMs : 90000;
-
-    if (mac) {
-      this.log(`🔊 BT: Auto-reconnect ENABLED for ${mac} (reconnect throttle ${throttle}ms).`);
-      if (process.env.TV_BT_CONNECT_COMMAND && String(process.env.TV_BT_CONNECT_COMMAND).trim()) {
-        this.log('🔊 BT: TV_BT_CONNECT_COMMAND is set (custom connect).');
-      }
-      if (process.env.TV_BT_EXTRA_CONNECT_COMMANDS && String(process.env.TV_BT_EXTRA_CONNECT_COMMANDS).trim()) {
-        this.log('🔊 BT: TV_BT_EXTRA_CONNECT_COMMANDS is set (extra shell lines after stock cmd attempts).');
-      }
-      this.log(
-        '🔊 BT: If stock cmd bluetooth_* is missing on the TV, use dumpsys for status and TV_BT_SVC_RESET=1 and/or TV_BT_CONNECT_COMMAND from `adb shell cmd -l` + `cmd <svc> help` on that firmware.'
-      );
-      return;
-    }
-
-    this.log(
-      '🔊 BT: Auto-reconnect DISABLED — set TV_BT_SPEAKER_MAC in audio-caster/.env (paired speaker Bluetooth MAC), then: pm2 restart adb-keeper --update-env'
-    );
-    if (raw != null && String(raw).trim() !== '') {
-      this.log(`🔊 BT: TV_BT_SPEAKER_MAC is not a valid 12-hex MAC (value: "${String(raw).trim()}").`);
-    }
-  }
-
   startService() {
     this.log(`🚀 Adhan-Smart KeepAlive Starting. Target: ${this.targetIp}`);
-    this.logBluetoothConfigSummary();
 
     // Listen for beacons (Passive discovery)
     this.discovery.on('device-awake', () => {
