@@ -87,13 +87,18 @@ class PlaybackLogger {
       triggerLatencyMs: null,
       encodingDurationMs: null,
       discoveryDurationMs: null,
+      prePlayDurationMs: null,
+      castConnectDurationMs: null,
       recoveryAttempts: 0,
       auditResult: null,
       failureReason: null,
       usedFallback: false,
       deviceName: null,
+      cacheHit: null,
       _encodingStart: now.toMillis(),
       _discoveryStart: null,
+      _prePlayStart: null,
+      _castConnectStart: null,
     });
 
     return key;
@@ -121,14 +126,43 @@ class PlaybackLogger {
     ev._discoveryStart = this._now().toMillis();
   }
 
-  recordDeviceDiscovered(prayer, deviceName) {
+  recordDeviceDiscovered(prayer, deviceName, { cacheHit = false } = {}) {
     const key = this._eventKey(this._now().toISODate(), prayer);
     const ev = this.pendingEvents.get(key);
     if (!ev) return;
     ev.deviceName = deviceName;
+    ev.cacheHit = cacheHit;
     if (ev._discoveryStart) {
       ev.discoveryDurationMs = this._now().toMillis() - ev._discoveryStart;
     }
+  }
+
+  recordPrePlayStart(prayer) {
+    const key = this._eventKey(this._now().toISODate(), prayer);
+    const ev = this.pendingEvents.get(key);
+    if (!ev) return;
+    ev._prePlayStart = this._now().toMillis();
+  }
+
+  recordPrePlayComplete(prayer) {
+    const key = this._eventKey(this._now().toISODate(), prayer);
+    const ev = this.pendingEvents.get(key);
+    if (!ev || !ev._prePlayStart) return;
+    ev.prePlayDurationMs = this._now().toMillis() - ev._prePlayStart;
+  }
+
+  recordCastConnectStart(prayer) {
+    const key = this._eventKey(this._now().toISODate(), prayer);
+    const ev = this.pendingEvents.get(key);
+    if (!ev) return;
+    ev._castConnectStart = this._now().toMillis();
+  }
+
+  recordCastConnectComplete(prayer) {
+    const key = this._eventKey(this._now().toISODate(), prayer);
+    const ev = this.pendingEvents.get(key);
+    if (!ev || !ev._castConnectStart) return;
+    ev.castConnectDurationMs = this._now().toMillis() - ev._castConnectStart;
   }
 
   recordPlaybackStarted(prayer, scheduledTimeObj) {
@@ -196,6 +230,8 @@ class PlaybackLogger {
     const record = { ...ev };
     delete record._encodingStart;
     delete record._discoveryStart;
+    delete record._prePlayStart;
+    delete record._castConnectStart;
 
     const log = this._readLog();
     // One canonical finalized row per (date, prayer) — prevents duplicate triggers
@@ -337,6 +373,20 @@ class PlaybackLogger {
       ? Math.round(discoveryDurations.reduce((s, v) => s + v, 0) / discoveryDurations.length)
       : null;
 
+    const prePlayDurations = events
+      .filter(e => e.prePlayDurationMs != null)
+      .map(e => e.prePlayDurationMs);
+    const avgPrePlay = prePlayDurations.length > 0
+      ? Math.round(prePlayDurations.reduce((s, v) => s + v, 0) / prePlayDurations.length)
+      : null;
+
+    const castConnectDurations = events
+      .filter(e => e.castConnectDurationMs != null)
+      .map(e => e.castConnectDurationMs);
+    const avgCastConnect = castConnectDurations.length > 0
+      ? Math.round(castConnectDurations.reduce((s, v) => s + v, 0) / castConnectDurations.length)
+      : null;
+
     const fallbackCount = events.filter(e => e.usedFallback).length;
 
     const failureBreakdown = {};
@@ -351,6 +401,10 @@ class PlaybackLogger {
         scheduledTime: e.scheduledTime,
         playbackStartTime: e.playbackStartTime,
         triggerLatencyMs: e.triggerLatencyMs,
+        discoveryDurationMs: e.discoveryDurationMs,
+        prePlayDurationMs: e.prePlayDurationMs,
+        castConnectDurationMs: e.castConnectDurationMs,
+        cacheHit: e.cacheHit,
         auditResult: e.auditResult,
         usedFallback: e.usedFallback,
       };
@@ -369,6 +423,8 @@ class PlaybackLogger {
       p95LatencyMs: p95Latency,
       avgEncodingMs: avgEncoding,
       avgDiscoveryMs: avgDiscovery,
+      avgPrePlayMs: avgPrePlay,
+      avgCastConnectMs: avgCastConnect,
       fallbackCount,
       failureBreakdown,
       prayers,

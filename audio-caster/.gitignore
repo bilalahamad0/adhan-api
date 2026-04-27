@@ -4,3 +4,4 @@ audio/
 *.log
 .env
 *.mp4
+.cast-cache.json

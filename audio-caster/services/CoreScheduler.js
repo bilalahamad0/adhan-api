@@ -24,9 +24,105 @@ class CoreScheduler {
         this.sessionStatus = new Map();
         this.activeRuns = new Set();
         this._scheduledJobs = [];
+        this._castCachePath = path.join(__dirname, '..', '.cast-cache.json');
+    }
+
+    _readCastCache() {
+        try {
+            if (!fs.existsSync(this._castCachePath)) return null;
+            const data = JSON.parse(fs.readFileSync(this._castCachePath, 'utf8'));
+            if (!data || !data.host || !data.friendlyName) return null;
+            return data;
+        } catch (_) {
+            return null;
+        }
+    }
+
+    _writeCastCache(device) {
+        try {
+            const payload = {
+                friendlyName: device.friendlyName,
+                host: device.host,
+                port: device.port || 8009,
+                lastSuccessIso: new Date().toISOString(),
+            };
+            fs.writeFileSync(this._castCachePath, JSON.stringify(payload, null, 2));
+        } catch (_) { /* cache write failure is non-fatal */ }
+    }
+
+    /**
+     * Try to construct a chromecast-api Device directly from cached host/port,
+     * skipping the 120s mDNS scanner. Falls back to null if anything goes wrong;
+     * caller treats null as "go run the full scanner".
+     * Verified live by a short getReceiverStatus probe so a stale cache
+     * (device IP changed) returns null instead of a hung handle.
+     */
+    async _connectToCachedDevice(cache, log) {
+        let DeviceCls;
+        try {
+            DeviceCls = require('chromecast-api/lib/Device');
+        } catch (_) {
+            return null;
+        }
+        if (!DeviceCls) return null;
+
+        let device;
+        try {
+            device = new DeviceCls({
+                friendlyName: cache.friendlyName,
+                host: cache.host,
+                port: cache.port || 8009,
+            });
+        } catch (e) {
+            log(`⚠️ Cast cache: Device ctor failed (${e.message}); falling back to mDNS.`);
+            return null;
+        }
+
+        const probeMs = 3000;
+        const ok = await new Promise((resolve) => {
+            let done = false;
+            const finish = (success) => {
+                if (done) return;
+                done = true;
+                resolve(success);
+            };
+            const t = setTimeout(() => finish(false), probeMs);
+            try {
+                device.getReceiverStatus((err) => {
+                    clearTimeout(t);
+                    finish(!err);
+                });
+            } catch (_) {
+                clearTimeout(t);
+                finish(false);
+            }
+        });
+
+        if (!ok) {
+            try { if (typeof device.close === 'function') device.close(() => {}); } catch (_) { /* ignore */ }
+            return null;
+        }
+        return device;
     }
 
     async discoverDeviceByName(deviceName, log, prayerName) {
+        // Warm path: prior successful cast persisted host:port. Skip mDNS entirely
+        // when the cache is fresh + reachable — sidesteps Wi-Fi↔LAN multicast bridges
+        // (Xfinity gateways often drop UDP 5353 across the wired/wireless boundary).
+        const cache = this._readCastCache();
+        if (cache && cache.friendlyName === deviceName) {
+            log(`📡 Cast cache hit: ${deviceName} @ ${cache.host}:${cache.port || 8009}; probing…`);
+            const cached = await this._connectToCachedDevice(cache, log);
+            if (cached) {
+                log(`✅ Cast cache validated; skipping mDNS discovery.`);
+                if (this.playbackLogger) {
+                    this.playbackLogger.recordDeviceDiscovered(prayerName, deviceName, { cacheHit: true });
+                }
+                return cached;
+            }
+            log(`⚠️ Cast cache stale (no receiver response); falling back to mDNS.`);
+        }
+
         return new Promise((resolve) => {
             const totalTimeoutMs = 120000;
             const scannerCycleMs = 25000;
@@ -56,7 +152,8 @@ class CoreScheduler {
                 scanner.on('device', (device) => {
                     if (device && device.friendlyName === deviceName) {
                         log(`📡 Device Discovered & Cached: ${device.friendlyName}`);
-                        if (this.playbackLogger) this.playbackLogger.recordDeviceDiscovered(prayerName, device.friendlyName);
+                        this._writeCastCache(device);
+                        if (this.playbackLogger) this.playbackLogger.recordDeviceDiscovered(prayerName, device.friendlyName, { cacheHit: false });
                         finish(device);
                     }
                 });
@@ -350,6 +447,7 @@ class CoreScheduler {
         let tvWasMuted = false;
 
         if (tvIp && hardwareService) {
+            if (this.playbackLogger) this.playbackLogger.recordPrePlayStart(prayerName);
             try {
                 const isTvOn = await hardwareService.isActuallyOn(tvIp);
                 if (isTvOn) {
@@ -367,6 +465,7 @@ class CoreScheduler {
                     }
                 }
             } catch (e) { log(`⚠️ TV Control Error: ${e.message}`); }
+            if (this.playbackLogger) this.playbackLogger.recordPrePlayComplete(prayerName);
         }
 
         let adhanDevice = null;
@@ -492,6 +591,7 @@ class CoreScheduler {
             adhanDevice = device;
             log(`✅ Connected to Adhan Speaker: ${device.friendlyName}`);
 
+            if (this.playbackLogger) this.playbackLogger.recordCastConnectStart(prayerName);
             device.getReceiverStatus((err, status) => {
                 if (!err && status && status.volume) originalVolume = status.volume.level;
                 device.setVolume(CONFIG.device.targetVolume, () => {
@@ -502,12 +602,18 @@ class CoreScheduler {
                     };
                     device.play(media, (err) => {
                         if (err) {
-                            if (this.playbackLogger) this.playbackLogger.recordFailed(prayerName, 'CAST_ERROR');
+                            if (this.playbackLogger) {
+                                this.playbackLogger.recordCastConnectComplete(prayerName);
+                                this.playbackLogger.recordFailed(prayerName, 'CAST_ERROR');
+                            }
                             cleanup();
                         } else {
                             log(`🎶 Playback Started!`);
                             this.sessionStatus.set(prayerName, 'PLAYING');
-                            if (this.playbackLogger) this.playbackLogger.recordPlaybackStarted(prayerName, targetTimeObj);
+                            if (this.playbackLogger) {
+                                this.playbackLogger.recordCastConnectComplete(prayerName);
+                                this.playbackLogger.recordPlaybackStarted(prayerName, targetTimeObj);
+                            }
                             safetyTimer = setTimeout(cleanup, 600000);
                             let lastState = '';
                             const adhanPlayStartMs = Date.now();
