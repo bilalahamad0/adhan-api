@@ -271,7 +271,7 @@ class BuildManager {
     const excludes = [
       // Pi-local data — never overwrite from staging
       '.env', 'audio/', '.adhan-data/', 'annual_schedule.json',
-      '.cast-cache.json', '.git/', '.deploy-in-progress',
+      '.cast-cache.json', 'node_modules/', '.git/', '.deploy-in-progress',
       // Dev / test artifacts — keep the release build lean
       '*.test.js', 'tests/', '*.md', 'jest.config*',
       '.github/', '.eslintrc*', '.prettierrc*',
@@ -280,9 +280,18 @@ class BuildManager {
       `rsync -a --delete-after ${excludes} ${this.stagingPath}/ ${this.repoRoot}/`,
       { timeoutMs: 5 * 60_000 },
     );
+    await this._installLiveDeps();
     await this.runExec(`git -C ${this.repoRoot} fetch origin ${this.branch} --quiet`).catch(() => {});
     await this.runExec(`git -C ${this.repoRoot} reset --hard ${sha}`).catch(() => {});
     if (this.fs.existsSync(this._sentinelPath)) this.fs.unlinkSync(this._sentinelPath);
+  }
+
+  async _installLiveDeps() {
+    await this.runExec(`cd ${this.repoRoot} && npm ci --omit=dev --no-audit --no-fund`, { timeoutMs: 6 * 60_000 });
+    const audioCaster = path.join(this.repoRoot, 'audio-caster');
+    if (this.fs.existsSync(path.join(audioCaster, 'package.json'))) {
+      await this.runExec(`cd ${audioCaster} && npm ci --omit=dev --no-audit --no-fund`, { timeoutMs: 6 * 60_000 });
+    }
   }
 
   async _reloadCaster() {
