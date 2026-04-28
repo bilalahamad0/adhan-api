@@ -410,7 +410,8 @@ async function bootSystem() {
       try { require('child_process').execSync(`which ${bin}`, { stdio: 'ignore' }); return true; }
       catch { return false; }
     };
-    check('which adb', which('adb'), 'adb binary missing in PATH');
+    const isLinux = process.platform === 'linux';
+    check('which adb', isLinux ? which('adb') : true, 'adb binary missing in PATH (Pi-only)');
     check('which ffmpeg', which('ffmpeg'), 'ffmpeg binary missing in PATH');
     check('which ffprobe', which('ffprobe'), 'ffprobe binary missing in PATH');
 
