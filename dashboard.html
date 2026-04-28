@@ -947,7 +947,8 @@ function renderSyncFooter() {
         var when = '';
         if (_buildCache.currentDeployedAt) {
             try {
-                when = ' deployed ' + new Date(_buildCache.currentDeployedAt).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
+                var d = new Date(_buildCache.currentDeployedAt);
+                when = ' deployed ' + d.toLocaleDateString([], { month:'short', day:'numeric' }) + ' ' + d.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
             } catch (_) {}
         }
         version = ' \u00B7 ' + _buildCache.currentVersion + sha + when;
