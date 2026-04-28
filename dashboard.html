@@ -223,7 +223,46 @@
             <div class="card" title="Recovery rate = prayers with status RECOVERED (audit thought playback failed and a replay was attempted). Yellow Fallback on a row means a pre-built video was used because encoding was slow or the clip was too short; that still counts as PLAYED, not recovered.">
                 <div class="card-title">Recovery Rate</div>
                 <div class="kpi-value" id="kpi-recovery" style="color:var(--accent-yellow)">--</div>
-                <div class="kpi-sub">Audit replay wins (not encode fallback)</div>
+                <div class="kpi-sub" id="kpi-recovery-sub">Audit replay wins (not encode fallback)</div>
+            </div>
+        </div>
+
+        <!-- Cast Pipeline Flow -->
+        <div class="card" style="margin-bottom:1.5rem">
+            <div class="card-title">Cast Pipeline · End-to-End Flow</div>
+            <div style="display:flex;align-items:center;gap:0;flex-wrap:wrap;justify-content:center;padding:0.75rem 0">
+                <div style="text-align:center;flex:1;min-width:100px">
+                    <div style="font-size:0.7rem;font-weight:600;color:var(--accent-blue);margin-bottom:0.25rem">Trigger</div>
+                    <div style="font-size:0.65rem;color:var(--text-muted)">T−5 min before<br>prayer time</div>
+                </div>
+                <div style="color:var(--text-muted);font-size:0.8rem;padding:0 0.15rem">&rarr;</div>
+                <div style="text-align:center;flex:1;min-width:100px">
+                    <div style="font-size:0.7rem;font-weight:600;color:var(--accent-purple);margin-bottom:0.25rem">Encode</div>
+                    <div style="font-size:0.65rem;color:var(--text-muted)">Dashboard image<br>+ audio &rarr; MP4</div>
+                </div>
+                <div style="color:var(--text-muted);font-size:0.8rem;padding:0 0.15rem">&rarr;</div>
+                <div style="text-align:center;flex:1;min-width:100px">
+                    <div style="font-size:0.7rem;font-weight:600;color:var(--accent-yellow);margin-bottom:0.25rem">Pre-play</div>
+                    <div style="font-size:0.65rem;color:var(--text-muted)">Mute/pause TV<br>if audio active</div>
+                </div>
+                <div style="color:var(--text-muted);font-size:0.8rem;padding:0 0.15rem">&rarr;</div>
+                <div style="text-align:center;flex:1;min-width:100px">
+                    <div style="font-size:0.7rem;font-weight:600;color:var(--accent-orange);margin-bottom:0.25rem">Discovery</div>
+                    <div style="font-size:0.65rem;color:var(--text-muted)">Find Chromecast<br>via cache or mDNS</div>
+                </div>
+                <div style="color:var(--text-muted);font-size:0.8rem;padding:0 0.15rem">&rarr;</div>
+                <div style="text-align:center;flex:1;min-width:100px">
+                    <div style="font-size:0.7rem;font-weight:600;color:var(--accent-green);margin-bottom:0.25rem">Cast</div>
+                    <div style="font-size:0.65rem;color:var(--text-muted)">Stream MP4<br>to display</div>
+                </div>
+                <div style="color:var(--text-muted);font-size:0.8rem;padding:0 0.15rem">&rarr;</div>
+                <div style="text-align:center;flex:1;min-width:100px">
+                    <div style="font-size:0.7rem;font-weight:600;color:var(--accent-green);margin-bottom:0.25rem">Latency</div>
+                    <div style="font-size:0.65rem;color:var(--text-muted)">Total: trigger<br>to playback</div>
+                </div>
+            </div>
+            <div style="font-size:0.65rem;color:var(--text-muted);text-align:center;border-top:1px solid var(--border);padding-top:0.5rem;margin-top:0.25rem">
+                Each prayer card above shows these stages. <strong>Latency</strong> = total end-to-end time. <strong>Discovery</strong> = finding the Chromecast. <strong>Pre-play</strong> = TV mute/pause. <strong>Cast</strong> = connection to device.
             </div>
         </div>
 
@@ -312,23 +351,23 @@
         <div class="kpi-row" style="margin-bottom:1.5rem">
             <div class="card">
                 <div class="card-title">Total Commits</div>
-                <div class="kpi-value" style="color:var(--accent-blue)" id="dev-commits">116</div>
+                <div class="kpi-value" style="color:var(--accent-blue)" id="dev-commits">173</div>
                 <div class="kpi-sub">Since Feb 2025</div>
             </div>
             <div class="card">
                 <div class="card-title">Codebase</div>
-                <div class="kpi-value" style="color:var(--accent-purple)" id="dev-loc">6.5k</div>
+                <div class="kpi-value" style="color:var(--accent-purple)" id="dev-loc">7.8k</div>
                 <div class="kpi-sub">Lines of JavaScript</div>
             </div>
             <div class="card">
                 <div class="card-title">Microservices</div>
-                <div class="kpi-value" style="color:var(--accent-orange)" id="dev-services">8</div>
+                <div class="kpi-value" style="color:var(--accent-orange)" id="dev-services">10</div>
                 <div class="kpi-sub">Service Architecture</div>
             </div>
             <div class="card">
-                <div class="card-title">Test Suites</div>
-                <div class="kpi-value" style="color:var(--accent-green)" id="dev-tests">22</div>
-                <div class="kpi-sub">Across 9 suites</div>
+                <div class="card-title">Tests</div>
+                <div class="kpi-value" style="color:var(--accent-green)" id="dev-tests">54</div>
+                <div class="kpi-sub">Across 12 suites · 100% pass</div>
             </div>
         </div>
 
@@ -355,8 +394,8 @@
                     <div style="font-size:0.7rem;color:var(--text-dim);margin-bottom:0.5rem">Anthropic &middot; Apr 2026&ndash;Present</div>
                     <div style="font-size:0.7rem;color:var(--text-muted);line-height:1.6">
                         <span style="color:var(--accent-purple);font-weight:600">Claude Sonnet 4</span> &middot; Fast iteration & refactors<br>
-                        <span style="color:var(--accent-purple);font-weight:600">Claude Opus 4</span> &middot; Architecture & deep debugging<br>
-                        <span style="font-size:0.65rem;color:var(--text-muted)">150k+ tokens &middot; v3 pipeline & dashboard</span>
+                        <span style="color:var(--accent-purple);font-weight:600">Claude Opus 4.6</span> &middot; Architecture & deep debugging<br>
+                        <span style="font-size:0.65rem;color:var(--text-muted)">200k+ tokens &middot; v3 pipeline, auto-updater & dashboard</span>
                     </div>
                 </div>
             </div>
@@ -364,13 +403,17 @@
         <div class="card">
             <div class="card-title">System Health</div>
             <div class="health-grid">
-                <div class="health-item"><h4>Model Mix</h4><p id="model-mix" style="font-size:0.8rem">Gemini 2.5 Flash/Pro + Claude Sonnet/Opus 4</p></div>
-                <div class="health-item"><h4>Total Tokens</h4><p id="token-count">405k+</p></div>
+                <div class="health-item"><h4>Model Mix</h4><p id="model-mix" style="font-size:0.8rem">Gemini 2.5 Flash/Pro + Claude Sonnet 4/Opus 4.6</p></div>
+                <div class="health-item"><h4>Total Tokens</h4><p id="token-count">455k+</p></div>
                 <div class="health-item"><h4>Stability Index</h4><p style="color:var(--accent-green)">99.9% Uptime</p></div>
                 <div class="health-item"><h4>Watchdogs Active</h4><p>3 Multi-tier</p></div>
-                <div class="health-item"><h4>Services</h4><p>8 Microservices</p></div>
+                <div class="health-item"><h4>Services</h4><p>10 Microservices</p></div>
                 <div class="health-item"><h4>Last Sync</h4><p id="last-sync" style="font-size:0.7rem;font-weight:400">--</p></div>
             </div>
+        </div>
+
+        <div class="sync-time" style="text-align:center;margin-top:1rem" id="dev-footer">
+            Development metrics updated: Apr 27, 2026 · 173 commits · 7.8k LOC · 54 tests (12 suites, 100% pass)
         </div>
     </div>
 </div>
@@ -745,7 +788,24 @@ function renderKPIs() {
     }
 
     const recEl = document.getElementById('kpi-recovery');
-    recEl.textContent = agg.recoveryRate != null ? agg.recoveryRate + '%' : '--';
+    if (agg.recoveryRate == null) {
+        recEl.textContent = 'No failures';
+        recEl.style.color = 'var(--accent-green)';
+        recEl.style.fontSize = '1.3rem';
+    } else if (agg.recoveryRate === 0 && agg.totalPrayers > 0) {
+        recEl.textContent = 'N/A';
+        recEl.style.color = 'var(--text-muted)';
+        recEl.style.fontSize = '';
+    } else {
+        recEl.textContent = agg.recoveryRate + '%';
+        recEl.style.fontSize = '';
+    }
+    var recSub = document.getElementById('kpi-recovery-sub');
+    if (recSub) {
+        recSub.textContent = agg.recoveryRate == null
+            ? 'No audit replays needed'
+            : 'Audit replay wins (not encode fallback)';
+    }
 
     const ds = metricsData.dailyStats;
     if (ds.length >= 7) {
