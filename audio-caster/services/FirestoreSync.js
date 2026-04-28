@@ -5,6 +5,17 @@ const WRITE_TIMEOUT_MS = 15000;
 
 const PRAYER_NAMES = ['Fajr', 'Dhuhr', 'Asr', 'Maghrib', 'Isha'];
 
+function stripUndefined(obj) {
+  if (obj === null || typeof obj !== 'object') return obj;
+  if (Array.isArray(obj)) return obj.map(stripUndefined);
+  const clean = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (v === undefined) continue;
+    clean[k] = typeof v === 'object' && v !== null ? stripUndefined(v) : v;
+  }
+  return clean;
+}
+
 class FirestoreSync {
   /**
    * Parse Aladhan `annual_schedule` day entry timings into HH:mm (24h) strings.
@@ -173,30 +184,28 @@ class FirestoreSync {
     const batch = db.batch();
     const scheduledTimes = this._getScheduledTimesForISODate(date);
     const flatSchedule = FirestoreSync.flattenScheduleFields(scheduledTimes);
-    const metricsDoc = {
+    const metricsDoc = stripUndefined({
       ...summary,
       date,
       updatedAt: new Date().toISOString(),
       ...(Object.keys(scheduledTimes).length > 0 ? { scheduledTimes, ...flatSchedule } : {}),
-    };
+    });
 
-    // merge: true so a metrics write never drops fields written earlier in the same flow
-    // (e.g. scheduledTimes from ensureTodayScheduleOnFirestore) if this payload omits them.
     batch.set(db.collection('dailyMetrics').doc(date), metricsDoc, { merge: true });
 
-    batch.set(db.collection('dailyEvents').doc(date), {
+    batch.set(db.collection('dailyEvents').doc(date), stripUndefined({
       events,
       date,
       updatedAt: new Date().toISOString(),
-    });
+    }));
 
     if (updateLatest) {
-      batch.set(db.collection('meta').doc('latest'), {
+      batch.set(db.collection('meta').doc('latest'), stripUndefined({
         date,
         summary,
         events,
         uploadedAt: new Date().toISOString(),
-      });
+      }));
     }
 
     await batch.commit();
