@@ -271,7 +271,7 @@ class BuildManager {
     const excludes = [
       // Pi-local data — never overwrite from staging
       '.env', 'audio/', '.adhan-data/', 'annual_schedule.json',
-      '.cast-cache.json', 'node_modules/', '.git/', '.deploy-in-progress',
+      '.cast-cache.json', 'node_modules/', '.git', '.deploy-in-progress',
       // Dev / test artifacts — keep the release build lean
       '*.test.js', 'tests/', '*.md', 'jest.config*',
       '.github/', '.eslintrc*', '.prettierrc*',
