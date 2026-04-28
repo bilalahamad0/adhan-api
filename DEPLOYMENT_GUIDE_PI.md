@@ -218,6 +218,82 @@ You should see:
     3.  **Watch TV Screen immediately** and click "Always Allow".
   - Ensure `adb devices` shows `device` (not `unauthorized`).
 
+## 6.5 Migration: Tarball → Git-pull (one-time, enables auto-updater)
+
+The auto-updater (`pm2 process: auto-updater`) needs a real `.git` directory
+on the Pi so it can `git fetch origin main`. The legacy tarball deploy
+strips `.git`, so a one-time migration is required. After this, every push
+to `origin/main` is picked up automatically at the next T−20min or 02:00.
+
+```bash
+ssh <pi-user>@192.168.1.PI_IP
+cd ~
+
+# 1. Backup current deploy
+mv adhan-api adhan-api.legacy
+
+# 2. Fresh clone (preserves .git)
+git clone https://github.com/bilalahamad0/adhan-api.git
+cd adhan-api
+
+# 3. Restore Pi-only files (never in git)
+cp ../adhan-api.legacy/audio-caster/.env audio-caster/.env
+cp -r ../adhan-api.legacy/audio-caster/audio audio-caster/audio
+cp ../adhan-api.legacy/audio-caster/annual_schedule.json audio-caster/annual_schedule.json 2>/dev/null || true
+mkdir -p ~/.adhan-data
+cp ../adhan-api.legacy/.adhan-data/* ~/.adhan-data/ 2>/dev/null || true
+
+# 4. Install
+npm install
+cd audio-caster && npm install --omit=dev && cd ..
+
+# 5. Reload PM2 (now includes auto-updater)
+pm2 reload ecosystem.config.cjs
+pm2 save
+
+# 6. Verify the auto-updater is alive and saw today's prayers
+pm2 logs auto-updater --lines 30
+# Expected: "auto-updater started", "scheduled pre-Fajr update check at 04:43", etc.
+
+# 7. After 1 successful auto-update, drop the legacy dir
+# rm -rf ~/adhan-api.legacy
+```
+
+### Manual update trigger
+```bash
+npm run update:now              # respects T−5min prayer-window guard
+npm run update:now -- --force   # bypass guard (use only outside prayer windows)
+npm run update:now -- --dry-run # smoke test the candidate, no swap
+```
+
+### Schedule
+- T−20min before each of the 5 prayers (catches same-day hotfixes).
+- 02:00 daily (catches anything missed; well after midnight `scheduleToday`).
+- Both paths share `BuildManager.attemptUpdate()` and a single in-process
+  mutex; the daily check skips with `update-already-in-progress` if a per-
+  prayer cycle is somehow still running at 02:00.
+
+### What gets gated
+Every update must pass `boot.js --smoke` on a `git worktree` of the new SHA
+(separate `node_modules`, separate port `3099`, `SMOKE_DRY_RUN=1`). On
+failure, the live build is untouched and `meta/build.lastFailure` updates
+on Firestore — the dashboard banner appears within seconds.
+
+### Rollback
+The previous SHA is in `~/.adhan-data/build-info.json` as `previousSha`:
+```bash
+cd ~/adhan-api
+PREV=$(jq -r .previousSha ~/.adhan-data/build-info.json)
+git checkout $PREV && npm ci --omit=dev && pm2 reload all
+```
+
+### Privacy
+`meta/build` only ever contains: version label, short SHA, deployedAt,
+priority, last successful smoke summary, and last failure (stage +
+failed-check names only — no values, no error messages, no commit
+messages). The privacy linter (a smoke check) refuses to publish any
+payload containing an env value longer than 4 chars.
+
 ## 7. Running a Test
 
 To verify the audio and casting works immediately without waiting for prayer time:

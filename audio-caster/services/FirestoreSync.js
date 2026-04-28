@@ -253,6 +253,34 @@ class FirestoreSync {
   }
 
   /**
+   * Publish a privacy-gated build record to meta/build. Whitelist of allowed
+   * keys is enforced here so a future refactor of BuildManager can never leak
+   * commit messages, .env values, or device-identifying strings.
+   */
+  async publishBuildInfo(record) {
+    const db = this._initFirestore();
+    if (!db || !record) return false;
+    const ALLOWED = [
+      'currentVersion', 'currentShortSha', 'currentDeployedAt', 'currentChangePriority',
+      'previousVersion', 'previousShortSha',
+      'lastSuccessfulSmoke', 'lastFailure',
+    ];
+    const safe = {};
+    for (const k of ALLOWED) {
+      if (record[k] === undefined) continue;
+      safe[k] = record[k];
+    }
+    safe.updatedAt = new Date().toISOString();
+    try {
+      await db.collection('meta').doc('build').set(safe, { merge: true });
+      return true;
+    } catch (e) {
+      console.error(`[FirestoreSync] publishBuildInfo failed: ${e.message}`);
+      return false;
+    }
+  }
+
+  /**
    * Publish canonical prayer clock times for a calendar day (Pi timezone).
    * Lets the operations dashboard show HH:mm before any playback events exist.
    */
