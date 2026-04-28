@@ -17,7 +17,7 @@
     "test:system:hermetic": "node audio-caster/boot.js --system-test",
     "qa:sanity": "node audio-caster/tests/sanity.js",
     "build:prod": "bash scripts/build-prod.sh",
-    "update:now": "node scripts/update-now.js"
+    "update:now": "node scripts/update-now.cjs"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",
