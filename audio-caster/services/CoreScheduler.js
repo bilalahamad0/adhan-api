@@ -105,6 +105,24 @@ class CoreScheduler {
         return device;
     }
 
+    async _probeDevice(device, timeoutMs = 3000) {
+        if (!device) return false;
+        return new Promise((resolve) => {
+            let done = false;
+            const finish = (ok) => { if (done) return; done = true; resolve(ok); };
+            const t = setTimeout(() => finish(false), timeoutMs);
+            try {
+                device.getReceiverStatus((err) => {
+                    clearTimeout(t);
+                    finish(!err);
+                });
+            } catch (_) {
+                clearTimeout(t);
+                finish(false);
+            }
+        });
+    }
+
     async discoverDeviceByName(deviceName, log, prayerName) {
         // Warm path: prior successful cast persisted host:port. Skip mDNS entirely
         // when the cache is fresh + reachable — sidesteps Wi-Fi↔LAN multicast bridges
@@ -424,21 +442,40 @@ class CoreScheduler {
             }
         }
 
-        log(`📡 Checkpoint 2: Pre-cast wait (discovery starts after wait to avoid stale mDNS browse)...`);
+        log(`📡 Checkpoint 2: Pre-staging device discovery (during wait)...`);
         this.sessionStatus.set(prayerName, 'WAITING');
+
+        if (this.playbackLogger) this.playbackLogger.recordDiscoveryStart(prayerName);
+        const preStagedDevice = await this.discoverDeviceByName(CONFIG.device.name, log, prayerName);
+        if (preStagedDevice) {
+            log(`✅ Device pre-staged: ${CONFIG.device.name}. Waiting for prayer time...`);
+        } else {
+            log(`⚠️ Pre-stage discovery failed; will retry at prayer time.`);
+        }
 
         if (targetTimeObj) {
             const delay = targetTimeObj.toMillis() - Date.now();
             if (delay > 0) {
-                log(`⏳ Waiting ${Math.round(delay/1000)}s...`);
+                log(`⏳ Waiting ${Math.round(delay/1000)}s until prayer time...`);
                 await new Promise(r => setTimeout(r, delay));
-                log(`🚀 Checkpoint 3: Wait over. Proceeding with Casting...`);
+                log(`🚀 Checkpoint 3: Prayer time reached. Proceeding with casting...`);
             }
         }
 
-        log(`📡 Starting Device Discovery (post-wait)...`);
-        if (this.playbackLogger) this.playbackLogger.recordDiscoveryStart(prayerName);
-        const discoveredDevice = await this.discoverDeviceByName(CONFIG.device.name, log, prayerName);
+        let discoveredDevice = null;
+        if (preStagedDevice) {
+            const ok = await this._probeDevice(preStagedDevice);
+            if (ok) {
+                log(`✅ Pre-staged device still alive; skipping re-discovery.`);
+                discoveredDevice = preStagedDevice;
+            } else {
+                log(`⚠️ Pre-staged device went stale; falling back to live discovery...`);
+                discoveredDevice = await this.discoverDeviceByName(CONFIG.device.name, log, prayerName);
+            }
+        } else {
+            log(`📡 No pre-staged device; starting live discovery...`);
+            discoveredDevice = await this.discoverDeviceByName(CONFIG.device.name, log, prayerName);
+        }
 
         let finalVideoFile = `${prayerName.toLowerCase()}.mp4`;
         const castUrl = `http://${localIp}:${CONFIG.serverPort}/images/generated/${finalVideoFile}?t=${Date.now()}`;
