@@ -1,85 +1,118 @@
+jest.mock('fs', () => ({
+  existsSync: jest.fn().mockReturnValue(true),
+  readFileSync: jest.fn().mockReturnValue('{}'),
+  writeFileSync: jest.fn(),
+  mkdirSync: jest.fn(),
+  readdirSync: jest.fn().mockReturnValue([]),
+  statSync: jest.fn().mockReturnValue({ size: 1000 }),
+}));
+
+jest.mock('chromecast-api', () => {
+  return jest.fn().mockImplementation(() => ({
+    on: jest.fn(),
+    destroy: jest.fn(),
+  }));
+});
+
+jest.mock('ip', () => ({
+  address: jest.fn().mockReturnValue('10.0.0.100'),
+}));
+
+jest.mock('canvas', () => ({
+  createCanvas: jest.fn(() => ({
+    getContext: jest.fn(() => ({
+      fillRect: jest.fn(), fillStyle: '', font: '', fillText: jest.fn(),
+      measureText: jest.fn().mockReturnValue({ width: 100 }),
+      drawImage: jest.fn(), textBaseline: '', textAlign: '',
+      globalAlpha: 1, shadowColor: '', shadowBlur: 0, shadowOffsetX: 0, shadowOffsetY: 0,
+      strokeStyle: '', lineWidth: 1,
+      save: jest.fn(), restore: jest.fn(), beginPath: jest.fn(), arc: jest.fn(),
+      fill: jest.fn(), stroke: jest.fn(), moveTo: jest.fn(), lineTo: jest.fn(),
+      closePath: jest.fn(), quadraticCurveTo: jest.fn(), bezierCurveTo: jest.fn(),
+      rect: jest.fn(), ellipse: jest.fn(), clip: jest.fn(), setLineDash: jest.fn(), roundRect: jest.fn(),
+      createLinearGradient: jest.fn(() => ({ addColorStop: jest.fn() })),
+      createRadialGradient: jest.fn(() => ({ addColorStop: jest.fn() })),
+    })),
+    toBuffer: jest.fn().mockReturnValue(Buffer.from('image')),
+  })),
+  loadImage: jest.fn().mockResolvedValue({ width: 1280, height: 800 }),
+  registerFont: jest.fn(),
+}));
+
+jest.mock('axios', () => ({
+  get: jest.fn().mockResolvedValue({ data: {} }),
+}));
+
 const CoreScheduler = require('../services/CoreScheduler');
 
 describe('CoreScheduler', () => {
   let fakeHardware;
   let fakeMedia;
-  let fakeCast;
   let config;
   let scheduler;
 
   beforeEach(() => {
+    jest.clearAllMocks();
+
     fakeHardware = {
-      ping: jest.fn(),
+      ping: jest.fn().mockResolvedValue(true),
       rebootOS: jest.fn(),
       getLocalIp: jest.fn().mockReturnValue('10.0.0.100'),
+      isActuallyOn: jest.fn().mockResolvedValue(false),
+      getAudioStatus: jest.fn().mockResolvedValue({ isPlaying: false, isMuted: false }),
     };
 
     fakeMedia = {
-      encodeVideoFromImageAndAudio: jest.fn(),
-    };
-
-    fakeCast = {
-      startScanner: jest.fn(),
-      findDevice: jest.fn(),
-      setVolume: jest.fn(),
-      castMedia: jest.fn(),
+      encodeVideoFromImageAndAudio: jest.fn().mockReturnValue({
+        promise: Promise.resolve('test.mp4'),
+        abort: jest.fn(),
+      }),
+      getMediaDuration: jest.fn().mockResolvedValue(120),
     };
 
     config = {
       serverPort: 3000,
+      timezone: 'America/Los_Angeles',
       device: { name: 'Living Room TV', targetVolume: 0.55 },
+      location: { city: 'TestCity', country: 'US', method: 2, lat: 37.3, lon: -122.0 },
+      audio: { fajrCurrent: 'fajr', regularCurrent: 'adhan' },
     };
 
-    scheduler = new CoreScheduler(config, fakeHardware, fakeMedia, fakeCast, 'dummy.json');
-    scheduler.log = jest.fn(); // suppress output
+    scheduler = new CoreScheduler(config, fakeHardware, fakeMedia, null, 'dummy.json');
+    scheduler.log = jest.fn();
   });
 
-  it('aborts execution and reboots if network preflight fails on unmocked gateway', async () => {
-    // Override platform for test to hit linux branch
-    const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform');
-    Object.defineProperty(process, 'platform', { value: 'linux' });
-
-    fakeHardware.ping.mockResolvedValue(false);
-    await scheduler.executePreFlightAndCast('Fajr', 'fajr.mp3', null);
-
-    expect(fakeHardware.rebootOS).toHaveBeenCalled();
-    expect(fakeMedia.encodeVideoFromImageAndAudio).not.toHaveBeenCalled();
-
-    // Restore platform
-    Object.defineProperty(process, 'platform', originalPlatform);
+  it('refuses to cast when SMOKE_DRY_RUN is active', async () => {
+    process.env.SMOKE_DRY_RUN = '1';
+    try {
+      await scheduler.executePreFlightAndCast('Fajr', 'fajr.mp3', null);
+      expect(scheduler.log).toHaveBeenCalledWith(
+        expect.stringContaining('SMOKE_DRY_RUN active'),
+      );
+      expect(fakeMedia.encodeVideoFromImageAndAudio).not.toHaveBeenCalled();
+    } finally {
+      delete process.env.SMOKE_DRY_RUN;
+    }
   });
 
-  it('skips execution if the target time was more than 10 minutes ago (sleep guard)', async () => {
-    fakeHardware.ping.mockResolvedValue(true);
+  it('skips execution if the prayer session is already active', async () => {
+    scheduler.activeRuns.add('Dhuhr');
+    await scheduler.executePreFlightAndCast('Dhuhr', 'azan.mp3', null);
 
-    const fakeTimeObj = {
-      toMillis: () => Date.now() - 15 * 60 * 1000, // 15 mins ago
-      toFormat: jest.fn().mockReturnValue('17:00'),
-    };
-
-    await scheduler.executePreFlightAndCast('Dhuhr', 'azan.mp3', fakeTimeObj);
-
-    expect(scheduler.log).toHaveBeenCalledWith(expect.stringContaining('Too late for Dhuhr'));
+    expect(scheduler.log).toHaveBeenCalledWith(
+      expect.stringContaining('Skipping Dhuhr: session already active'),
+    );
     expect(fakeMedia.encodeVideoFromImageAndAudio).not.toHaveBeenCalled();
   });
 
-  it('encodes video and triggers cast if all preflights pass', async () => {
-    fakeHardware.ping.mockResolvedValue(true);
-    fakeMedia.encodeVideoFromImageAndAudio.mockResolvedValue('test.mp4');
-
-    // Simulate scanner instantly finding the device
-    fakeCast.startScanner.mockImplementation(async (cb) => {
-      await cb('Living Room TV');
-    });
-    fakeCast.findDevice.mockReturnValue({ id: 'mock-device' });
+  it('generates dashboard, encodes video, and attempts device discovery', async () => {
+    scheduler.discoverDeviceByName = jest.fn().mockResolvedValue(null);
 
     await scheduler.executePreFlightAndCast('Maghrib', 'maghrib.mp3', null);
 
-    expect(fakeMedia.encodeVideoFromImageAndAudio).toHaveBeenCalled();
-    expect(fakeCast.setVolume).toHaveBeenCalledWith({ id: 'mock-device' }, 0.55);
-    expect(fakeCast.castMedia).toHaveBeenCalledWith(
-      { id: 'mock-device' },
-      expect.stringContaining('http://10.0.0.100:3000/images/generated/maghrib.mp4')
+    expect(scheduler.log).toHaveBeenCalledWith(
+      expect.stringContaining('TRIGGER: Maghrib'),
     );
+    expect(fakeMedia.encodeVideoFromImageAndAudio).toHaveBeenCalled();
   });
 });

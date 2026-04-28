@@ -1,20 +1,19 @@
+jest.mock('chromecast-api', () => {
+  return jest.fn().mockImplementation(() => ({
+    on: jest.fn(),
+    destroy: jest.fn(),
+  }));
+});
+
 const CastService = require('../services/CastService');
 const ChromecastAPI = require('chromecast-api');
-
-jest.mock('chromecast-api', () => {
-  return jest.fn().mockImplementation(() => {
-    return {
-      on: jest.fn(),
-      destroy: jest.fn(),
-    };
-  });
-});
 
 describe('CastService', () => {
   let service;
   let mockClient;
 
   beforeEach(() => {
+    jest.clearAllMocks();
     mockClient = {
       on: jest.fn(),
       destroy: jest.fn(),
@@ -32,8 +31,7 @@ describe('CastService', () => {
   it('collects devices and triggers callback', () => {
     const callback = jest.fn();
     service.startScanner(callback);
-    
-    // Simulate finding a device
+
     const deviceListener = mockClient.on.mock.calls[0][1];
     const mockDevice = { friendlyName: 'Test Hub' };
     deviceListener(mockDevice);
@@ -44,7 +42,7 @@ describe('CastService', () => {
 
   it('finds device by exact or partial name', () => {
     service.devices = [{ friendlyName: 'Kitchen Display' }, { friendlyName: 'Living Room TV' }];
-    
+
     expect(service.findDevice('Kitchen')).toEqual({ friendlyName: 'Kitchen Display' });
     expect(service.findDevice('Living Room TV')).toEqual({ friendlyName: 'Living Room TV' });
     expect(service.findDevice('Bedroom')).toBeUndefined();
@@ -59,7 +57,7 @@ describe('CastService', () => {
 
   it('handles destroy error gracefully', () => {
     service.client = {
-      destroy: () => { throw new Error('Burn'); }
+      destroy: () => { throw new Error('Burn'); },
     };
     expect(() => service.destroyScanner()).not.toThrow();
   });

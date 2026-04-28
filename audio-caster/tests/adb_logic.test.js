@@ -1,44 +1,38 @@
 const HardwareService = require('../services/HardwareService');
-const assert = require('assert');
 
-async function qualifyAdbLogic() {
-    console.log("🧪 Qualifying ADB Hardware Logic...");
-    const hardware = new HardwareService();
+describe('ADB Hardware Logic', () => {
+  let hardware;
 
-    // Mock exec for testing logic flow
-    const originalRunExec = hardware.runExec;
-    let lastCommand = '';
-    hardware.runExec = async (cmd) => {
-        lastCommand = cmd;
-        if (cmd === 'adb devices') return 'List of devices attached\n1.2.3.4:5555\tdevice';
-        if (cmd.includes('dumpsys media_session')) return 'state=3 (PLAYING)';
-        return 'OK';
-    };
+  beforeEach(() => {
+    hardware = new HardwareService();
+    hardware.runExec = jest.fn(async (cmd) => {
+      if (cmd === 'adb devices') return 'List of devices attached\n1.2.3.4:5555\tdevice';
+      if (cmd.includes('dumpsys media_session')) return 'state=3 (PLAYING)';
+      return 'OK';
+    });
+  });
 
-    const testIp = '1.2.3.4';
-
-    // Test 1: Connectivity check logic
+  test('getAdbDevices finds test IP in device list', async () => {
     const devices = await hardware.getAdbDevices();
-    assert(devices.includes(testIp), "Should find test IP in device list");
-    console.log("✅ Device listing confirmed.");
+    expect(devices).toContain('1.2.3.4');
+  });
 
-    // Test 2: Pause Command logic
-    const dummyStatus = await hardware.runExec(`adb -s ${testIp}:5555 shell dumpsys media_session`);
-    if (dummyStatus.includes('state=3')) {
-        await hardware.runExec(`adb -s ${testIp}:5555 shell input keyevent 127`);
-        assert(lastCommand.includes('127'), "Should have sent keyevent 127 (Pause)");
-    }
-    console.log("✅ Pause logic flow confirmed.");
+  test('pause command sends keyevent 127 when playing', async () => {
+    const testIp = '1.2.3.4';
+    const status = await hardware.runExec(`adb -s ${testIp}:5555 shell dumpsys media_session`);
+    expect(status).toContain('state=3');
 
-    // Test 3: Resume Command logic
+    await hardware.runExec(`adb -s ${testIp}:5555 shell input keyevent 127`);
+    expect(hardware.runExec).toHaveBeenCalledWith(
+      expect.stringContaining('keyevent 127'),
+    );
+  });
+
+  test('resume command sends keyevent 126', async () => {
+    const testIp = '1.2.3.4';
     await hardware.runExec(`adb -s ${testIp}:5555 shell input keyevent 126`);
-    assert(lastCommand.includes('126'), "Should have sent keyevent 126 (Play)");
-    console.log("✅ Resume logic flow confirmed.");
-
-    console.log("✨ All Qualification Tests PASSED.");
-}
-
-qualifyAdbLogic().catch(e => {
-    console.error(`❌ Qualification failed: ${e.message}`);
-    process.exit(1);
+    expect(hardware.runExec).toHaveBeenCalledWith(
+      expect.stringContaining('keyevent 126'),
+    );
+  });
 });

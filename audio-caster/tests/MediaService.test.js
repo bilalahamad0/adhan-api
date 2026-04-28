@@ -1,16 +1,44 @@
+jest.mock('fs', () => ({
+  existsSync: jest.fn(),
+  mkdirSync: jest.fn(),
+  writeFileSync: jest.fn(),
+  createWriteStream: jest.fn(() => ({ on: jest.fn() })),
+  statSync: jest.fn(),
+  readdirSync: jest.fn().mockReturnValue([]),
+  readFileSync: jest.fn(),
+  unlinkSync: jest.fn(),
+}));
+jest.mock('axios', () => ({
+  get: jest.fn(),
+  post: jest.fn(),
+}));
+jest.mock('fluent-ffmpeg', () => {
+  return jest.fn(() => ({
+    input: jest.fn().mockReturnThis(),
+    inputOptions: jest.fn().mockReturnThis(),
+    complexFilter: jest.fn().mockReturnThis(),
+    videoCodec: jest.fn().mockReturnThis(),
+    audioCodec: jest.fn().mockReturnThis(),
+    audioFrequency: jest.fn().mockReturnThis(),
+    outputOptions: jest.fn().mockReturnThis(),
+    save: jest.fn().mockReturnThis(),
+    on: jest.fn(function (event, cb) {
+      if (event === 'end') cb();
+      return this;
+    }),
+  }));
+});
+
 const MediaService = require('../services/MediaService');
 const fs = require('fs');
 const axios = require('axios');
 const ffmpeg = require('fluent-ffmpeg');
 
-jest.mock('fs');
-jest.mock('axios');
-jest.mock('fluent-ffmpeg');
-
 describe('MediaService', () => {
   let service;
 
   beforeEach(() => {
+    jest.clearAllMocks();
     service = new MediaService();
   });
 
@@ -47,7 +75,7 @@ describe('MediaService', () => {
       audioFrequency: jest.fn().mockReturnThis(),
       outputOptions: jest.fn().mockReturnThis(),
       save: jest.fn().mockReturnThis(),
-      on: jest.fn().mockImplementation(function (event, cb) {
+      on: jest.fn(function (event, cb) {
         if (event === 'end') cb();
         return this;
       }),
