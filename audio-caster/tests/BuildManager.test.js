@@ -163,7 +163,7 @@ describe('BuildManager.attemptUpdate happy path', () => {
     expect(cmdJoined).toMatch(/git -C \/srv\/repo worktree add --detach \/tmp\/staging newsha8888888/);
     expect(cmdJoined).toMatch(/npm ci --omit=dev/);
     expect(cmdJoined).toMatch(/rsync -a --delete-after/);
-    expect(cmdJoined).toMatch(/pm2 reload adhan-caster adb-keeper/);
+    expect(cmdJoined).toMatch(/pm2 reload adhan-caster adb-keeper auto-updater/);
   });
 });
 

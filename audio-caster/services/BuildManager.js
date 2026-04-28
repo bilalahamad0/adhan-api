@@ -269,8 +269,12 @@ class BuildManager {
   async _atomicSwap(sha) {
     this.fs.writeFileSync(this._sentinelPath, `${sha}\n${this.nowFn().toISO()}\n`);
     const excludes = [
+      // Pi-local data — never overwrite from staging
       '.env', 'audio/', '.adhan-data/', 'annual_schedule.json',
-      '.cast-cache.json', 'node_modules/', '.git/', '.deploy-in-progress',
+      '.cast-cache.json', '.git/', '.deploy-in-progress',
+      // Dev / test artifacts — keep the release build lean
+      '*.test.js', 'tests/', '*.md', 'jest.config*',
+      '.github/', '.eslintrc*', '.prettierrc*',
     ].map((p) => `--exclude='${p}'`).join(' ');
     await this.runExec(
       `rsync -a --delete-after ${excludes} ${this.stagingPath}/ ${this.repoRoot}/`,
@@ -282,7 +286,7 @@ class BuildManager {
   }
 
   async _reloadCaster() {
-    await this.runExec(`pm2 reload adhan-caster adb-keeper`, { timeoutMs: 30_000 }).catch((e) => {
+    await this.runExec(`pm2 reload adhan-caster adb-keeper auto-updater`, { timeoutMs: 30_000 }).catch((e) => {
       this.log(`[BuildManager] pm2 reload warning: ${e.message}`);
     });
   }
