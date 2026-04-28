@@ -199,44 +199,14 @@
             <div class="prayer-grid" id="prayer-grid">
                 <div class="loading">Loading prayer data...</div>
             </div>
-        </div>
-
-        <!-- Cast Pipeline Flow -->
-        <div class="card" style="margin-bottom:1.5rem">
-            <div class="card-title">Cast Pipeline · End-to-End Flow</div>
-            <div style="display:flex;align-items:center;gap:0;flex-wrap:wrap;justify-content:center;padding:0.75rem 0">
-                <div style="text-align:center;flex:1;min-width:100px">
-                    <div style="font-size:0.7rem;font-weight:600;color:var(--accent-blue);margin-bottom:0.25rem">Trigger</div>
-                    <div style="font-size:0.65rem;color:var(--text-muted)">T−5 min before<br>prayer time</div>
-                </div>
-                <div style="color:var(--text-muted);font-size:0.8rem;padding:0 0.15rem">&rarr;</div>
-                <div style="text-align:center;flex:1;min-width:100px">
-                    <div style="font-size:0.7rem;font-weight:600;color:var(--accent-purple);margin-bottom:0.25rem">Encode</div>
-                    <div style="font-size:0.65rem;color:var(--text-muted)">Dashboard image<br>+ audio &rarr; MP4</div>
-                </div>
-                <div style="color:var(--text-muted);font-size:0.8rem;padding:0 0.15rem">&rarr;</div>
-                <div style="text-align:center;flex:1;min-width:100px">
-                    <div style="font-size:0.7rem;font-weight:600;color:var(--accent-yellow);margin-bottom:0.25rem">Pre-play</div>
-                    <div style="font-size:0.65rem;color:var(--text-muted)">Mute/pause TV<br>if audio active</div>
-                </div>
-                <div style="color:var(--text-muted);font-size:0.8rem;padding:0 0.15rem">&rarr;</div>
-                <div style="text-align:center;flex:1;min-width:100px">
-                    <div style="font-size:0.7rem;font-weight:600;color:var(--accent-orange);margin-bottom:0.25rem">Discovery</div>
-                    <div style="font-size:0.65rem;color:var(--text-muted)">Find Chromecast<br>via cache or mDNS</div>
-                </div>
-                <div style="color:var(--text-muted);font-size:0.8rem;padding:0 0.15rem">&rarr;</div>
-                <div style="text-align:center;flex:1;min-width:100px">
-                    <div style="font-size:0.7rem;font-weight:600;color:var(--accent-green);margin-bottom:0.25rem">Cast</div>
-                    <div style="font-size:0.65rem;color:var(--text-muted)">Stream MP4<br>to display</div>
-                </div>
-                <div style="color:var(--text-muted);font-size:0.8rem;padding:0 0.15rem">&rarr;</div>
-                <div style="text-align:center;flex:1;min-width:100px">
-                    <div style="font-size:0.7rem;font-weight:600;color:var(--accent-green);margin-bottom:0.25rem">Latency</div>
-                    <div style="font-size:0.65rem;color:var(--text-muted)">Total: trigger<br>to playback</div>
-                </div>
-            </div>
-            <div style="font-size:0.65rem;color:var(--text-muted);text-align:center;border-top:1px solid var(--border);padding-top:0.5rem;margin-top:0.25rem">
-                Each prayer card shows these stages. <strong>Latency</strong> = total end-to-end time. <strong>Discovery</strong> = finding the Chromecast. <strong>Pre-play</strong> = TV mute/pause. <strong>Cast</strong> = connection to device.
+            <div style="font-size:0.6rem;color:var(--text-muted);border-top:1px solid var(--border);padding-top:0.6rem;margin-top:0.5rem;line-height:1.6;text-align:center">
+                <span style="color:var(--text-dim);font-weight:600">Cast pipeline:</span>
+                <span style="color:var(--accent-blue)">Trigger</span> (T−5 min) &rarr;
+                <span style="color:var(--accent-purple)">Encode</span> (image+audio &rarr; MP4) &rarr;
+                <span style="color:var(--accent-yellow)">Pre-play</span> (mute TV) &rarr;
+                <span style="color:var(--accent-orange)">Discovery</span> (find Chromecast) &rarr;
+                <span style="color:var(--accent-green)">Cast</span> (stream to display).
+                <strong>Latency</strong> = total end-to-end time.
             </div>
         </div>
 
