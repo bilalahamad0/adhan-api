@@ -201,32 +201,6 @@
             </div>
         </div>
 
-        <!-- KPI Row -->
-        <div class="kpi-row" id="kpi-row">
-            <div class="card">
-                <div class="card-title">Success Rate</div>
-                <div class="kpi-value" id="kpi-success" style="color:var(--accent-green)">--</div>
-                <div class="kpi-sub">Played + Recovered</div>
-                <div class="kpi-trend neutral" id="kpi-success-trend">--</div>
-            </div>
-            <div class="card">
-                <div class="card-title">Streak</div>
-                <div class="kpi-value" id="kpi-streak" style="color:var(--accent-orange)">--</div>
-                <div class="kpi-sub">Consecutive perfect days</div>
-            </div>
-            <div class="card">
-                <div class="card-title">Avg Latency</div>
-                <div class="kpi-value" id="kpi-latency" style="color:var(--accent-blue)">--</div>
-                <div class="kpi-sub">Trigger to playback</div>
-                <div class="kpi-trend neutral" id="kpi-latency-trend">--</div>
-            </div>
-            <div class="card" title="Recovery rate = prayers with status RECOVERED (audit thought playback failed and a replay was attempted). Yellow Fallback on a row means a pre-built video was used because encoding was slow or the clip was too short; that still counts as PLAYED, not recovered.">
-                <div class="card-title">Recovery Rate</div>
-                <div class="kpi-value" id="kpi-recovery" style="color:var(--accent-yellow)">--</div>
-                <div class="kpi-sub" id="kpi-recovery-sub">Audit replay wins (not encode fallback)</div>
-            </div>
-        </div>
-
         <!-- Cast Pipeline Flow -->
         <div class="card" style="margin-bottom:1.5rem">
             <div class="card-title">Cast Pipeline · End-to-End Flow</div>
@@ -262,7 +236,33 @@
                 </div>
             </div>
             <div style="font-size:0.65rem;color:var(--text-muted);text-align:center;border-top:1px solid var(--border);padding-top:0.5rem;margin-top:0.25rem">
-                Each prayer card above shows these stages. <strong>Latency</strong> = total end-to-end time. <strong>Discovery</strong> = finding the Chromecast. <strong>Pre-play</strong> = TV mute/pause. <strong>Cast</strong> = connection to device.
+                Each prayer card shows these stages. <strong>Latency</strong> = total end-to-end time. <strong>Discovery</strong> = finding the Chromecast. <strong>Pre-play</strong> = TV mute/pause. <strong>Cast</strong> = connection to device.
+            </div>
+        </div>
+
+        <!-- KPI Row -->
+        <div class="kpi-row" id="kpi-row">
+            <div class="card">
+                <div class="card-title">Success Rate</div>
+                <div class="kpi-value" id="kpi-success" style="color:var(--accent-green)">--</div>
+                <div class="kpi-sub">Played + Recovered</div>
+                <div class="kpi-trend neutral" id="kpi-success-trend">--</div>
+            </div>
+            <div class="card">
+                <div class="card-title">Streak</div>
+                <div class="kpi-value" id="kpi-streak" style="color:var(--accent-orange)">--</div>
+                <div class="kpi-sub">Consecutive perfect days</div>
+            </div>
+            <div class="card">
+                <div class="card-title">Avg Latency</div>
+                <div class="kpi-value" id="kpi-latency" style="color:var(--accent-blue)">--</div>
+                <div class="kpi-sub">Trigger to playback</div>
+                <div class="kpi-trend neutral" id="kpi-latency-trend">--</div>
+            </div>
+            <div class="card" title="Recovery rate = prayers with status RECOVERED (audit thought playback failed and a replay was attempted). Yellow Fallback on a row means a pre-built video was used because encoding was slow or the clip was too short; that still counts as PLAYED, not recovered.">
+                <div class="card-title">Recovery Rate</div>
+                <div class="kpi-value" id="kpi-recovery" style="color:var(--accent-yellow)">--</div>
+                <div class="kpi-sub" id="kpi-recovery-sub">Audit replay wins (not encode fallback)</div>
             </div>
         </div>
 
