@@ -252,8 +252,12 @@ class CoreScheduler {
      */
     async executePreFlightAndCast(prayerName, audioFileName, targetTimeObj, scheduleEntry = null) {
         const log = this.log;
+        if (process.env.SMOKE_DRY_RUN === '1') {
+            log(`🛑 SMOKE_DRY_RUN active: refusing to cast ${prayerName}`);
+            return;
+        }
         const state = this.sessionStatus.get(prayerName);
-        
+
         // Block if ANY active session exists for this prayer (prevents audit race condition).
         if (this.activeRuns.has(prayerName)) {
             log(`⏭️ Skipping ${prayerName}: session already active (state: ${state}).`);

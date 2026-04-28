@@ -188,6 +188,11 @@
     <!-- ===================== OPERATIONS TAB ===================== -->
     <div id="tab-ops" class="tab-panel active">
 
+        <!-- Build Failure Banner (hidden unless lastFailure.ts > currentDeployedAt) -->
+        <div id="build-banner" style="display:none;margin-bottom:1rem;padding:0.75rem 1rem;border-radius:8px;background:rgba(245,158,11,0.12);border:1px solid var(--accent-yellow,#f59e0b);color:var(--accent-yellow,#f59e0b);font-size:0.85rem;line-height:1.4">
+            <span id="build-banner-text"></span>
+        </div>
+
         <!-- Today's Prayer Status -->
             <div class="card" style="margin-bottom:1.5rem">
             <div class="card-title" id="prayer-status-title">Today's Prayer Status</div>
@@ -474,6 +479,38 @@ function attachListeners() {
                 if (metricsData) renderPrayerGrid();
             }, function(err) { console.warn('prayerSchedule listener error:', err.message); })
     );
+
+    _listeners.push(
+        db.collection('meta').doc('build')
+            .onSnapshot(function(snap) {
+                _buildCache = snap.exists ? snap.data() : null;
+                renderBuildBanner();
+                renderSyncFooter();
+            }, function(err) { console.warn('build listener error:', err.message); })
+    );
+}
+
+var _buildCache = null;
+
+function renderBuildBanner() {
+    var el = document.getElementById('build-banner');
+    var txt = document.getElementById('build-banner-text');
+    if (!el || !txt || !_buildCache) {
+        if (el) el.style.display = 'none';
+        return;
+    }
+    var failure = _buildCache.lastFailure;
+    var deployedAt = _buildCache.currentDeployedAt;
+    var failureRecent = failure && failure.ts && (!deployedAt || new Date(failure.ts) > new Date(deployedAt));
+    if (!failureRecent) { el.style.display = 'none'; return; }
+    var when = '';
+    try { when = new Date(failure.ts).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' }); } catch (_) {}
+    var checks = Array.isArray(failure.failedChecks) && failure.failedChecks.length
+        ? failure.failedChecks.slice(0, 3).join(', ')
+        : (failure.stage || 'unknown stage');
+    var sha = _buildCache.currentShortSha || 'unknown';
+    txt.textContent = '⚠ Build update FAILED at ' + when + ' — ' + checks + '. Continuing on ' + sha + '.';
+    el.style.display = 'block';
 }
 
 function detachListeners() {
@@ -903,7 +940,19 @@ function renderHealth() {
 }
 
 function renderSyncFooter() {
-    document.getElementById('sync-footer').textContent = 'Last updated: ' + new Date().toLocaleTimeString() + ' \u00B7 Real-time sync via Firestore';
+    var base = 'Last updated: ' + new Date().toLocaleTimeString() + ' \u00B7 Real-time sync via Firestore';
+    var version = '';
+    if (_buildCache && _buildCache.currentVersion) {
+        var sha = _buildCache.currentShortSha ? ' (' + _buildCache.currentShortSha + ')' : '';
+        var when = '';
+        if (_buildCache.currentDeployedAt) {
+            try {
+                when = ' deployed ' + new Date(_buildCache.currentDeployedAt).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
+            } catch (_) {}
+        }
+        version = ' \u00B7 ' + _buildCache.currentVersion + sha + when;
+    }
+    document.getElementById('sync-footer').textContent = base + version;
 }
 
 // --- Dev Tab Fetch (legacy project-status via Vercel, unrelated to metrics) ---

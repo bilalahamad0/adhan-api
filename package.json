@@ -14,8 +14,10 @@
     "test:cov": "npm run test -- --coverage",
     "test:smoke": "node audio-caster/boot.js --smoke",
     "test:system": "node audio-caster/boot.js --test",
+    "test:system:hermetic": "node audio-caster/boot.js --system-test",
     "qa:sanity": "node audio-caster/tests/sanity.js",
-    "build:prod": "bash scripts/build-prod.sh"
+    "build:prod": "bash scripts/build-prod.sh",
+    "update:now": "node scripts/update-now.js"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",
