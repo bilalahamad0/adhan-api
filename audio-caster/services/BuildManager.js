@@ -135,6 +135,7 @@ class BuildManager {
         if (!upd.newSha) {
           result.success = true;
           result.reason = 'no-update';
+          await this._publishCurrentState(upd.currentSha);
           return result;
         }
         newSha = upd.newSha;
@@ -243,6 +244,31 @@ class BuildManager {
       if (!this.fs.existsSync(this._buildInfoPath)) return null;
       return JSON.parse(this.fs.readFileSync(this._buildInfoPath, 'utf8'));
     } catch { return null; }
+  }
+
+  async _publishCurrentState(sha) {
+    if (!this.firestoreSync || typeof this.firestoreSync.publishBuildInfo !== 'function') return;
+    const existing = this.readBuildInfo();
+    if (existing && existing.currentVersion) {
+      try { await this.firestoreSync.publishBuildInfo(existing); }
+      catch (e) { this.log(`[BuildManager] publishCurrentState failed: ${e.message}`); }
+      return;
+    }
+    const versionInfo = await this._computeVersionLabel(sha).catch(() => ({
+      version: `v${this.nowFn().toFormat('yyyy.MM.dd')}-chore.0`,
+      shortSha: sha.slice(0, 7),
+      priority: 'low',
+    }));
+    const record = {
+      currentVersion: versionInfo.version,
+      currentShortSha: versionInfo.shortSha || sha.slice(0, 7),
+      currentDeployedAt: this.nowFn().toISO(),
+      currentChangePriority: versionInfo.priority || 'low',
+      lastFailure: null,
+    };
+    await this.writeBuildInfo({ ...record, sha, previousSha: null });
+    try { await this.firestoreSync.publishBuildInfo(record); }
+    catch (e) { this.log(`[BuildManager] publishCurrentState failed: ${e.message}`); }
   }
 
   async _currentSha() {
