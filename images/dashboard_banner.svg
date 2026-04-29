@@ -17,28 +17,28 @@
   <!-- AI Efficiency Card -->
   <rect x="40" y="40" width="310" height="160" rx="15" fill="white" fill-opacity="0.03" stroke="white" stroke-opacity="0.1"/>
   <text fill="#94A3B8" class="text" font-size="11" font-weight="600" letter-spacing="0.05em" x="60" y="65">AI EFFICIENCY INDEX</text>
-  <text fill="white" class="text" font-size="48" font-weight="700" x="60" y="115">7h</text>
-  <text fill="#64748B" class="text" font-size="14" x="130" y="115">vs 59h Manual Baseline</text>
+  <text fill="white" class="text" font-size="48" font-weight="700" x="60" y="115">10h</text>
+  <text fill="#64748B" class="text" font-size="14" x="138" y="115">vs 80h Manual Baseline</text>
   
   <rect x="60" y="135" width="270" height="10" rx="5" fill="white" fill-opacity="0.05"/>
-  <rect x="60" y="135" width="230" height="10" rx="5" fill="url(#paint0_linear)"/>
+  <rect x="60" y="135" width="245" height="10" rx="5" fill="url(#paint0_linear)"/>
   
-  <text fill="#4ADE80" class="text" font-size="13" font-weight="600" x="60" y="175">8.4x Engineering Acceleration</text>
+  <text fill="#4ADE80" class="text" font-size="13" font-weight="600" x="60" y="175">8x Engineering Acceleration</text>
 
   <!-- System Health Card -->
   <rect x="370" y="40" width="390" height="160" rx="15" fill="white" fill-opacity="0.03" stroke="white" stroke-opacity="0.1"/>
   <text fill="#94A3B8" class="text" font-size="11" font-weight="600" letter-spacing="0.05em" x="390" y="65">INTELLECTUAL PROVENANCE</text>
   
   <!-- Stats Grid -->
-  <text fill="#38BDF8" class="text" font-size="12" font-weight="600" x="390" y="95">AGENT</text>
-  <text fill="white" class="text" font-size="16" font-weight="600" x="390" y="118">Antigravity (DeepMind)</text>
+  <text fill="#38BDF8" class="text" font-size="12" font-weight="600" x="390" y="95">AGENTS</text>
+  <text fill="white" class="text" font-size="16" font-weight="600" x="390" y="118">Antigravity + Cursor</text>
   
-  <text fill="#C084FC" class="text" font-size="12" font-weight="600" x="580" y="95">TEST COVERAGE</text>
-  <text fill="white" class="text" font-size="16" font-weight="600" x="580" y="118">88.4% Core Logic</text>
+  <text fill="#C084FC" class="text" font-size="12" font-weight="600" x="580" y="95">TESTS</text>
+  <text fill="white" class="text" font-size="16" font-weight="600" x="580" y="118">54 across 12 suites</text>
 
-  <text fill="#4ADE80" class="text" font-size="12" font-weight="600" x="390" y="155">MODELS</text>
-  <text fill="white" class="text" font-size="16" font-weight="600" x="390" y="178">Gemini 3 Flash &amp; Pro</text>
+  <text fill="#4ADE80" class="text" font-size="12" font-weight="600" x="390" y="155">TOKENS</text>
+  <text fill="white" class="text" font-size="16" font-weight="600" x="390" y="178">500k+ processed</text>
   
-  <text fill="#F59E0B" class="text" font-size="12" font-weight="600" x="580" y="155">STABILITY</text>
-  <text fill="white" class="text" font-size="16" font-weight="600" x="580" y="178">99.9% Index</text>
+  <text fill="#F59E0B" class="text" font-size="12" font-weight="600" x="580" y="155">CODEBASE</text>
+  <text fill="white" class="text" font-size="16" font-weight="600" x="580" y="178">182 commits · 8.1k JS LOC</text>
 </svg>
