@@ -393,7 +393,9 @@
 <script src="https://www.gstatic.com/firebasejs/11.7.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/11.7.1/firebase-firestore-compat.js"></script>
 <script>
-const API_BASE = 'https://adhan-api.vercel.app';
+// Development tab pulls live metrics from the Vercel deployment.
+// `adhan-api.vercel.app` currently returns 404, while the alias below is live.
+const API_BASE = 'https://adhan-api-mauve.vercel.app';
 const PRAYERS = ['Fajr','Dhuhr','Asr','Maghrib','Isha'];
 
 var metricsData = null;
