@@ -816,7 +816,8 @@ function renderKPIs() {
             : 'Audit replay wins (not encode fallback)';
     }
 
-    const ds = metricsData.dailyStats;
+    const todayStr = localDateStr(new Date());
+    const ds = metricsData.dailyStats.filter(d => d.label <= todayStr);
     if (ds.length >= 7) {
         const last7 = ds.slice(-7);
         const prev7 = ds.slice(-14, -7);
@@ -846,7 +847,8 @@ function setTrend(id, current, previous, unit, lowerIsBetter) {
 // --- 7-Day Trend: success-rate bars only (single Y axis: 0–100%) ---
 function renderTrendChart() {
     const svg = document.getElementById('trend-chart');
-    const ds = metricsData.dailyStats.slice(-7);
+    const todayStr = localDateStr(new Date());
+    const ds = metricsData.dailyStats.filter(d => d.label <= todayStr).slice(-7);
     if (ds.length === 0) {
         svg.innerHTML = '<text x="250" y="95" text-anchor="middle" fill="#64748b" font-size="12">No data</text>';
         return;
