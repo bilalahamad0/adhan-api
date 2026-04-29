@@ -716,25 +716,26 @@ function renderPrayerGrid() {
         const st = (d.status || 'PENDING').toUpperCase();
         const cls = st === 'PLAYED' ? 'played' : st === 'RECOVERED' ? 'recovered' : st === 'FAILED' ? 'failed' : 'pending';
         const icon = st === 'PLAYED' ? '&#10003;' : st === 'RECOVERED' ? '&#8635;' : st === 'FAILED' ? '&#10007;' : '&#9711;';
-        const latStr = d.triggerLatencyMs != null ? (d.triggerLatencyMs / 1000).toFixed(1) + 's' : '--';
-        const pendingDetail = timeStr && st === 'PENDING' ? 'Scheduled · pending' : (st === 'PENDING' ? 'Pending' : 'Latency: ' + latStr);
+        const latStr = d.triggerLatencyMs != null ? (d.triggerLatencyMs / 1000).toFixed(1) + 's' : null;
+        const pendingDetail = timeStr && st === 'PENDING' ? 'Scheduled · pending' : (st === 'PENDING' ? 'Pending' : '');
         const fmtSec = (ms) => (ms / 1000).toFixed(1) + 's';
         const breakdownParts = [];
-        if (d.prePlayDurationMs != null) breakdownParts.push('pre-play ' + fmtSec(d.prePlayDurationMs));
         if (d.discoveryDurationMs != null) {
             const tag = d.cacheHit ? ' (cache)' : '';
             breakdownParts.push('discovery ' + fmtSec(d.discoveryDurationMs) + tag);
         }
+        if (d.prePlayDurationMs != null) breakdownParts.push('pre-play ' + fmtSec(d.prePlayDurationMs));
         if (d.castConnectDurationMs != null) breakdownParts.push('cast ' + fmtSec(d.castConnectDurationMs));
+        if (latStr) breakdownParts.push('Latency ' + latStr);
         const breakdownLine = (st !== 'PENDING' && breakdownParts.length)
             ? `<div class="prayer-detail" style="font-size:0.75em;color:var(--text-muted)">${breakdownParts.join(' · ')}</div>`
-            : '';
+            : (st !== 'PENDING' && latStr ? `<div class="prayer-detail">Latency: ${latStr}</div>` : '');
         return `
             <div class="prayer-cell">
                 <div class="prayer-name">${p}</div>
                 <div class="prayer-time" style="color:${timeColor}">${timeDisp}</div>
                 <div class="prayer-status-icon ${cls}">${icon}</div>
-                <div class="prayer-detail">${pendingDetail}</div>
+                ${pendingDetail ? '<div class="prayer-detail">' + pendingDetail + '</div>' : ''}
                 ${breakdownLine}
                 ${d.usedFallback ? '<div class="prayer-detail" style="color:var(--accent-yellow)">Fallback video (encode)</div>' : ''}
             </div>`;
