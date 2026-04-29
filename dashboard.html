@@ -138,6 +138,28 @@
         .progress-container { width:100%; height:10px; background:rgba(255,255,255,0.05); border-radius:8px; margin:1rem 0; overflow:hidden; }
         .progress-bar { height:100%; width:88%; background:linear-gradient(to right,var(--accent-blue),var(--accent-green)); box-shadow:0 0 16px rgba(74,222,128,0.2); }
 
+        /* Countdown Banner */
+        .countdown-banner { 
+            display:flex; justify-content:space-between; align-items:center; 
+            padding:1.5rem 2rem; 
+            background: linear-gradient(145deg, rgba(15,23,42,0.6) 0%, rgba(30,41,59,0.4) 100%);
+            border: 1px solid rgba(56,189,248,0.2);
+            box-shadow: 0 4px 20px rgba(0,0,0,0.2), inset 0 0 10px rgba(56,189,248,0.05);
+            position:relative; overflow:hidden;
+        }
+        .countdown-banner::before {
+            content:''; position:absolute; top:0; left:0; right:0; height:1px;
+            background: linear-gradient(90deg, transparent, rgba(56,189,248,0.5), transparent);
+        }
+        .countdown-label { font-size:0.85rem; text-transform:uppercase; letter-spacing:0.08em; color:var(--text-dim); font-weight:600; margin-bottom:0.25rem; }
+        .countdown-main { display:flex; align-items:baseline; gap:0.75rem; }
+        .countdown-prayer { font-size:1.5rem; font-weight:700; color:var(--text); }
+        .countdown-in { font-size:0.9rem; color:var(--text-muted); font-weight:500; }
+        .countdown-time { font-size:2.25rem; font-weight:700; color:var(--accent-blue); font-variant-numeric:tabular-nums; letter-spacing:0.02em; transition:color 0.3s; }
+        .countdown-time.warning { color:var(--accent-yellow); }
+        .countdown-time.danger { color:var(--accent-red); animation:pulse-text 2s infinite; }
+        @keyframes pulse-text { 0%,100%{opacity:1} 50%{opacity:0.7} }
+        
         /* Responsive */
         @media(max-width:768px) {
             .prayer-grid { grid-template-columns:repeat(3,1fr); }
@@ -209,6 +231,18 @@
                 <span style="color:var(--accent-green)">Cast</span> (stream to display).
                 <strong style="color:var(--accent-red)">Latency</strong> = scheduled prayer time to playback start.
             </div>
+        </div>
+
+        <!-- Countdown Banner -->
+        <div class="card countdown-banner" id="countdown-card" style="display:none; margin-bottom:1.5rem">
+            <div>
+                <div class="countdown-label">Next Prayer</div>
+                <div class="countdown-main">
+                    <span class="countdown-prayer" id="countdown-prayer">--</span>
+                    <span class="countdown-in">in</span>
+                </div>
+            </div>
+            <div class="countdown-time" id="countdown-time">--:--:--</div>
         </div>
 
         <!-- KPI Row -->
@@ -488,9 +522,10 @@ function attachListeners() {
                     _prayerScheduleCache = {
                         date: firestoreDateToYyyyMmDd(data.date),
                         times: data.times || {},
+                        nextDay: data.nextDay || null,
                     };
                 } else {
-                    _prayerScheduleCache = { date: null, times: {} };
+                    _prayerScheduleCache = { date: null, times: {}, nextDay: null };
                 }
                 if (metricsData) renderPrayerGrid();
             }, function(err) { console.warn('prayerSchedule listener error:', err.message); })
@@ -1028,6 +1063,112 @@ async function fetchDevMetrics() {
 // --- Dev Tab Fetch (always runs, independent of Firebase) ---
 fetchDevMetrics();
 setInterval(fetchDevMetrics, 300000);
+
+// --- Countdown Engine ---
+var countdownInterval = null;
+
+function parseTimeStr(dateStr, timeStr) {
+    if (!dateStr || !timeStr) return null;
+    var parts = timeStr.split(':');
+    var d = new Date(dateStr + 'T' + parts[0].padStart(2, '0') + ':' + parts[1].padStart(2, '0') + ':00');
+    return d.getTime();
+}
+
+function updateCountdown() {
+    var now = Date.now();
+    var activeDate = getActiveDate();
+    var isToday = activeDate === localDateStr(new Date());
+    
+    var card = document.getElementById('countdown-card');
+    if (!card) return;
+    
+    // Only show live countdown if we are viewing "Today" and on the ops tab
+    var opsTab = document.getElementById('tab-ops');
+    var isOpsActive = opsTab && opsTab.className.indexOf('active') !== -1;
+    
+    if (!isToday || document.hidden || !isOpsActive) {
+        if (!isToday) card.style.display = 'none';
+        return;
+    }
+    
+    var times = _prayerScheduleCache.times;
+    var schedDate = _prayerScheduleCache.date;
+    
+    if (!schedDate || schedDate !== activeDate || !times || Object.keys(times).length === 0) {
+        card.style.display = 'none';
+        return;
+    }
+    
+    var nextPrayer = null;
+    var targetEpoch = 0;
+    var isTomorrow = false;
+    
+    for (var i = 0; i < PRAYERS.length; i++) {
+        var p = PRAYERS[i];
+        var epoch = parseTimeStr(schedDate, times[p]);
+        if (epoch && epoch > now) {
+            nextPrayer = p;
+            targetEpoch = epoch;
+            break;
+        }
+    }
+    
+    // If all prayers today passed, look at tomorrow's Fajr
+    if (!nextPrayer) {
+        if (_prayerScheduleCache.nextDay && _prayerScheduleCache.nextDay.times && _prayerScheduleCache.nextDay.times.Fajr) {
+            nextPrayer = 'Fajr';
+            isTomorrow = true;
+            targetEpoch = parseTimeStr(_prayerScheduleCache.nextDay.date, _prayerScheduleCache.nextDay.times.Fajr);
+        } else {
+            // No next day data yet, we wait
+            card.style.display = 'none';
+            return;
+        }
+    }
+    
+    if (nextPrayer && targetEpoch) {
+        card.style.display = 'flex';
+        
+        var diffMs = targetEpoch - now;
+        var diffSec = Math.floor(diffMs / 1000);
+        
+        var timeEl = document.getElementById('countdown-time');
+        var prayerEl = document.getElementById('countdown-prayer');
+        var labelEl = document.querySelector('.countdown-label');
+        var inEl = document.querySelector('.countdown-in');
+        
+        if (diffSec <= 0) {
+            prayerEl.textContent = nextPrayer;
+            timeEl.textContent = '00:00:00';
+            timeEl.className = 'countdown-time danger';
+            labelEl.textContent = '🕌 Time for';
+            if (inEl) inEl.style.display = 'none';
+        } else {
+            if (inEl) inEl.style.display = 'inline';
+            labelEl.textContent = isTomorrow ? 'Next Prayer (Tomorrow)' : 'Next Prayer';
+            prayerEl.textContent = nextPrayer;
+            
+            var h = Math.floor(diffSec / 3600);
+            var m = Math.floor((diffSec % 3600) / 60);
+            var s = diffSec % 60;
+            
+            timeEl.textContent = String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+            
+            if (diffSec < 300) { // < 5 mins
+                timeEl.className = 'countdown-time danger';
+            } else if (diffSec < 3600) { // < 1 hr
+                timeEl.className = 'countdown-time warning';
+            } else {
+                timeEl.className = 'countdown-time';
+            }
+        }
+    }
+}
+
+setInterval(updateCountdown, 1000);
+document.addEventListener('visibilitychange', updateCountdown);
+// Trigger once on load
+setTimeout(updateCountdown, 500);
 
 // --- Firestore Init (graceful -- UI works even if Firebase SDK is blocked) ---
 try {

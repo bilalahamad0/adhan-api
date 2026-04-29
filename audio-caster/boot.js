@@ -495,8 +495,45 @@ async function bootSystem() {
 
   async function refreshScheduleAndPublishFirestore() {
     await scheduler.scheduleToday();
-    const today = DateTime.now().setZone(CONFIG.timezone).toISODate();
-    await firestoreSync.ensureTodayScheduleOnFirestore(today);
+    const today = DateTime.now().setZone(CONFIG.timezone);
+    const todayIso = today.toISODate();
+    await firestoreSync.ensureTodayScheduleOnFirestore(todayIso);
+
+    // Schedule publishing tomorrow's schedule at Maghrib + 5 minutes
+    const tomorrowIso = today.plus({ days: 1 }).toISODate();
+    try {
+      const schedPath = path.join(__dirname, 'annual_schedule.json');
+      const annualData = JSON.parse(require('fs').readFileSync(schedPath));
+      const monthData = annualData.data[today.month.toString()];
+      const todayEntry = monthData ? monthData.find(d => parseInt(d.date.gregorian.day) === today.day) : null;
+      
+      if (todayEntry && todayEntry.timings && todayEntry.timings['Maghrib']) {
+        const timeStr = todayEntry.timings['Maghrib'].split(' ')[0];
+        const [hours, minutes] = timeStr.split(':');
+        const maghribTime = today.set({ hour: parseInt(hours), minute: parseInt(minutes), second: 0 });
+        const publishTime = maghribTime.plus({ minutes: 5 });
+        
+        if (publishTime <= DateTime.now().setZone(CONFIG.timezone)) {
+          // Already past Maghrib+5 today, publish immediately
+          await firestoreSync.ensureNextDayScheduleOnFirestore(tomorrowIso);
+        } else {
+          // Schedule it for later today
+          const schedule = require('node-schedule');
+          schedule.scheduleJob(publishTime.toJSDate(), () => {
+            firestoreSync.ensureNextDayScheduleOnFirestore(tomorrowIso).catch(e => {
+              console.error('[boot] Next day publish failed:', e.message);
+            });
+          });
+          console.log(`📅 Scheduled next-day schedule publish for ${publishTime.toFormat('HH:mm:ss')}`);
+        }
+      } else {
+        // Fallback: publish immediately if can't find Maghrib time
+        await firestoreSync.ensureNextDayScheduleOnFirestore(tomorrowIso);
+      }
+    } catch (e) {
+      console.error('[boot] Failed to schedule next-day publish:', e.message);
+      await firestoreSync.ensureNextDayScheduleOnFirestore(tomorrowIso);
+    }
   }
 
   await refreshScheduleAndPublishFirestore();

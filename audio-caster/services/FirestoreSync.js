@@ -115,6 +115,58 @@ class FirestoreSync {
     }
   }
 
+  /**
+   * Publish next-day prayer schedule to Firestore so the dashboard countdown
+   * timer can bridge Isha → next-day Fajr without waiting for midnight.
+   *
+   * Called at Maghrib+5min. Reads from the local annual_schedule.json
+   * (no external API call). Merges a `nextDay` field onto the existing
+   * meta/prayerSchedule document and pre-populates dailyMetrics/{tomorrow}.
+   *
+   * @param {string} tomorrowIsoDate — YYYY-MM-DD for the next day
+   * @returns {Promise<boolean>} true if published successfully
+   */
+  async ensureNextDayScheduleOnFirestore(tomorrowIsoDate) {
+    const times = this._getScheduledTimesForISODate(tomorrowIsoDate);
+    if (Object.keys(times).length === 0) {
+      console.warn(`[FirestoreSync] No schedule times in file for next day ${tomorrowIsoDate}`);
+      return false;
+    }
+    const db = this._initFirestore();
+    if (!db) return false;
+    try {
+      // Merge nextDay onto the existing prayerSchedule document (preserves today's times)
+      await db.collection('meta').doc('prayerSchedule').set(
+        {
+          nextDay: {
+            date: tomorrowIsoDate,
+            times: times,
+          },
+          updatedAt: new Date().toISOString(),
+        },
+        { merge: true },
+      );
+
+      // Pre-populate dailyMetrics for tomorrow with scheduled times
+      const flat = FirestoreSync.flattenScheduleFields(times);
+      await db.collection('dailyMetrics').doc(tomorrowIsoDate).set(
+        {
+          date: tomorrowIsoDate,
+          scheduledTimes: times,
+          scheduleUpdatedAt: new Date().toISOString(),
+          ...flat,
+        },
+        { merge: true },
+      );
+
+      console.log(`[FirestoreSync] Next-day schedule published for ${tomorrowIsoDate}`);
+      return true;
+    } catch (e) {
+      console.error(`[FirestoreSync] ensureNextDayScheduleOnFirestore failed: ${e.message}`);
+      return false;
+    }
+  }
+
   _initFirestore() {
     if (this._db) return this._db;
     if (!this._serviceKeyBase64) {
