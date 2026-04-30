@@ -7,6 +7,10 @@
 > **The Invisible Conductor for the Intelligent Home Sanctuary.**
 > _A masterclass in distributed I/O management and hardware interoperability._
 
+### 🎬 Introductory Video: The Architecture of Automation
+
+[![Watch the Video Overview](https://img.youtube.com/vi/GETyDnvZWog/0.jpg)](https://www.youtube.com/watch?v=GETyDnvZWog)
+
 ## 🌟 Overview
 
 **Adhan Audio Caster** is a high-performance Smart Home IoT Automation Platform that transforms standard household hardware into a precision, context-aware media ecosystem. 

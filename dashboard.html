@@ -1011,6 +1011,7 @@ function renderHealth() {
 }
 
 function renderSyncFooter() {
+    var builtBy = 'Built by <a href="https://bilalahamad.com" target="_blank" style="color:inherit;text-decoration:underline;">bilalahamad.com</a> &middot; ';
     var base = 'Last updated: ' + new Date().toLocaleTimeString() + ' \u00B7 Real-time sync via Firestore';
     var version = '';
     if (_buildCache && _buildCache.currentVersion) {
@@ -1024,7 +1025,7 @@ function renderSyncFooter() {
         }
         version = ' \u00B7 ' + _buildCache.currentVersion + sha + when;
     }
-    document.getElementById('sync-footer').textContent = base + version;
+    document.getElementById('sync-footer').innerHTML = builtBy + base + version;
 }
 
 // --- Dev Tab Fetch (legacy project-status via Vercel, unrelated to metrics) ---
@@ -1108,7 +1109,7 @@ function updateCountdown() {
     for (var i = 0; i < PRAYERS.length; i++) {
         var p = PRAYERS[i];
         var epoch = parseTimeStr(schedDate, times[p]);
-        if (epoch && epoch > now) {
+        if (epoch && (epoch + 60000) > now) {
             nextPrayer = p;
             targetEpoch = epoch;
             break;
@@ -1141,7 +1142,7 @@ function updateCountdown() {
         
         if (diffSec <= 0) {
             prayerEl.textContent = nextPrayer;
-            timeEl.textContent = '00:00:00';
+            timeEl.textContent = 'PRAYER NOW';
             timeEl.className = 'countdown-time danger';
             labelEl.textContent = '🕌 Time for';
             if (inEl) inEl.style.display = 'none';
