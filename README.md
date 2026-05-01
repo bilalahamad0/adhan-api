@@ -9,7 +9,7 @@
 
 ### 🎬 Introductory Video: The Architecture of Automation
 
-[![Watch the Video Overview](https://img.youtube.com/vi/GETyDnvZWog/0.jpg)](https://www.youtube.com/watch?v=GETyDnvZWog)
+[![Watch the Video Overview](./images/video_thumbnail_with_play.jpg)](https://www.youtube.com/watch?v=GETyDnvZWog)
 
 ## 🌟 Overview
 
