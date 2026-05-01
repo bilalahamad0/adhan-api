@@ -123,7 +123,7 @@ class CoreScheduler {
         });
     }
 
-    async discoverDeviceByName(deviceName, log, prayerName) {
+    async discoverDeviceByName(deviceName, log, prayerName, customTimeoutMs = null) {
         // Warm path: prior successful cast persisted host:port. Skip mDNS entirely
         // when the cache is fresh + reachable — sidesteps Wi-Fi↔LAN multicast bridges
         // (Xfinity gateways often drop UDP 5353 across the wired/wireless boundary).
@@ -142,7 +142,7 @@ class CoreScheduler {
         }
 
         return new Promise((resolve) => {
-            const totalTimeoutMs = 120000;
+            const totalTimeoutMs = customTimeoutMs || 120000;
             const scannerCycleMs = 25000;
             const startMs = Date.now();
             let resolved = false;
@@ -446,7 +446,12 @@ class CoreScheduler {
         this.sessionStatus.set(prayerName, 'WAITING');
 
         if (this.playbackLogger) this.playbackLogger.recordDiscoveryStart(prayerName);
-        const preStagedDevice = await this.discoverDeviceByName(CONFIG.device.name, log, prayerName);
+        
+        let timeUntilPrayerMs = targetTimeObj ? Math.max(0, targetTimeObj.toMillis() - Date.now()) : 0;
+        // Allow discovery to use the full wait period, or at least 120s if already past time
+        let preStageTimeout = Math.max(120000, timeUntilPrayerMs);
+        
+        const preStagedDevice = await this.discoverDeviceByName(CONFIG.device.name, log, prayerName, preStageTimeout);
         if (preStagedDevice) {
             log(`✅ Device pre-staged: ${CONFIG.device.name}. Waiting for prayer time...`);
         } else {
@@ -458,8 +463,8 @@ class CoreScheduler {
             if (delay > 0) {
                 log(`⏳ Waiting ${Math.round(delay/1000)}s until prayer time...`);
                 await new Promise(r => setTimeout(r, delay));
-                log(`🚀 Checkpoint 3: Prayer time reached. Proceeding with casting...`);
             }
+            log(`🚀 Checkpoint 3: Prayer time reached. Proceeding with casting...`);
         }
 
         let discoveredDevice = null;
