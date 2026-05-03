@@ -84,7 +84,7 @@
         .chart-bar:hover { opacity:0.85; }
         .chart-label { font-size:10px; fill:var(--text-muted); text-anchor:middle; }
         .chart-gridline { stroke:rgba(255,255,255,0.04); stroke-width:1; }
-        .chart-value-label { font-size:9px; fill:var(--text-dim); text-anchor:middle; font-weight:600; }
+        .chart-value-label { font-size:9px; fill:var(--text-dim); text-anchor:middle; font-weight:600; dominant-baseline:auto; }
         .chart-line { fill:none; stroke:var(--accent-purple); stroke-width:2; stroke-linecap:round; stroke-linejoin:round; }
         .chart-dot { fill:var(--accent-purple); }
 
@@ -169,6 +169,9 @@
             .dev-grid { grid-template-columns:1fr; }
             .event-row { grid-template-columns:80px 60px auto 50px; }
             .event-time { display:none; }
+            .countdown-banner { flex-direction:row; justify-content:flex-end; gap:1rem; padding:1.25rem 1.5rem; }
+            .countdown-banner > div:first-child { margin-right:auto; }
+            .countdown-time { text-align:right; }
         }
         @media(max-width:480px) {
             .prayer-grid { grid-template-columns:repeat(2,1fr); }
@@ -858,7 +861,7 @@ function renderTrendChart() {
     const H = 180;
     const PAD_L = 34;
     const PAD_R = 12;
-    const PAD_T = 12;
+    const PAD_T = 22;
     const PAD_B = 26;
     const chartW = W - PAD_L - PAD_R;
     const chartH = H - PAD_T - PAD_B;
@@ -881,7 +884,7 @@ function renderTrendChart() {
         const y = PAD_T + chartH - barH;
         const color = rate >= 95 ? 'var(--accent-green)' : rate >= 80 ? 'var(--accent-yellow)' : rate > 0 ? 'var(--accent-red)' : 'rgba(148,163,184,0.15)';
         html += `<rect class="chart-bar" x="${x - barW / 2}" y="${y}" width="${barW}" height="${barH}" fill="${color}" opacity="0.85"/>`;
-        html += `<text class="chart-value-label" x="${x}" y="${Math.max(y - 4, PAD_T + 10)}">${d.total > 0 ? rate + '%' : ''}</text>`;
+        html += `<text class="chart-value-label" x="${x}" y="${y - 6}">${d.total > 0 ? rate + '%' : ''}</text>`;
         const label = d.label ? d.label.slice(5) : '';
         html += `<text class="chart-label" x="${x}" y="${H - 6}">${label}</text>`;
     });
@@ -1069,6 +1072,12 @@ setInterval(fetchDevMetrics, 300000);
 
 // --- Countdown Engine ---
 var countdownInterval = null;
+var _prayerNowState = {
+    prayer: null,
+    startedAt: null,
+    dismissed: false,
+};
+var PRAYER_NOW_TIMEOUT_MS = 8 * 60 * 1000;
 
 function parseTimeStr(dateStr, timeStr) {
     if (!dateStr || !timeStr) return null;
@@ -1077,89 +1086,153 @@ function parseTimeStr(dateStr, timeStr) {
     return d.getTime();
 }
 
+function isPrayerStatusUpdated(prayer) {
+    if (!metricsData || !metricsData.dailyStats) return false;
+    var todayStr = localDateStr(new Date());
+    var dayData = dayDataForActiveDate(metricsData.dailyStats, todayStr);
+    if (!dayData || !dayData.prayers || !dayData.prayers[prayer]) return false;
+    var st = (dayData.prayers[prayer].status || '').toUpperCase();
+    return st === 'PLAYED' || st === 'RECOVERED' || st === 'FAILED';
+}
+
 function updateCountdown() {
     var now = Date.now();
     var activeDate = getActiveDate();
     var isToday = activeDate === localDateStr(new Date());
-    
+
     var card = document.getElementById('countdown-card');
     if (!card) return;
-    
-    // Only show live countdown if we are viewing "Today" and on the ops tab
+
     var opsTab = document.getElementById('tab-ops');
     var isOpsActive = opsTab && opsTab.className.indexOf('active') !== -1;
-    
+
     if (!isToday || document.hidden || !isOpsActive) {
         if (!isToday) card.style.display = 'none';
         return;
     }
-    
+
     var times = _prayerScheduleCache.times;
     var schedDate = _prayerScheduleCache.date;
-    
+
     if (!schedDate || schedDate !== activeDate || !times || Object.keys(times).length === 0) {
         card.style.display = 'none';
         return;
     }
-    
+
+    var currentPrayer = null;
+    var currentPrayerEpoch = 0;
     var nextPrayer = null;
     var targetEpoch = 0;
     var isTomorrow = false;
-    
+
     for (var i = 0; i < PRAYERS.length; i++) {
         var p = PRAYERS[i];
         var epoch = parseTimeStr(schedDate, times[p]);
-        if (epoch && (epoch + 60000) > now) {
+        if (!epoch) continue;
+        if (epoch <= now) {
+            currentPrayer = p;
+            currentPrayerEpoch = epoch;
+        }
+    }
+
+    for (var i = 0; i < PRAYERS.length; i++) {
+        var p = PRAYERS[i];
+        var epoch = parseTimeStr(schedDate, times[p]);
+        if (epoch && epoch > now) {
             nextPrayer = p;
             targetEpoch = epoch;
             break;
         }
     }
-    
-    // If all prayers today passed, look at tomorrow's Fajr
+
+    // PRAYER NOW: stays until status updates in Today's Prayer Status or 8-min fallback
+    if (currentPrayer && currentPrayerEpoch <= now) {
+        if (_prayerNowState.prayer !== currentPrayer) {
+            _prayerNowState.prayer = currentPrayer;
+            _prayerNowState.startedAt = now;
+            _prayerNowState.dismissed = false;
+        }
+
+        if (!_prayerNowState.dismissed) {
+            var statusUpdated = isPrayerStatusUpdated(currentPrayer);
+            var timedOut = (now - _prayerNowState.startedAt) >= PRAYER_NOW_TIMEOUT_MS;
+
+            if (statusUpdated || timedOut) {
+                _prayerNowState.dismissed = true;
+            } else {
+                card.style.display = 'flex';
+                var timeEl = document.getElementById('countdown-time');
+                var prayerEl = document.getElementById('countdown-prayer');
+                var labelEl = document.querySelector('.countdown-label');
+                var inEl = document.querySelector('.countdown-in');
+
+                prayerEl.textContent = currentPrayer;
+                timeEl.textContent = 'PRAYER NOW';
+                timeEl.className = 'countdown-time danger';
+                labelEl.textContent = '\u{1F54C} Time for';
+                if (inEl) inEl.style.display = 'none';
+                return;
+            }
+        }
+    }
+
+    // After Isha dismissed, hide card — no Fajr countdown until after midnight
+    if (_prayerNowState.prayer === 'Isha' && _prayerNowState.dismissed && !nextPrayer) {
+        card.style.display = 'none';
+        return;
+    }
+
+    // Fajr countdown starts from midnight (after daily schedule setup)
     if (!nextPrayer) {
         if (_prayerScheduleCache.nextDay && _prayerScheduleCache.nextDay.times && _prayerScheduleCache.nextDay.times.Fajr) {
-            nextPrayer = 'Fajr';
-            isTomorrow = true;
-            targetEpoch = parseTimeStr(_prayerScheduleCache.nextDay.date, _prayerScheduleCache.nextDay.times.Fajr);
+            var nowDate = new Date();
+            var isAfterMidnight = nowDate.getHours() < 6;
+
+            if (isAfterMidnight) {
+                nextPrayer = 'Fajr';
+                isTomorrow = false;
+                targetEpoch = parseTimeStr(_prayerScheduleCache.nextDay.date, _prayerScheduleCache.nextDay.times.Fajr);
+            } else {
+                card.style.display = 'none';
+                return;
+            }
         } else {
-            // No next day data yet, we wait
             card.style.display = 'none';
             return;
         }
     }
-    
+
     if (nextPrayer && targetEpoch) {
         card.style.display = 'flex';
-        
+
         var diffMs = targetEpoch - now;
         var diffSec = Math.floor(diffMs / 1000);
-        
+
         var timeEl = document.getElementById('countdown-time');
         var prayerEl = document.getElementById('countdown-prayer');
         var labelEl = document.querySelector('.countdown-label');
         var inEl = document.querySelector('.countdown-in');
-        
+
         if (diffSec <= 0) {
             prayerEl.textContent = nextPrayer;
             timeEl.textContent = 'PRAYER NOW';
             timeEl.className = 'countdown-time danger';
-            labelEl.textContent = '🕌 Time for';
+            labelEl.textContent = '\u{1F54C} Time for';
             if (inEl) inEl.style.display = 'none';
         } else {
             if (inEl) inEl.style.display = 'inline';
             labelEl.textContent = isTomorrow ? 'Next Prayer (Tomorrow)' : 'Next Prayer';
             prayerEl.textContent = nextPrayer;
-            
+
             var h = Math.floor(diffSec / 3600);
             var m = Math.floor((diffSec % 3600) / 60);
             var s = diffSec % 60;
-            
+
             timeEl.textContent = String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
-            
-            if (diffSec < 300) { // < 5 mins
+
+            if (diffSec < 300) {
                 timeEl.className = 'countdown-time danger';
-            } else if (diffSec < 3600) { // < 1 hr
+            } else if (diffSec < 3600) {
                 timeEl.className = 'countdown-time warning';
             } else {
                 timeEl.className = 'countdown-time';
@@ -1170,7 +1243,6 @@ function updateCountdown() {
 
 setInterval(updateCountdown, 1000);
 document.addEventListener('visibilitychange', updateCountdown);
-// Trigger once on load
 setTimeout(updateCountdown, 500);
 
 // --- Firestore Init (graceful -- UI works even if Firebase SDK is blocked) ---
