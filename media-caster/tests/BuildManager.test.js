@@ -305,3 +305,245 @@ describe('BuildManager._dailySequence', () => {
     expect(result.version).toBe('v2026.04.27-fix.2');
   });
 });
+
+// ── Drift Detection Tests ──────────────────────────────────────────────
+
+describe('BuildManager.parseDriftOutput', () => {
+  test('parses untracked, modified, and deleted entries', () => {
+    const status = [
+      '?? images/play.svg',
+      '?? test.jpg',
+      ' M media-caster/boot.js',
+      ' D old-file.txt',
+    ].join('\n');
+    const drift = BuildManager.parseDriftOutput(status);
+    expect(drift.untracked).toEqual(['images/play.svg', 'test.jpg']);
+    expect(drift.modified).toEqual(['media-caster/boot.js']);
+    expect(drift.deleted).toEqual(['old-file.txt']);
+    expect(drift.modeOnly).toEqual([]);
+    expect(drift.total).toBe(4);
+  });
+
+  test('returns empty drift for clean status', () => {
+    const drift = BuildManager.parseDriftOutput('');
+    expect(drift.total).toBe(0);
+    expect(drift.modified).toEqual([]);
+    expect(drift.untracked).toEqual([]);
+  });
+
+  test('separates mode-only changes from content modifications', () => {
+    const status = ' M deploy.sh\n M boot.js\n';
+    const diffSummary = ' mode change 100644 => 100755 deploy.sh\n';
+    const drift = BuildManager.parseDriftOutput(status, diffSummary);
+    expect(drift.modeOnly).toEqual(['deploy.sh']);
+    expect(drift.modified).toEqual(['boot.js']);
+    expect(drift.total).toBe(2);
+  });
+
+  test('handles null/undefined inputs gracefully', () => {
+    const drift = BuildManager.parseDriftOutput(null, undefined);
+    expect(drift.total).toBe(0);
+  });
+});
+
+describe('BuildManager.summarizeDrift', () => {
+  test('returns null for clean drift', () => {
+    const drift = { modified: [], deleted: [], untracked: [], modeOnly: [], total: 0 };
+    expect(BuildManager.summarizeDrift(drift)).toBeNull();
+    expect(BuildManager.summarizeDrift(null)).toBeNull();
+  });
+
+  test('returns counts and capped samples', () => {
+    const drift = {
+      modified: ['a.js', 'b.js', 'c.js', 'd.js'],
+      deleted: ['x.js'],
+      untracked: ['u1.jpg', 'u2.jpg', 'u3.jpg', 'u4.jpg'],
+      modeOnly: ['m1.sh', 'm2.sh', 'm3.sh'],
+      total: 12,
+    };
+    const summary = BuildManager.summarizeDrift(drift);
+    expect(summary.modified).toBe(4);
+    expect(summary.deleted).toBe(1);
+    expect(summary.untracked).toBe(4);
+    expect(summary.modeOnly).toBe(3);
+    expect(summary.total).toBe(12);
+    expect(summary.samples.length).toBe(8);
+    expect(summary.samples).toEqual([
+      'a.js', 'b.js', 'c.js',
+      'u1.jpg', 'u2.jpg', 'u3.jpg',
+      'm1.sh', 'm2.sh',
+    ]);
+  });
+});
+
+describe('BuildManager drift preflight integration', () => {
+  test('detects drift and includes it in result without blocking update', async () => {
+    const driftStatus = '?? stray-photo.jpg\n M src/server.js\n';
+    const logs = [];
+    const { runExec, calls } = makeRunExecRecorder({
+      'rev-parse HEAD': { stdout: 'oldsha7777777\n', stderr: '' },
+      'rev-parse origin/main': { stdout: 'newsha8888888\n', stderr: '' },
+      'log -1 --pretty=%s': { stdout: 'fix: drift test\n', stderr: '' },
+      'status --porcelain': { stdout: driftStatus, stderr: '' },
+      'diff --summary': { stdout: '', stderr: '' },
+      'config --local core.fileMode': { stdout: '', stderr: '' },
+    });
+    const fsApi = makeFakeFs();
+    const firestoreSync = { publishBuildInfo: jest.fn().mockResolvedValue(true) };
+    const bm = new BuildManager({
+      repoRoot: REPO, stagingPath: STAGING, dataDir: DATA,
+      smokeRunner: makeSmoke({ ok: true, passed: 25, failed: 0, failedChecks: [], reason: 'OK', durationMs: 100 }),
+      runExec, fsApi, firestoreSync,
+      nowFn: () => FIXED_NOW,
+      log: (msg) => logs.push(msg),
+    });
+
+    const result = await bm.attemptUpdate();
+
+    expect(result.success).toBe(true);
+    expect(result.drift).toBeTruthy();
+    expect(result.drift.untracked).toEqual(['stray-photo.jpg']);
+    expect(result.drift.modified).toEqual(['src/server.js']);
+    expect(result.drift.total).toBe(2);
+
+    expect(logs.some((l) => l.includes('drift detected: 2 items'))).toBe(true);
+
+    const buildInfo = JSON.parse(fsApi._store.get(path.join(DATA, 'build-info.json')));
+    expect(buildInfo.driftSnapshot).toBeTruthy();
+    expect(buildInfo.driftSnapshot.total).toBe(2);
+  });
+
+  test('logs clean when no drift exists', async () => {
+    const logs = [];
+    const { runExec } = makeRunExecRecorder({
+      'rev-parse HEAD': { stdout: 'aaa\n', stderr: '' },
+      'rev-parse origin/main': { stdout: 'aaa\n', stderr: '' },
+      'status --porcelain': { stdout: '', stderr: '' },
+      'diff --summary': { stdout: '', stderr: '' },
+      'config --local core.fileMode': { stdout: '', stderr: '' },
+    });
+    const bm = new BuildManager({
+      repoRoot: REPO, stagingPath: STAGING, dataDir: DATA,
+      smokeRunner: makeSmoke({ ok: true, passed: 1, failed: 0, failedChecks: [], reason: 'OK', durationMs: 1 }),
+      runExec, fsApi: makeFakeFs(),
+      nowFn: () => FIXED_NOW,
+      log: (msg) => logs.push(msg),
+    });
+    const result = await bm.attemptUpdate();
+    expect(result.success).toBe(true);
+    expect(result.drift.total).toBe(0);
+    expect(logs.some((l) => l.includes('working tree clean'))).toBe(true);
+  });
+});
+
+describe('BuildManager fileMode bootstrap', () => {
+  test('runs git config core.fileMode false on first cycle', async () => {
+    const { runExec, calls } = makeRunExecRecorder({
+      'rev-parse HEAD': { stdout: 'aaa\n', stderr: '' },
+      'rev-parse origin/main': { stdout: 'aaa\n', stderr: '' },
+      'status --porcelain': { stdout: '', stderr: '' },
+      'diff --summary': { stdout: '', stderr: '' },
+      'config --local core.fileMode': { stdout: '', stderr: '' },
+    });
+    const logs = [];
+    const bm = new BuildManager({
+      repoRoot: REPO, stagingPath: STAGING, dataDir: DATA,
+      smokeRunner: makeSmoke({ ok: true, passed: 1, failed: 0, failedChecks: [], reason: 'OK', durationMs: 1 }),
+      runExec, fsApi: makeFakeFs(),
+      nowFn: () => FIXED_NOW,
+      log: (msg) => logs.push(msg),
+    });
+
+    await bm.attemptUpdate();
+    const fileModeCmd = calls.find((c) => c.includes('core.fileMode'));
+    expect(fileModeCmd).toMatch(/config --local core\.fileMode false/);
+    expect(logs.some((l) => l.includes('core.fileMode set to false'))).toBe(true);
+  });
+
+  test('skips git config on subsequent cycles', async () => {
+    const { runExec, calls } = makeRunExecRecorder({
+      'rev-parse HEAD': { stdout: 'aaa\n', stderr: '' },
+      'rev-parse origin/main': { stdout: 'aaa\n', stderr: '' },
+      'status --porcelain': { stdout: '', stderr: '' },
+      'diff --summary': { stdout: '', stderr: '' },
+      'config --local core.fileMode': { stdout: '', stderr: '' },
+    });
+    const bm = new BuildManager({
+      repoRoot: REPO, stagingPath: STAGING, dataDir: DATA,
+      smokeRunner: makeSmoke({ ok: true, passed: 1, failed: 0, failedChecks: [], reason: 'OK', durationMs: 1 }),
+      runExec, fsApi: makeFakeFs(),
+      nowFn: () => FIXED_NOW,
+    });
+
+    await bm.attemptUpdate();
+    await bm.attemptUpdate();
+    const fileModeCount = calls.filter((c) => c.includes('core.fileMode')).length;
+    expect(fileModeCount).toBe(1);
+  });
+});
+
+describe('BuildManager post-swap drift reporting', () => {
+  test('reports remaining drift after swap in result and build info', async () => {
+    let statusCallCount = 0;
+    const { runExec } = makeRunExecRecorder({
+      'rev-parse HEAD': { stdout: 'oldsha7777777\n', stderr: '' },
+      'rev-parse origin/main': { stdout: 'newsha8888888\n', stderr: '' },
+      'log -1 --pretty=%s': { stdout: 'chore: test post-swap\n', stderr: '' },
+      'config --local core.fileMode': { stdout: '', stderr: '' },
+      'diff --summary': { stdout: '', stderr: '' },
+      'status --porcelain': () => {
+        statusCallCount++;
+        if (statusCallCount <= 1) return { stdout: '', stderr: '' };
+        return { stdout: '?? leftover.tmp\n', stderr: '' };
+      },
+    });
+    const fsApi = makeFakeFs();
+    const firestoreSync = { publishBuildInfo: jest.fn().mockResolvedValue(true) };
+    const logs = [];
+    const bm = new BuildManager({
+      repoRoot: REPO, stagingPath: STAGING, dataDir: DATA,
+      smokeRunner: makeSmoke({ ok: true, passed: 25, failed: 0, failedChecks: [], reason: 'OK', durationMs: 100 }),
+      runExec, fsApi, firestoreSync,
+      nowFn: () => FIXED_NOW,
+      log: (msg) => logs.push(msg),
+    });
+
+    const result = await bm.attemptUpdate();
+
+    expect(result.success).toBe(true);
+    expect(result.postSwapDrift).toBeTruthy();
+    expect(result.postSwapDrift.untracked).toContain('leftover.tmp');
+    expect(logs.some((l) => l.includes('post-swap drift'))).toBe(true);
+
+    const buildInfo = JSON.parse(fsApi._store.get(path.join(DATA, 'build-info.json')));
+    expect(buildInfo.postSwapDrift).toBeTruthy();
+    expect(buildInfo.postSwapDrift.total).toBeGreaterThan(0);
+  });
+});
+
+describe('BuildManager observe-only policy', () => {
+  test('does NOT run git clean even when drift is detected', async () => {
+    const { runExec, calls } = makeRunExecRecorder({
+      'rev-parse HEAD': { stdout: 'aaa\n', stderr: '' },
+      'rev-parse origin/main': { stdout: 'bbb\n', stderr: '' },
+      'log -1 --pretty=%s': { stdout: 'feat: observe test\n', stderr: '' },
+      'status --porcelain': { stdout: '?? stray-junk.jpg\n M drifted-cfg.js\n', stderr: '' },
+      'diff --summary': { stdout: '', stderr: '' },
+      'config --local core.fileMode': { stdout: '', stderr: '' },
+    });
+    const bm = new BuildManager({
+      repoRoot: REPO, stagingPath: STAGING, dataDir: DATA,
+      smokeRunner: makeSmoke({ ok: true, passed: 25, failed: 0, failedChecks: [], reason: 'OK', durationMs: 1 }),
+      runExec, fsApi: makeFakeFs(),
+      firestoreSync: { publishBuildInfo: jest.fn().mockResolvedValue(true) },
+      nowFn: () => FIXED_NOW,
+    });
+
+    await bm.attemptUpdate();
+
+    const allCmds = calls.join('\n');
+    expect(allCmds).not.toMatch(/git clean/);
+    expect(allCmds).not.toMatch(/git stash/);
+    expect(allCmds).not.toMatch(/git checkout -- /);
+  });
+});

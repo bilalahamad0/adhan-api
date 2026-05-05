@@ -66,6 +66,7 @@ class BuildManager {
     this.prayerWindowProvider = prayerWindowProvider;
     this.timezone = timezone;
     this._inProgress = false;
+    this._fileModeApplied = false;
     this._buildInfoPath = path.join(dataDir, 'build-info.json');
     this._sentinelPath = path.join(repoRoot, '.deploy-in-progress');
   }
@@ -112,6 +113,8 @@ class BuildManager {
       sha: null,
       previousSha: null,
       smokeResult: null,
+      drift: null,
+      postSwapDrift: null,
       stage: 'init',
     };
 
@@ -123,6 +126,21 @@ class BuildManager {
           result.stage = 'guard';
           return result;
         }
+      }
+
+      await this._ensureFileMode();
+
+      result.stage = 'drift-preflight';
+      const drift = await this._detectDrift();
+      result.drift = drift;
+      if (drift && drift.total > 0) {
+        this.log(`[BuildManager] drift detected: ${drift.total} items (${drift.modified.length} modified, ${drift.deleted.length} deleted, ${drift.untracked.length} untracked, ${drift.modeOnly.length} mode-only)`);
+        if (drift.modified.length > 0) this.log(`[BuildManager]   modified: ${drift.modified.slice(0, 5).join(', ')}${drift.modified.length > 5 ? ' ...' : ''}`);
+        if (drift.untracked.length > 0) this.log(`[BuildManager]   untracked: ${drift.untracked.slice(0, 5).join(', ')}${drift.untracked.length > 5 ? ' ...' : ''}`);
+        if (drift.modeOnly.length > 0) this.log(`[BuildManager]   mode-only: ${drift.modeOnly.slice(0, 5).join(', ')}${drift.modeOnly.length > 5 ? ' ...' : ''}`);
+        if (drift.deleted.length > 0) this.log(`[BuildManager]   deleted: ${drift.deleted.slice(0, 5).join(', ')}${drift.deleted.length > 5 ? ' ...' : ''}`);
+      } else {
+        this.log('[BuildManager] drift preflight: working tree clean');
       }
 
       result.stage = 'check';
@@ -181,6 +199,13 @@ class BuildManager {
       result.stage = 'swap';
       await this._atomicSwap(newSha);
 
+      result.stage = 'post-swap-check';
+      const postDrift = await this._detectDrift();
+      result.postSwapDrift = postDrift;
+      if (postDrift && postDrift.total > 0) {
+        this.log(`[BuildManager] post-swap drift: ${postDrift.total} items remain (${postDrift.modified.length} modified, ${postDrift.untracked.length} untracked, ${postDrift.modeOnly.length} mode-only)`);
+      }
+
       result.stage = 'publish';
       const versionInfo = await this._computeVersionLabel(newSha);
       const buildRecord = {
@@ -196,6 +221,8 @@ class BuildManager {
           ts: this.nowFn().toISO(),
         },
         lastFailure: await this._readPreviousFailure(),
+        driftSnapshot: BuildManager.summarizeDrift(drift),
+        postSwapDrift: BuildManager.summarizeDrift(postDrift),
       };
 
       const privacyCheck = BuildManager.assertPrivacy(buildRecord, process.env);
@@ -276,6 +303,38 @@ class BuildManager {
     return { currentSha: stdout.trim() };
   }
 
+  async _ensureFileMode() {
+    if (this._fileModeApplied) return;
+    try {
+      await this.runExec(`git -C ${this.repoRoot} config --local core.fileMode false`);
+      this._fileModeApplied = true;
+      this.log('[BuildManager] core.fileMode set to false');
+    } catch (e) {
+      this.log(`[BuildManager] failed to set core.fileMode: ${e.message}`);
+    }
+  }
+
+  async _detectDrift() {
+    try {
+      const { stdout: statusOut } = await this.runExec(
+        `git -C ${this.repoRoot} status --porcelain=v1 -uall`,
+        { timeoutMs: 15_000 },
+      );
+      let diffSummary = '';
+      try {
+        const { stdout } = await this.runExec(
+          `git -C ${this.repoRoot} diff --summary`,
+          { timeoutMs: 15_000 },
+        );
+        diffSummary = stdout;
+      } catch { /* diff --summary is optional */ }
+      return BuildManager.parseDriftOutput(statusOut, diffSummary);
+    } catch (e) {
+      this.log(`[BuildManager] drift detection failed: ${e.message}`);
+      return null;
+    }
+  }
+
   async _prepareStaging(sha) {
     if (this.fs.existsSync(this.stagingPath)) {
       await this.runExec(`git -C ${this.repoRoot} worktree remove --force ${this.stagingPath}`)
@@ -349,6 +408,61 @@ class BuildManager {
     if (!m) return 'chore';
     const type = m[1].toLowerCase();
     return KNOWN_TYPES.includes(type) ? type : 'chore';
+  }
+
+  /**
+   * Parse `git status --porcelain=v1 -uall` and optional `git diff --summary`
+   * into categorized drift buckets.
+   */
+  static parseDriftOutput(statusOutput, diffSummary = '') {
+    const drift = { modified: [], deleted: [], untracked: [], modeOnly: [], total: 0 };
+
+    const statusLines = (statusOutput || '').split('\n').filter(Boolean);
+    for (const line of statusLines) {
+      const xy = line.slice(0, 2);
+      const filePath = line.slice(3);
+      if (xy === '??') {
+        drift.untracked.push(filePath);
+      } else if (xy.includes('D')) {
+        drift.deleted.push(filePath);
+      } else {
+        drift.modified.push(filePath);
+      }
+    }
+
+    const modeSet = new Set();
+    const modeLines = (diffSummary || '').split('\n').filter((l) => l.includes('mode change'));
+    for (const line of modeLines) {
+      const match = line.match(/mode change \d+ => \d+ (.+)/);
+      if (match) {
+        const fp = match[1].trim();
+        modeSet.add(fp);
+        drift.modeOnly.push(fp);
+      }
+    }
+    if (modeSet.size > 0) {
+      drift.modified = drift.modified.filter((f) => !modeSet.has(f));
+    }
+
+    drift.total = drift.modified.length + drift.deleted.length
+      + drift.untracked.length + drift.modeOnly.length;
+    return drift;
+  }
+
+  static summarizeDrift(drift) {
+    if (!drift || drift.total === 0) return null;
+    return {
+      modified: drift.modified.length,
+      deleted: drift.deleted.length,
+      untracked: drift.untracked.length,
+      modeOnly: drift.modeOnly.length,
+      total: drift.total,
+      samples: [
+        ...drift.modified.slice(0, 3),
+        ...drift.untracked.slice(0, 3),
+        ...drift.modeOnly.slice(0, 2),
+      ],
+    };
   }
 
   async _dailySequence(today, type) {
