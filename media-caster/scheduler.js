@@ -93,6 +93,23 @@ async function ensureAudioCache() {
     }
 }
 
+// --- DYNAMIC VOLUME SYSTEM ---
+function getDynamicVolume(prayerName, isTvActive) {
+    if (isTvActive) return 0.45;
+
+    const baseVolumeMap = {
+        Fajr: 0.35,
+        Dhuhr: 0.40,
+        Asr: 0.40,
+        Maghrib: 0.40,
+        Isha: 0.40
+    };
+    
+    // Capitalize first letter to ensure matching
+    const normalizedName = prayerName.charAt(0).toUpperCase() + prayerName.slice(1).toLowerCase();
+    return baseVolumeMap[normalizedName] || 0.40;
+}
+
 // --- ENGINE (Phase 16: Zero-Latency Restoration) ---
 async function executePreFlightAndCast(prayerName, audioFileName, targetTimeObj, prayerContext = null) {
     const localIp = getLocalIp();
@@ -394,9 +411,10 @@ async function executePreFlightAndCast(prayerName, audioFileName, targetTimeObj,
                         originalVolume = status.volume.level;
                     }
 
-                    log(`🔊 Setting Volume to ${CONFIG.device.targetVolume}...`);
+                    const dynamicVolume = getDynamicVolume(prayerName, tvWasInterrupted);
+                    log(`🔊 Setting Volume to ${dynamicVolume}...`);
                     try {
-                        device.setVolume(CONFIG.device.targetVolume, (volErr) => {
+                        device.setVolume(dynamicVolume, (volErr) => {
                             if (volErr) log(`⚠️ Volume set error (non-fatal): ${volErr.message}`);
                             startPlayback();
                         });
