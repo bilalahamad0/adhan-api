@@ -286,9 +286,9 @@ class BuildManager {
 
   async _installDeps() {
     await this.runExec(`cd ${this.stagingPath} && npm ci --omit=dev --no-audit --no-fund`, { timeoutMs: 6 * 60_000 });
-    const audioCaster = path.join(this.stagingPath, 'audio-caster');
-    if (this.fs.existsSync(path.join(audioCaster, 'package.json'))) {
-      await this.runExec(`cd ${audioCaster} && npm ci --omit=dev --no-audit --no-fund`, { timeoutMs: 6 * 60_000 });
+    const mediaCaster = path.join(this.stagingPath, 'media-caster');
+    if (this.fs.existsSync(path.join(mediaCaster, 'package.json'))) {
+      await this.runExec(`cd ${mediaCaster} && npm ci --omit=dev --no-audit --no-fund`, { timeoutMs: 6 * 60_000 });
     }
   }
 
@@ -314,9 +314,9 @@ class BuildManager {
 
   async _installLiveDeps() {
     await this.runExec(`cd ${this.repoRoot} && npm ci --omit=dev --no-audit --no-fund`, { timeoutMs: 6 * 60_000 });
-    const audioCaster = path.join(this.repoRoot, 'audio-caster');
-    if (this.fs.existsSync(path.join(audioCaster, 'package.json'))) {
-      await this.runExec(`cd ${audioCaster} && npm ci --omit=dev --no-audit --no-fund`, { timeoutMs: 6 * 60_000 });
+    const mediaCaster = path.join(this.repoRoot, 'media-caster');
+    if (this.fs.existsSync(path.join(mediaCaster, 'package.json'))) {
+      await this.runExec(`cd ${mediaCaster} && npm ci --omit=dev --no-audit --no-fund`, { timeoutMs: 6 * 60_000 });
     }
   }
 

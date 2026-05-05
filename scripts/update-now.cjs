@@ -18,10 +18,10 @@ function runInProcess() {
   process.env.UPDATE_DRY_RUN = dryRun ? '1' : '0';
   // Lazy-require so PATH for child npm is correct.
   const path = require('path');
-  const BuildManager = require(path.join(__dirname, '..', 'audio-caster', 'services', 'BuildManager'));
-  const SmokeRunner = require(path.join(__dirname, '..', 'audio-caster', 'services', 'SmokeRunner'));
-  const FirestoreSync = require(path.join(__dirname, '..', 'audio-caster', 'services', 'FirestoreSync'));
-  require('dotenv').config({ path: path.join(__dirname, '..', 'audio-caster', '.env') });
+  const BuildManager = require(path.join(__dirname, '..', 'media-caster', 'services', 'BuildManager'));
+  const SmokeRunner = require(path.join(__dirname, '..', 'media-caster', 'services', 'SmokeRunner'));
+  const FirestoreSync = require(path.join(__dirname, '..', 'media-caster', 'services', 'FirestoreSync'));
+  require('dotenv').config({ path: path.join(__dirname, '..', 'media-caster', '.env') });
 
   const REPO_ROOT = path.resolve(__dirname, '..');
   const STAGING_PATH = process.env.UPDATE_STAGING_PATH || '/tmp/adhan-staging';
@@ -33,7 +33,7 @@ function runInProcess() {
   const firestoreSync = new FirestoreSync(
     process.env.FIREBASE_SERVICE_KEY,
     TIMEZONE,
-    path.join(REPO_ROOT, 'audio-caster', 'annual_schedule.json'),
+    path.join(REPO_ROOT, 'media-caster', 'annual_schedule.json'),
   );
   const smokeRunner = new SmokeRunner();
   const bm = new BuildManager({

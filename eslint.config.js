@@ -6,7 +6,7 @@ export default [
   js.configs.recommended,
   eslintConfigPrettier,
   {
-    ignores: ['node_modules/', 'audio-caster/node_modules/', 'scripts/triggerAdhan.js'],
+    ignores: ['node_modules/', 'media-caster/node_modules/', 'scripts/triggerAdhan.js'],
   },
   {
     files: ['**/*.js'],

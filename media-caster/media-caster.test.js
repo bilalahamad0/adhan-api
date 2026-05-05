@@ -145,7 +145,7 @@ jest.mock('express', () => {
   return expressMock;
 });
 
-describe('Audio Caster Coverage', () => {
+describe('Media Caster Coverage', () => {
   beforeEach(() => {
     process.env.TV_IP = '127.0.0.1';
   });

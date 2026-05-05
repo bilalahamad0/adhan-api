@@ -155,7 +155,7 @@ let serverInstance = null;
 function startServer() {
   if (!serverInstance) {
     serverInstance = app.listen(PORT, () => {
-      console.log(`🚀 Audio Caster running on port ${PORT}`);
+      console.log(`🚀 Media Caster running on port ${PORT}`);
       console.log('📡 Scanning for Google Cast devices...');
     });
   }

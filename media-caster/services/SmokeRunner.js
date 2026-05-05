@@ -14,7 +14,7 @@ class SmokeRunner {
   async run({ stagingPath, extraEnv = {}, spawnImpl } = {}) {
     if (!stagingPath) throw new Error('SmokeRunner.run requires stagingPath');
     const childSpawn = spawnImpl || spawn;
-    const bootJs = path.join('audio-caster', 'boot.js');
+    const bootJs = path.join('media-caster', 'boot.js');
     const env = {
       ...process.env,
       SERVER_PORT: String(this.port),
