@@ -1,4 +1,4 @@
-# 🕌 Adhan Audio Caster: AI-Native IoT Orchestration Engine
+# 🕌 Adhan Media Caster: AI-Native IoT Orchestration Engine
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node.js Version](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen)](https://nodejs.org/)
@@ -13,7 +13,7 @@
 
 ## 🌟 Overview
 
-**Adhan Audio Caster** is a high-performance Smart Home IoT Automation Platform that transforms standard household hardware into a precision, context-aware media ecosystem. 
+**Adhan Media Caster** is a high-performance Smart Home IoT Automation Platform that transforms standard household hardware into a precision, context-aware media ecosystem. 
 
 Developed using an **Agentic AI workflow**, the system leverages a **Raspberry Pi core** to command a complex multi-device lifecycle. It bridges the gap between digital entertainment and daily ritual by orchestrating a synchronized environment: broadcasting high-fidelity prayer audio to **Google Nest Hubs** while utilizing **ADB-level protocol injection** to intelligently manage the media state of **Sony Android TVs**.
 
@@ -72,7 +72,7 @@ This project features a **Live AI-Driven Engineering Dashboard** that tracks dev
 
 ---
 
-**Adhan Audio Caster** integrates with **Android TV** via ADB to intelligently pause your media content during the Adhan and resume it afterwards.
+**Adhan Media Caster** integrates with **Android TV** via ADB to intelligently pause your media content during the Adhan and resume it afterwards.
 
 ## 🏗️ Deployment & Production Scaling
 
@@ -80,7 +80,7 @@ This project features a **Live AI-Driven Engineering Dashboard** that tracks dev
 To bundle a production-ready artifact for the Raspberry Pi environment:
 ```bash
 # 1. Initialize environment
-cp audio-caster/.env.example audio-caster/.env
+cp media-caster/.env.example media-caster/.env
 
 # 2. Build production tarball
 npm run build:prod
@@ -90,7 +90,7 @@ npm run build:prod
 ```
 # Clone and initialize
 git clone [https://github.com/bilalahamad0/adhan-api.git](https://github.com/bilalahamad0/adhan-api.git)
-cd adhan-api/audio-caster
+cd adhan-api/media-caster
 npm install
 
 # Deploy with PM2 for high availability
@@ -98,7 +98,7 @@ pm2 start boot.js --name adhan-caster
 pm2 save
 ```
 
-After you change any `audio-caster` files on the Pi (`git pull`, tarball, or copy), **restart the process** or Node will still be running the old code:
+After you change any `media-caster` files on the Pi (`git pull`, tarball, or copy), **restart the process** or Node will still be running the old code:
 
 ```bash
 pm2 restart adhan-caster --update-env
@@ -119,8 +119,8 @@ node boot.js --test --debug
 
 | Module | Functional Responsibility |
 | :--- | :--- |
-| `audio-caster/boot.js` | **Orchestration Core**. Manages timing, device lifecycles, and ADB interrupts. |
-| `audio-caster/visual_generator.js` | **Rendering Engine**. Dynamically builds HD visuals using Canvas. |
+| `media-caster/boot.js` | **Orchestration Core**. Manages timing, device lifecycles, and ADB interrupts. |
+| `media-caster/visual_generator.js` | **Rendering Engine**. Dynamically builds HD visuals using Canvas. |
 | `DEPLOYMENT_GUIDE_PI.md` | **Hardware-specific provisioning and Linux optimization guide**. |
 
 ---

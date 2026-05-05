@@ -1,6 +1,6 @@
 # Raspberry Pi 4 Deployment Guide for Adhan Caster
 
-This guide will help you migrate and host the `adhan-api/audio-caster` on your Raspberry Pi 4 (IP: `192.168.1.PI_IP`).
+This guide will help you migrate and host the `adhan-api/media-caster` on your Raspberry Pi 4 (IP: `192.168.1.PI_IP`).
 
 ## 1. Prerequisites (Run on Raspberry Pi)
 
@@ -71,7 +71,7 @@ Once logged in to the Pi, run:
 ```bash
 mkdir -p ~/adhan-api
 tar -xzf ~/adhan-api-production.tar.gz -C ~/adhan-api
-cd ~/adhan-api/audio-caster
+cd ~/adhan-api/media-caster
 npm install --omit=dev
 ```
 
@@ -80,8 +80,8 @@ npm install --omit=dev
 Navigate to the directory on the Pi:
 
 ```bash
-cd ~/adhan-api/audio-caster
-# OR if you copied it: cd ~/adhan-audio-caster
+cd ~/adhan-api/media-caster
+# OR if you copied it: cd ~/adhan-media-caster
 ```
 
 **CRITICAL IF COPIED FROM MAC:**
@@ -150,7 +150,7 @@ pm2 start ecosystem.config.cjs
 If you need to manage services individually:
 ```bash
 # Start Adhan Caster
-cd ~/adhan-api/audio-caster
+cd ~/adhan-api/media-caster
 pm2 start boot.js --name adhan-caster
 
 # Start ADB Keeper
@@ -237,15 +237,15 @@ git clone https://github.com/bilalahamad0/adhan-api.git
 cd adhan-api
 
 # 3. Restore Pi-only files (never in git)
-cp ../adhan-api.legacy/audio-caster/.env audio-caster/.env
-cp -r ../adhan-api.legacy/audio-caster/audio audio-caster/audio
-cp ../adhan-api.legacy/audio-caster/annual_schedule.json audio-caster/annual_schedule.json 2>/dev/null || true
+cp ../adhan-api.legacy/media-caster/.env media-caster/.env
+cp -r ../adhan-api.legacy/media-caster/audio media-caster/audio
+cp ../adhan-api.legacy/media-caster/annual_schedule.json media-caster/annual_schedule.json 2>/dev/null || true
 mkdir -p ~/.adhan-data
 cp ../adhan-api.legacy/.adhan-data/* ~/.adhan-data/ 2>/dev/null || true
 
 # 4. Install
 npm install
-cd audio-caster && npm install --omit=dev && cd ..
+cd media-caster && npm install --omit=dev && cd ..
 
 # 5. Reload PM2 (now includes auto-updater)
 pm2 reload ecosystem.config.cjs

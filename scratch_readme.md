@@ -45,7 +45,7 @@ It also integrates with **Android TV** via ADB to intelligently pause your media
 1.  **Clone & Install**
     ```bash
     git clone https://github.com/bilalahamad0/adhan-api.git
-    cd adhan-api/audio-caster
+    cd adhan-api/media-caster
     npm install
     ```
 
@@ -73,8 +73,8 @@ node scheduler.js --test --debug
 
 | File/Folder | Description |
 | :--- | :--- |
-| `audio-caster/scheduler.js` | **Core Engine**. Handles timing, casting, ADB, and polling logic. |
-| `audio-caster/visual_generator.js` | Generates the 1280x800 dashboard image using Canvas & OpenMeteo. |
+| `media-caster/scheduler.js` | **Core Engine**. Handles timing, casting, ADB, and polling logic. |
+| `media-caster/visual_generator.js` | Generates the 1280x800 dashboard image using Canvas & OpenMeteo. |
 | `DEPLOYMENT_GUIDE_PI.md` | Detailed step-by-step guide for Pi setup. |
 | `images/` | Background assets for different prayers. |
 

@@ -21,7 +21,7 @@ const fs = require('fs');
 const net = require('net');
 const path = require('path');
 
-const CACHE_PATH = path.join(__dirname, '..', 'audio-caster', '.cast-cache.json');
+const CACHE_PATH = path.join(__dirname, '..', 'media-caster', '.cast-cache.json');
 
 function run(cmd, timeoutMs = 8000) {
   return new Promise((resolve) => {
