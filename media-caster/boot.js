@@ -86,6 +86,7 @@ async function bootSystem() {
   app.use(express.json());
   app.use('/audio', express.static(audioDirPath));
   app.use('/images', express.static(path.join(__dirname, '..', 'images')));
+  app.use('/', express.static(path.join(__dirname, '..')));
   
   app.get('/health', (req, res) => {
     let buildInfo = null;
