@@ -412,7 +412,7 @@ async function executePreFlightAndCast(prayerName, audioFileName, targetTimeObj,
                     }
 
                     const dynamicVolume = getDynamicVolume(prayerName, tvWasInterrupted);
-                    log(`🔊 Setting Volume to ${dynamicVolume}...`);
+                    log(`🔊 Setting Volume to ${(dynamicVolume * 100).toFixed(0)}% (${prayerName}${tvWasInterrupted ? ', TV active override' : ''})`);
                     try {
                         device.setVolume(dynamicVolume, (volErr) => {
                             if (volErr) log(`⚠️ Volume set error (non-fatal): ${volErr.message}`);

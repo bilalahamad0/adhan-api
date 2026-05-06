@@ -123,6 +123,21 @@ class CoreScheduler {
         });
     }
 
+    _getDynamicVolume(prayerName, isTvActive) {
+        const normalizedName = String(prayerName || '')
+            .charAt(0).toUpperCase() + String(prayerName || '').slice(1).toLowerCase();
+        if (isTvActive) return normalizedName === 'Fajr' ? 0.40 : 0.45;
+
+        const baseVolumeMap = {
+            Fajr: 0.35,
+            Dhuhr: 0.40,
+            Asr: 0.40,
+            Maghrib: 0.40,
+            Isha: 0.40,
+        };
+        return baseVolumeMap[normalizedName] || 0.40;
+    }
+
     async discoverDeviceByName(deviceName, log, prayerName, customTimeoutMs = null) {
         // Warm path: prior successful cast persisted host:port. Skip mDNS entirely
         // when the cache is fresh + reachable — sidesteps Wi-Fi↔LAN multicast bridges
@@ -640,7 +655,10 @@ class CoreScheduler {
             if (this.playbackLogger) this.playbackLogger.recordCastConnectStart(prayerName);
             device.getReceiverStatus((err, status) => {
                 if (!err && status && status.volume) originalVolume = status.volume.level;
-                device.setVolume(CONFIG.device.targetVolume, () => {
+                const tvWasActive = tvWasPaused || tvWasMuted;
+                const dynamicVolume = this._getDynamicVolume(prayerName, tvWasActive);
+                log(`🔊 Setting Volume to ${(dynamicVolume * 100).toFixed(0)}% (${prayerName}${tvWasActive ? ', TV active override' : ''})`);
+                device.setVolume(dynamicVolume, () => {
                     const dashboardUrl = `http://${localIp}:${CONFIG.serverPort}/images/generated/current_dashboard.jpg?t=${Date.now()}`;
                     const media = {
                         url: effectiveCastUrl, contentType: 'video/mp4',
