@@ -640,11 +640,12 @@ function computeAggregate(dailyStats) {
     });
 
     const success = totalPlayed + totalRecovered;
-    const successRate = totalPrayers > 0 ? Math.round((success / totalPrayers) * 100) : null;
+    const totalExecuted = totalPlayed + totalRecovered + totalFailed;
+    const successRate = totalExecuted > 0 ? Math.round((success / totalExecuted) * 100) : null;
     const recoveryRate = totalFailed + totalRecovered > 0 ? Math.round((totalRecovered / (totalFailed + totalRecovered)) * 100) : null;
     const avgLatencyMs = latencyCount > 0 ? Math.round(latencySum / latencyCount) : null;
 
-    return { successRate, streak, avgLatencyMs, recoveryRate, totalPrayers };
+    return { successRate, streak, currentStreak, avgLatencyMs, recoveryRate, totalPrayers };
 }
 
 function setStatus(online) {
@@ -767,6 +768,9 @@ function renderPrayerGrid() {
         if (d.prePlayDurationMs != null) breakdownParts.push('pre-play ' + fmtSec(d.prePlayDurationMs));
         if (d.castConnectDurationMs != null) breakdownParts.push('cast ' + fmtSec(d.castConnectDurationMs));
         if (latStr) breakdownParts.push('Latency ' + latStr);
+        if (st === 'FAILED' && d.failureReason) {
+            breakdownParts.push(`<span style="color:var(--accent-red);font-weight:600">${d.failureReason}</span>`);
+        }
         const breakdownLine = (st !== 'PENDING' && breakdownParts.length)
             ? `<div class="prayer-detail" style="font-size:0.75em;color:var(--text-muted)">${breakdownParts.join(' · ')}</div>`
             : (st !== 'PENDING' && latStr ? `<div class="prayer-detail">Latency: ${latStr}</div>` : '');
@@ -790,7 +794,9 @@ function renderKPIs() {
     srEl.textContent = agg.successRate != null ? agg.successRate + '%' : '--';
     srEl.style.color = agg.successRate >= 95 ? 'var(--accent-green)' : agg.successRate >= 80 ? 'var(--accent-yellow)' : 'var(--accent-red)';
 
-    document.getElementById('kpi-streak').textContent = agg.streak != null ? agg.streak + 'd' : '--';
+    document.getElementById('kpi-streak').textContent = agg.streak != null ? `${agg.currentStreak}d / ${agg.streak}d` : '--';
+    const streakSubEl = document.getElementById('kpi-streak').nextElementSibling;
+    if (streakSubEl) streakSubEl.textContent = 'Current / Longest';
 
     const latEl = document.getElementById('kpi-latency');
     if (agg.avgLatencyMs != null) {
@@ -968,11 +974,16 @@ function renderEventsLog() {
         return;
     }
 
-    const sorted = [...filtered].sort((a,b) => {
-        const da = (a.date || '') + (a.completedTime || a.triggerTime || '');
-        const db = (b.date || '') + (b.completedTime || b.triggerTime || '');
-        return db.localeCompare(da);
+    const prayerOrder = { 'Fajr': 1, 'Dhuhr': 2, 'Asr': 3, 'Maghrib': 4, 'Isha': 5 };
+
+    const sorted = [...filtered].filter(e => (e.status || '').toUpperCase() !== 'PENDING').sort((a,b) => {
+        return (prayerOrder[a.prayer] || 99) - (prayerOrder[b.prayer] || 99);
     }).slice(0, 30);
+
+    if (sorted.length === 0) {
+        container.innerHTML = '<div class="empty-state"><p>No executed events recorded yet.</p></div>';
+        return;
+    }
 
     container.innerHTML = sorted.map(e => {
         const st = (e.status || 'PENDING').toUpperCase();
