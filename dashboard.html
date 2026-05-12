@@ -79,7 +79,7 @@
         .chart-section { display:grid; grid-template-columns:2fr 1fr; gap:0.75rem; margin-bottom:1.5rem; }
         .chart-card { min-height:220px; }
         .chart-sub { font-size:0.65rem; color:var(--text-muted); margin:-0.35rem 0 0.5rem 0; line-height:1.35; }
-        .chart-area { width:100%; height:180px; }
+        .chart-area { width:100%; height:260px; }
         .chart-bar { rx:3; transition:all 0.3s; cursor:pointer; }
         .chart-bar:hover { opacity:0.85; }
         .chart-label { font-size:10px; fill:var(--text-muted); text-anchor:middle; }
@@ -279,7 +279,7 @@
             <div class="card chart-card">
                 <div class="card-title">7-Day Trend</div>
                 <div class="chart-sub">Daily success rate (played + recovered). Latency is in KPIs above.</div>
-                <svg class="chart-area" id="trend-chart" viewBox="0 0 500 180" preserveAspectRatio="xMidYMid meet"></svg>
+                <svg class="chart-area" id="trend-chart" viewBox="0 0 500 260" preserveAspectRatio="xMidYMid meet"></svg>
             </div>
             <div class="card cal-card">
                 <div class="card-title">Monthly Heatmap</div>
@@ -864,7 +864,7 @@ function renderTrendChart() {
     }
 
     const W = 500;
-    const H = 180;
+    const H = 260;
     const PAD_L = 34;
     const PAD_R = 12;
     const PAD_T = 22;
