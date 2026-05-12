@@ -297,6 +297,15 @@ class CoreScheduler {
             return;
         }
 
+        // Prevent massively delayed triggers (e.g. clock jumps after network reconnect)
+        if (targetTimeObj) {
+            const delayMs = Date.now() - targetTimeObj.toMillis();
+            if (delayMs > 30 * 60 * 1000) { // 30 minutes
+                log(`⏭️ Skipping ${prayerName}: trigger is too old (latency: ${Math.round(delayMs / 1000)}s). System clock likely jumped.`);
+                return;
+            }
+        }
+
         if (!targetTimeObj && (state === 'PLAYING' || state === 'DUA' || state === 'COMPLETED')) {
             return;
         }
