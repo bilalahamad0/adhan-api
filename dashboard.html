@@ -928,9 +928,10 @@ function renderLatencyChart() {
 
     const dataPoints = dates.map(date => {
         const lats = dailyLatencies[date].sort((a,b) => a - b);
-        const p50 = lats[Math.floor((lats.length - 1) * 0.50)];
-        const p95 = lats[Math.floor((lats.length - 1) * 0.95)];
-        const p99 = lats[Math.floor((lats.length - 1) * 0.99)];
+        const getP = (arr, p) => arr[Math.max(0, Math.ceil(arr.length * p) - 1)];
+        const p50 = getP(lats, 0.50);
+        const p95 = getP(lats, 0.95);
+        const p99 = getP(lats, 0.99);
         return { date, p50, p95, p99 };
     });
 
