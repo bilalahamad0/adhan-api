@@ -293,6 +293,13 @@
             </div>
         </div>
 
+        <!-- Latency Profiling Chart -->
+        <div class="card" style="margin-bottom:1.5rem">
+            <div class="card-title">Latency Profiling</div>
+            <div class="chart-sub">Historical p50, p95, and p99 trigger-to-playback latency</div>
+            <svg class="chart-area" id="latency-chart" viewBox="0 0 1000 260" preserveAspectRatio="xMidYMid meet" style="width:100%;height:auto;max-height:300px;"></svg>
+        </div>
+
         <!-- Recent Events -->
         <div class="card" style="margin-bottom:1.5rem">
             <div class="card-title" id="events-title">Recent Playback Events</div>
@@ -670,6 +677,7 @@ function renderAll() {
     renderKPIs();
     renderTrendChart();
     renderCalendar();
+    renderLatencyChart();
     renderEventsLog();
     renderHealth();
     renderSyncFooter();
@@ -894,6 +902,106 @@ function renderTrendChart() {
         const label = d.label ? d.label.slice(5) : '';
         html += `<text class="chart-label" x="${x}" y="${H - 6}">${label}</text>`;
     });
+
+    svg.innerHTML = html;
+}
+
+// --- Latency Profiling Chart ---
+function renderLatencyChart() {
+    const svg = document.getElementById('latency-chart');
+    if (!svg || !metricsData || !metricsData.events) return;
+
+    // Group latencies by date
+    const dailyLatencies = {};
+    metricsData.events.forEach(e => {
+        if (e.triggerLatencyMs != null && e.date) {
+            if (!dailyLatencies[e.date]) dailyLatencies[e.date] = [];
+            dailyLatencies[e.date].push(e.triggerLatencyMs);
+        }
+    });
+
+    const dates = Object.keys(dailyLatencies).sort();
+    if (dates.length === 0) {
+        svg.innerHTML = '<text x="500" y="130" text-anchor="middle" fill="#64748b" font-size="12">No latency data</text>';
+        return;
+    }
+
+    const dataPoints = dates.map(date => {
+        const lats = dailyLatencies[date].sort((a,b) => a - b);
+        const p50 = lats[Math.floor((lats.length - 1) * 0.50)];
+        const p95 = lats[Math.floor((lats.length - 1) * 0.95)];
+        const p99 = lats[Math.floor((lats.length - 1) * 0.99)];
+        return { date, p50, p95, p99 };
+    });
+
+    const W = 1000;
+    const H = 260;
+    const PAD_L = 40;
+    const PAD_R = 20;
+    const PAD_T = 30;
+    const PAD_B = 30;
+    const chartW = W - PAD_L - PAD_R;
+    const chartH = H - PAD_T - PAD_B;
+
+    let maxLat = Math.max(...dataPoints.map(d => d.p99));
+    if (maxLat === 0) maxLat = 1000;
+    // Round up to nearest second or 1000ms
+    const maxY = Math.ceil(maxLat / 1000) * 1000;
+
+    const gap = dataPoints.length > 1 ? chartW / (dataPoints.length - 1) : chartW;
+
+    let html = '';
+    // Gridlines
+    for (let i = 0; i <= 4; i++) {
+        const y = PAD_T + (chartH / 4) * i;
+        html += `<line x1="${PAD_L}" y1="${y}" x2="${W - PAD_R}" y2="${y}" class="chart-gridline"/>`;
+        const val = maxY - (maxY / 4) * i;
+        const label = val >= 1000 ? (val/1000).toFixed(1) + 's' : Math.round(val) + 'ms';
+        html += `<text x="${PAD_L - 8}" y="${y + 3}" font-size="10" fill="#64748b" text-anchor="end">${label}</text>`;
+    }
+
+    // Lines
+    const pathP50 = [];
+    const pathP95 = [];
+    const pathP99 = [];
+
+    dataPoints.forEach((d, i) => {
+        const x = PAD_L + gap * i;
+        const y50 = PAD_T + chartH - (d.p50 / maxY) * chartH;
+        const y95 = PAD_T + chartH - (d.p95 / maxY) * chartH;
+        const y99 = PAD_T + chartH - (d.p99 / maxY) * chartH;
+
+        pathP50.push(`${i===0?'M':'L'}${x},${y50}`);
+        pathP95.push(`${i===0?'M':'L'}${x},${y95}`);
+        pathP99.push(`${i===0?'M':'L'}${x},${y99}`);
+
+        // Interactive dots with hover tooltips
+        html += `<circle cx="${x}" cy="${y99}" r="3" fill="var(--accent-red)" opacity="0.6"><title>${d.date} p99: ${Math.round(d.p99)}ms</title></circle>`;
+        html += `<circle cx="${x}" cy="${y95}" r="3" fill="var(--accent-yellow)" opacity="0.8"><title>${d.date} p95: ${Math.round(d.p95)}ms</title></circle>`;
+        html += `<circle cx="${x}" cy="${y50}" r="3" fill="var(--accent-green)"><title>${d.date} p50: ${Math.round(d.p50)}ms</title></circle>`;
+
+        // X-axis labels (show a few to avoid clutter)
+        if (dataPoints.length <= 14 || i % Math.ceil(dataPoints.length / 7) === 0 || i === dataPoints.length - 1) {
+            const label = d.date.slice(5); // MM-DD
+            html += `<text class="chart-label" x="${x}" y="${H - 10}">${label}</text>`;
+        }
+    });
+
+    html += `<path d="${pathP99.join(' ')}" fill="none" stroke="var(--accent-red)" stroke-width="2" opacity="0.6"/>`;
+    html += `<path d="${pathP95.join(' ')}" fill="none" stroke="var(--accent-yellow)" stroke-width="2" opacity="0.8"/>`;
+    html += `<path d="${pathP50.join(' ')}" fill="none" stroke="var(--accent-green)" stroke-width="2"/>`;
+
+    // Legend
+    html += `
+        <g transform="translate(${PAD_L}, 10)">
+            <rect x="0" y="0" width="8" height="8" fill="var(--accent-red)" rx="2" opacity="0.6"/>
+            <text x="12" y="8" font-size="10" fill="var(--text-muted)">p99</text>
+            <rect x="45" y="0" width="8" height="8" fill="var(--accent-yellow)" rx="2" opacity="0.8"/>
+            <text x="57" y="8" font-size="10" fill="var(--text-muted)">p95</text>
+            <rect x="90" y="0" width="8" height="8" fill="var(--accent-green)" rx="2"/>
+            <text x="102" y="8" font-size="10" fill="var(--text-muted)">p50</text>
+        </g>
+    `;
 
     svg.innerHTML = html;
 }
