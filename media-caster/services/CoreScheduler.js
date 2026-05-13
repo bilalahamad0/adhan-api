@@ -302,6 +302,13 @@ class CoreScheduler {
             const delayMs = Date.now() - targetTimeObj.toMillis();
             if (delayMs > 30 * 60 * 1000) { // 30 minutes
                 log(`⏭️ Skipping ${prayerName}: trigger is too old (latency: ${Math.round(delayMs / 1000)}s). System clock likely jumped.`);
+                if (!this._isRescheduling) {
+                    this._isRescheduling = true;
+                    log(`🔄 Initiating True Recovery: Syncing and rescheduling based on correct system time.`);
+                    this.scheduleToday().catch(e => log(`❌ Recovery failed: ${e.message}`)).finally(() => {
+                        this._isRescheduling = false;
+                    });
+                }
                 return;
             }
         }

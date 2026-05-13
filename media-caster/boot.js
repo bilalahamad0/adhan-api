@@ -549,6 +549,13 @@ async function bootSystem() {
     refreshScheduleAndPublishFirestore().catch((e) => {
       console.error('[boot] Daily schedule refresh failed:', e.message);
     });
+
+    // Run Security Auto-Fix
+    const SecurityService = require('./services/SecurityService');
+    const security = new SecurityService(console);
+    security.autoFixVulnerabilities().catch(e => {
+      console.error('[boot] Security auto-fix failed:', e.message);
+    });
   });
 
   // Direct Firestore sync (daily at 23:55 + debounced after each prayer)
