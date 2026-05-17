@@ -1,0 +1,41 @@
+{
+  "projectId": "adhan",
+  "lastUpdated": "2026-05-17",
+  "aiContribution": 92,
+  "agents": [
+    {
+      "name": "Antigravity",
+      "provider": "Google DeepMind",
+      "period": "Feb – Apr 2026",
+      "models": [
+        "Gemini 2.5 Flash",
+        "Gemini 2.5 Pro"
+      ],
+      "tokens": 255000,
+      "role": "v1–v2 architecture"
+    },
+    {
+      "name": "Cursor",
+      "provider": "Anthropic",
+      "period": "Apr 2026 – Present",
+      "models": [
+        "Claude Sonnet 4",
+        "Claude Opus 4.6"
+      ],
+      "tokens": 200000,
+      "role": "v3 pipeline, auto-updater & dashboard"
+    }
+  ],
+  "totalTokens": 455000,
+  "totalCommits": 0,
+  "linesOfCode": 0,
+  "devCycleDays": 4,
+  "manualEstimateDays": 21,
+  "impact": "Zero-touch prayer-time audio notifications with automated media-state control (Raspberry Pi + Android TV via ADB) · 10 microservices",
+  "cycle": "4 days",
+  "beforeAI": "No automation, manual device control",
+  "afterAI": "Zero-touch IoT orchestration system",
+  "microservices": 10,
+  "tests": 54,
+  "testSuites": 12
+}
