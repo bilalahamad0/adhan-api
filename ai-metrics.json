@@ -27,8 +27,8 @@
     }
   ],
   "totalTokens": 455000,
-  "totalCommits": 0,
-  "linesOfCode": 0,
+  "totalCommits": 211,
+  "linesOfCode": 9671,
   "devCycleDays": 4,
   "manualEstimateDays": 21,
   "impact": "Zero-touch prayer-time audio notifications with automated media-state control (Raspberry Pi + Android TV via ADB) · 10 microservices",
