@@ -475,6 +475,25 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 function updateDateDisplay() {
     const now = new Date();
     document.getElementById('gregorian-date').textContent = now.toLocaleDateString('en-US', { weekday:'long', year:'numeric', month:'long', day:'numeric' });
+
+    try {
+        // islamic-umalqura matches Aladhan API's HJCoSA method used in annual_schedule.json
+        const hijriParts = new Intl.DateTimeFormat('en-u-ca-islamic-umalqura', {
+            day: 'numeric', month: 'long', year: 'numeric'
+        }).formatToParts(now);
+        const h = {};
+        hijriParts.forEach(function(p) { h[p.type] = p.value; });
+        document.getElementById('hijri-date').textContent =
+            (h.day || '') + ' ' + (h.month || '') + ' ' + (h.year || '') + ' AH';
+    } catch (_) {
+        // Fallback: islamic calendar (arithmetic approximation)
+        try {
+            document.getElementById('hijri-date').textContent =
+                new Intl.DateTimeFormat('en-u-ca-islamic', {
+                    day: 'numeric', month: 'long', year: 'numeric'
+                }).format(now) + ' AH';
+        } catch (_2) { /* browser doesn't support Islamic calendar extension */ }
+    }
 }
 updateDateDisplay();
 
