@@ -137,6 +137,41 @@ class PlaybackLogger {
     }
   }
 
+  // Marks that the cast cache was hit but the receiver did not respond on the
+  // 3s probe. Distinct from cacheHit=false (which only says "mDNS was needed").
+  // Drives the adaptive skip-cache bias when staleness piles up.
+  recordCacheStale(prayer, deviceName) {
+    const key = this._eventKey(this._now().toISODate(), prayer);
+    const ev = this.pendingEvents.get(key);
+    if (!ev) return;
+    ev.cacheStale = true;
+    if (deviceName && !ev.deviceName) ev.deviceName = deviceName;
+  }
+
+  /**
+   * Returns the count of *consecutive* recent discoveries where the cast
+   * cache was tried but stale, scanning the persisted log from newest
+   * backward. Resets to 0 as soon as a non-stale event is seen.
+   * Used by CoreScheduler to bias toward mDNS when the cached hostname
+   * has been silently unreachable for several prayers in a row.
+   */
+  getConsecutiveCacheStaleCount(deviceName) {
+    const all = this.getAllEvents()
+      .filter(e => !deviceName || e.deviceName === deviceName)
+      .filter(e => e.cacheStale === true || e.cacheHit === true || e.cacheHit === false);
+    let count = 0;
+    for (let i = all.length - 1; i >= 0; i--) {
+      const e = all[i];
+      if (e.cacheStale === true) {
+        count += 1;
+        continue;
+      }
+      // Any successful cache hit, or any successful mDNS where cache wasn't even tried, breaks the streak.
+      break;
+    }
+    return count;
+  }
+
   recordPrePlayStart(prayer) {
     const key = this._eventKey(this._now().toISODate(), prayer);
     const ev = this.pendingEvents.get(key);

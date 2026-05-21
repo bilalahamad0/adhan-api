@@ -55,19 +55,34 @@ class SecurityService {
         }
 
         this.log.log(`🔒 [SecurityService] Found package file changes. Committing and pushing...`);
-        
+
         // Add package files
         await this._execCommand('git add package.json package-lock.json', projectRoot);
         await this._execCommand('git add media-caster/package.json media-caster/package-lock.json media-caster/ip-patch', projectRoot);
 
-        // Commit
-        const commitCmd = `git commit -m "chore(security): auto-fix dependabot vulnerabilities and enforce overrides"`;
-        const { stdout: commitOut, stderr: commitErr } = await this._execCommand(commitCmd, projectRoot);
+        // Inline identity for the commit. The Pi historically had no global git
+        // user.email/user.name set, so the commit aborted with "Author identity
+        // unknown" and the subsequent push had nothing to send. Using `-c` keeps
+        // the identity scoped to this single command — no global mutation.
+        const email = process.env.SECURITY_GIT_EMAIL || 'security-bot@adhan-api.local';
+        const name = process.env.SECURITY_GIT_NAME || 'Adhan Security Bot';
+        const identityArgs = `-c user.email="${email}" -c user.name="${name}"`;
+
+        const commitCmd = `git ${identityArgs} commit -m "chore(security): auto-fix dependabot vulnerabilities and enforce overrides"`;
+        const { stdout: commitOut, stderr: commitErr, code: commitCode } = await this._execCommand(commitCmd, projectRoot);
         this.log.log(`🔒 [SecurityService] Commit output:\n${commitOut}`);
         if (commitErr) this.log.log(`⚠️ [SecurityService] Commit stderr:\n${commitErr}`);
+        if (commitCode !== 0) {
+            this.log.log(`❌ [SecurityService] Commit failed (code ${commitCode}); skipping push.`);
+            return;
+        }
 
-        // Push
-        const pushCmd = `git push origin main`;
+        // Push using HEAD:main so we work from a detached HEAD too. The Pi often
+        // ends up detached after BuildManager's `git reset --hard <sha>` deploy,
+        // and "git push origin main" fails with "src refspec main does not match"
+        // when no local `main` ref exists. HEAD:main pushes whatever commit we
+        // just made and lets origin reject non-fast-forwards naturally.
+        const pushCmd = `git push origin HEAD:main`;
         const { stdout: pushOut, stderr: pushErr, code: pushCode } = await this._execCommand(pushCmd, projectRoot);
         if (pushCode === 0) {
             this.log.log(`✅ [SecurityService] Successfully pushed security fixes to remote.`);
