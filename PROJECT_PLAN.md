@@ -1,5 +1,27 @@
 # Project Plan & Requirements: Adhan Automation System
 
+> ## ⚠️ Status as of 2026-05
+>
+> This document captures the **original Feb 2025 cloud-first design**. The
+> architecture has since changed: the Pi-side `media-caster/` (see
+> `services/CoreScheduler.js`) is now the authoritative scheduler and player,
+> and the following components have been retired:
+>
+> - **Google Apps Script (`scripts/triggerAdhan.js`)** — removed; project at
+>   `script.google.com/.../1DKG7xIFWpuZ9Vc0J6EYoi-...` should be deleted by
+>   the maintainer.
+> - **Vercel `api/updateCalendar.js` + daily cron** — removed; nothing reads
+>   from Google Calendar anymore.
+> - **`googleapis` npm dependency** — removed from `package.json`.
+> - **Assistant Relay** — never deployed; the Pi casts directly to Chromecast
+>   via `chromecast-api`.
+>
+> Sections 1.1 (Google Calendar sync), 2 (Google Apps Script), 3 (Assistant
+> Relay), and parts of the roadmap below are kept as **design archaeology**
+> and do not reflect the running system. Today's prayer-time source is the
+> Pi's local `annual_schedule.json` (refreshed from api.aladhan.com), and the
+> dashboard reads from Firestore (`adhan-79908`) written by `FirestoreSync.js`.
+
 ## Project Overview
 
 The **Adhan Automation System** is an end-to-end solution to manage Islamic prayer times and automate Adhan audio playback on Google Nest Hub devices. It consists of a cloud-based API for scheduling and a local relay for home automation control.
