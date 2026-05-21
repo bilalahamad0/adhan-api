@@ -89,6 +89,7 @@ class PlaybackLogger {
       discoveryDurationMs: null,
       prePlayDurationMs: null,
       castConnectDurationMs: null,
+      castToPlayingMs: null,
       recoveryAttempts: 0,
       auditResult: null,
       failureReason: null,
@@ -198,6 +199,35 @@ class PlaybackLogger {
     const ev = this.pendingEvents.get(key);
     if (!ev || !ev._castConnectStart) return;
     ev.castConnectDurationMs = this._now().toMillis() - ev._castConnectStart;
+  }
+
+  // Records the observed latency from "Checkpoint 3 fired" to the cast
+  // play() success callback. This is the signal the adaptive cast-lead
+  // controller learns from — it approximates how far before prayer time we
+  // must issue the cast for audio to land at ~T+0.
+  recordCastToPlaying(prayer, ms) {
+    const key = this._eventKey(this._now().toISODate(), prayer);
+    const ev = this.pendingEvents.get(key);
+    if (ev && typeof ms === 'number' && ms > 0) ev.castToPlayingMs = ms;
+  }
+
+  /**
+   * Recommends how many ms before prayer time to fire Checkpoint 3, based on
+   * the rolling p75 of recently observed cast-to-playing latencies. Falls back
+   * to `defaultMs` until enough samples exist, and clamps to [min, max] so a
+   * pathological outlier (e.g. a 9s triple-probe day) can't make us fire
+   * absurdly early or late.
+   */
+  getRecommendedCastLeadMs(defaultMs = 2000, { min = 1200, max = 6000, minSamples = 3, window = 20 } = {}) {
+    const samples = this.getAllEvents()
+      .filter(e => typeof e.castToPlayingMs === 'number' && e.castToPlayingMs > 0)
+      .slice(-window)
+      .map(e => e.castToPlayingMs)
+      .sort((a, b) => a - b);
+    if (samples.length < minSamples) return defaultMs;
+    const idx = Math.min(samples.length - 1, Math.floor(samples.length * 0.75));
+    const p75 = samples[idx];
+    return Math.max(min, Math.min(max, p75));
   }
 
   recordPlaybackStarted(prayer, scheduledTimeObj) {
