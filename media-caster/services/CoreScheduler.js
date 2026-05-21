@@ -32,6 +32,17 @@ class CoreScheduler {
             if (!fs.existsSync(this._castCachePath)) return null;
             const data = JSON.parse(fs.readFileSync(this._castCachePath, 'utf8'));
             if (!data || !data.host || !data.friendlyName) return null;
+            // TTL: ignore entries older than CAST_CACHE_TTL_HOURS (default 6h).
+            // Chromecast mDNS hostnames (e.g. fuchsia-XXXX.local) can change across
+            // device reboots / DHCP renewals; an aged cache silently keeps probing
+            // a dead host instead of going to mDNS where the new hostname lives.
+            const ttlHours = Number(process.env.CAST_CACHE_TTL_HOURS || 6);
+            if (data.lastSuccessIso && Number.isFinite(ttlHours) && ttlHours > 0) {
+                const ageMs = Date.now() - Date.parse(data.lastSuccessIso);
+                if (Number.isFinite(ageMs) && ageMs > ttlHours * 3600 * 1000) {
+                    data._expired = true;
+                }
+            }
             return data;
         } catch (_) {
             return null;
@@ -143,7 +154,20 @@ class CoreScheduler {
         // when the cache is fresh + reachable — sidesteps Wi-Fi↔LAN multicast bridges
         // (Xfinity gateways often drop UDP 5353 across the wired/wireless boundary).
         const cache = this._readCastCache();
-        if (cache && cache.friendlyName === deviceName) {
+        // Adaptive skip: if the cached hostname has been silently unreachable
+        // for the last N prayers, stop wasting a 3s probe on it every time.
+        // N defaults to 3 (about one prayer-day's worth of evidence).
+        const STALE_STREAK_SKIP = Number(process.env.CAST_CACHE_STALE_STREAK || 3);
+        const staleStreak = this.playbackLogger
+            ? this.playbackLogger.getConsecutiveCacheStaleCount(deviceName)
+            : 0;
+        const skipDueToStreak = staleStreak >= STALE_STREAK_SKIP;
+
+        if (cache && cache.friendlyName === deviceName && cache._expired) {
+            log(`📡 Cast cache expired (>${process.env.CAST_CACHE_TTL_HOURS || 6}h since last success); forcing mDNS.`);
+        } else if (cache && cache.friendlyName === deviceName && skipDueToStreak) {
+            log(`📡 Cast cache skipped: ${staleStreak} consecutive stale events for ${deviceName}; going straight to mDNS.`);
+        } else if (cache && cache.friendlyName === deviceName) {
             log(`📡 Cast cache hit: ${deviceName} @ ${cache.host}:${cache.port || 8009}; probing…`);
             const cached = await this._connectToCachedDevice(cache, log);
             if (cached) {
@@ -154,6 +178,7 @@ class CoreScheduler {
                 return cached;
             }
             log(`⚠️ Cast cache stale (no receiver response); falling back to mDNS.`);
+            if (this.playbackLogger) this.playbackLogger.recordCacheStale(prayerName, deviceName);
         }
 
         return new Promise((resolve) => {
@@ -229,6 +254,9 @@ class CoreScheduler {
             } catch (_) { /* ignore */ }
         });
         this._scheduledJobs = [];
+        // Reset window-retry counters so yesterday's exhausted retries don't lock today out.
+        if (this._discoveryRetryAttempts) this._discoveryRetryAttempts.clear();
+        if (this._pendingRetries) this._pendingRetries.clear();
 
         let annualData;
         if (fs.existsSync(this.scheduleFilePath)) {
@@ -490,22 +518,37 @@ class CoreScheduler {
         }
 
         if (targetTimeObj) {
-            const delay = targetTimeObj.toMillis() - Date.now();
+            // Cast connect + receiver buffer adds ~3-4s before audible playback.
+            // Fire Checkpoint 3 slightly before prayer time so the muezzin's first
+            // syllable lands at T+0, not T+4s. Tunable via PRAYER_CAST_LEAD_MS.
+            const castLeadMs = Number(process.env.PRAYER_CAST_LEAD_MS || 3000);
+            const delay = targetTimeObj.toMillis() - Date.now() - castLeadMs;
             if (delay > 0) {
-                log(`⏳ Waiting ${Math.round(delay/1000)}s until prayer time...`);
+                log(`⏳ Waiting ${Math.round(delay/1000)}s until cast (T-${Math.round(castLeadMs/1000)}s)...`);
                 await new Promise(r => setTimeout(r, delay));
             }
-            log(`🚀 Checkpoint 3: Prayer time reached. Proceeding with casting...`);
+            log(`🚀 Checkpoint 3: Casting now (lead ${castLeadMs}ms before prayer time)...`);
         }
 
         let discoveredDevice = null;
         if (preStagedDevice) {
-            const ok = await this._probeDevice(preStagedDevice);
+            // Single 3s probes mis-fire on momentary mDNS hiccups (Wi-Fi handoff,
+            // gateway multicast bridge stall). Try up to 3 times with a short gap
+            // before giving up — total budget ~9s, still well under any audit
+            // schedule and far cheaper than a 120s mDNS rescan.
+            let ok = false;
+            for (let attempt = 1; attempt <= 3 && !ok; attempt++) {
+                ok = await this._probeDevice(preStagedDevice);
+                if (!ok && attempt < 3) {
+                    log(`⏳ Pre-stage probe ${attempt}/3 missed; retrying in 2s…`);
+                    await new Promise(r => setTimeout(r, 2000));
+                }
+            }
             if (ok) {
                 log(`✅ Pre-staged device still alive; skipping re-discovery.`);
                 discoveredDevice = preStagedDevice;
             } else {
-                log(`⚠️ Pre-staged device went stale; falling back to live discovery...`);
+                log(`⚠️ Pre-staged device went stale (3 probes failed); falling back to live discovery...`);
                 discoveredDevice = await this.discoverDeviceByName(CONFIG.device.name, log, prayerName);
             }
         } else {
@@ -771,25 +814,100 @@ class CoreScheduler {
         if (this.playbackLogger) this.playbackLogger.recordFailed(prayerName, 'DISCOVERY_TIMEOUT');
         this.activeRuns.delete(prayerName);
         cleanup();
+        // Window-retry: device often becomes reachable again within minutes
+        // (Chromecast firmware self-update, mDNS responder restart, etc.).
+        // Re-arm at T+3min and T+8min from the original prayer time, capped
+        // at 2 retries and only while still within a sensible prayer window.
+        this._scheduleDiscoveryRetry(prayerName, audioFileName, targetTimeObj);
+    }
+
+    /**
+     * Schedule re-attempts after a DISCOVERY_TIMEOUT. Caps at 2 retries and
+     * never crosses the prayer-window boundary (defaults to 15 minutes past
+     * the original prayer time — comfortably inside even Maghrib's short
+     * valid window).
+     */
+    _scheduleDiscoveryRetry(prayerName, audioFileName, targetTimeObj) {
+        if (!targetTimeObj) return; // No anchor; this call was itself an emergency.
+        this._pendingRetries = this._pendingRetries || new Map();
+        const attempts = this._discoveryRetryAttempts || (this._discoveryRetryAttempts = new Map());
+        const prior = attempts.get(prayerName) || 0;
+        const OFFSETS_MIN = [3, 8];
+        const PRAYER_WINDOW_MIN = Number(process.env.PRAYER_RETRY_WINDOW_MIN || 15);
+
+        if (prior >= OFFSETS_MIN.length) {
+            this.log(`⏭️ ${prayerName}: discovery retry cap (${OFFSETS_MIN.length}) reached; not rescheduling.`);
+            attempts.delete(prayerName);
+            this._pendingRetries.delete(prayerName);
+            return;
+        }
+
+        const retryAtMs = Date.now() + OFFSETS_MIN[prior] * 60000;
+        const minutesPastPrayer = (retryAtMs - targetTimeObj.toMillis()) / 60000;
+        if (minutesPastPrayer > PRAYER_WINDOW_MIN) {
+            this.log(`⏭️ ${prayerName}: next retry would land +${minutesPastPrayer.toFixed(1)}min past prayer (window cap ${PRAYER_WINDOW_MIN}min); skipping.`);
+            attempts.delete(prayerName);
+            this._pendingRetries.delete(prayerName);
+            return;
+        }
+
+        attempts.set(prayerName, prior + 1);
+        this._pendingRetries.set(prayerName, retryAtMs);
+
+        const retryDate = new Date(retryAtMs);
+        this.log(`🔁 ${prayerName}: scheduling window-retry #${prior + 1}/${OFFSETS_MIN.length} at ${retryDate.toLocaleTimeString()} (+${OFFSETS_MIN[prior]}min, +${minutesPastPrayer.toFixed(1)}min past prayer)`);
+
+        this._scheduledJobs.push(
+            schedule.scheduleJob(retryDate, () => {
+                this._pendingRetries.delete(prayerName);
+                this.executePreFlightAndCast(prayerName, audioFileName, targetTimeObj);
+            })
+        );
     }
 
     /**
      * AUDIT JOB: Runs 30s after target time.
-     * Silent check via API. Resets system if playback failed.
+     * Silent check via API. Triggers emergency recovery only when the
+     * primary run has fully released and no scheduled retry is pending —
+     * avoids racing the original discovery loop (which could still find
+     * the device late and double-cast).
+     *
+     * Before 2026-05: the audit treated `activeRuns.has(prayer)` as proof
+     * of life and exited SUCCESS, which silently masked the 4-minute
+     * Maghrib discovery failure on 2026-05-20. Now the audit re-polls
+     * up to MAX_AUDIT_FOLLOWUPS times before deferring to the
+     * discovery-retry path (executePreFlightAndCast self-reschedule).
      */
-    async auditPlayback(prayerName, audioFileName) {
+    async auditPlayback(prayerName, audioFileName, depth = 0) {
         const log = this.log;
         const state = this.sessionStatus.get(prayerName);
-        
-        // If primary session is anywhere in its lifecycle, don't interfere.
-        if (this.activeRuns.has(prayerName)) {
-            log(`✅ Audit: ${prayerName} session is active (state: ${state}). Skipping.`);
+        const MAX_AUDIT_FOLLOWUPS = 4; // 4 × 60s = up to 4.5min of polling
+
+        // Proof of life: only actual playback states count as success.
+        if (state === 'PLAYING' || state === 'BUFFERING' || state === 'DUA' || state === 'COMPLETED') {
+            log(`✅ Audit: ${prayerName} confirmed (state: ${state}).`);
             if (this.playbackLogger) this.playbackLogger.recordAuditResult(prayerName, true);
             return;
         }
 
-        if (state === 'PLAYING' || state === 'DUA' || state === 'COMPLETED') {
-            if (this.playbackLogger) this.playbackLogger.recordAuditResult(prayerName, true);
+        // Original run still working. Don't race it — re-poll instead.
+        if (this.activeRuns.has(prayerName)) {
+            if (depth < MAX_AUDIT_FOLLOWUPS) {
+                log(`⚠️ Audit: ${prayerName} at-risk (state: ${state || 'UNKNOWN'}); rechecking in 60s. [follow-up ${depth + 1}/${MAX_AUDIT_FOLLOWUPS}]`);
+                this._scheduledJobs.push(
+                    schedule.scheduleJob(new Date(Date.now() + 60000), () => this.auditPlayback(prayerName, audioFileName, depth + 1))
+                );
+                return;
+            }
+            log(`⚠️ Audit: ${prayerName} still in-flight after ${MAX_AUDIT_FOLLOWUPS} follow-ups (state: ${state || 'UNKNOWN'}); deferring to discovery-retry path.`);
+            if (this.playbackLogger) this.playbackLogger.recordAuditResult(prayerName, false);
+            return;
+        }
+
+        // Discovery-retry already queued? Let that handle recovery instead of double-firing.
+        if (this._pendingRetries && this._pendingRetries.has(prayerName)) {
+            log(`⏭️ Audit: ${prayerName} not playing but window retry already scheduled; deferring.`);
+            if (this.playbackLogger) this.playbackLogger.recordAuditResult(prayerName, false);
             return;
         }
 
