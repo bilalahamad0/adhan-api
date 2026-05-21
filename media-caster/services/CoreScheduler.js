@@ -25,6 +25,12 @@ class CoreScheduler {
         this.activeRuns = new Set();
         this._scheduledJobs = [];
         this._castCachePath = path.join(__dirname, '..', '.cast-cache.json');
+        // Window-retry state persisted here so scheduled retries survive a
+        // pm2 reload / crash / auto-updater deploy. .adhan-data/ is excluded
+        // from the BuildManager rsync, so this file is preserved across deploys.
+        this._pendingRetriesPath = (playbackLogger && playbackLogger.dataDir)
+            ? path.join(playbackLogger.dataDir, 'pending-retries.json')
+            : path.join(__dirname, '..', '.pending-retries.json');
     }
 
     _readCastCache() {
@@ -254,9 +260,11 @@ class CoreScheduler {
             } catch (_) { /* ignore */ }
         });
         this._scheduledJobs = [];
-        // Reset window-retry counters so yesterday's exhausted retries don't lock today out.
+        // Reset window-retry counters so yesterday's exhausted retries don't lock today out,
+        // then re-arm any still-valid retries that were persisted before a reload/crash.
         if (this._discoveryRetryAttempts) this._discoveryRetryAttempts.clear();
         if (this._pendingRetries) this._pendingRetries.clear();
+        this._restorePendingRetries();
 
         let annualData;
         if (fs.existsSync(this.scheduleFilePath)) {
@@ -517,16 +525,23 @@ class CoreScheduler {
             log(`⚠️ Pre-stage discovery failed; will retry at prayer time.`);
         }
 
+        let castFiredAtMs = null;
         if (targetTimeObj) {
-            // Cast connect + receiver buffer adds ~3-4s before audible playback.
+            // Cast connect + receiver buffer adds latency before audible playback.
             // Fire Checkpoint 3 slightly before prayer time so the muezzin's first
-            // syllable lands at T+0, not T+4s. Tunable via PRAYER_CAST_LEAD_MS.
-            const castLeadMs = Number(process.env.PRAYER_CAST_LEAD_MS || 3000);
+            // syllable lands at ~T+0. The lead is adaptive: a rolling p75 of recent
+            // observed cast-to-playing latencies (PlaybackLogger), falling back to
+            // PRAYER_CAST_LEAD_MS (default 2000ms) until enough history exists.
+            const fallbackLeadMs = Number(process.env.PRAYER_CAST_LEAD_MS || 2000);
+            const castLeadMs = this.playbackLogger
+                ? this.playbackLogger.getRecommendedCastLeadMs(fallbackLeadMs)
+                : fallbackLeadMs;
             const delay = targetTimeObj.toMillis() - Date.now() - castLeadMs;
             if (delay > 0) {
-                log(`⏳ Waiting ${Math.round(delay/1000)}s until cast (T-${Math.round(castLeadMs/1000)}s)...`);
+                log(`⏳ Waiting ${Math.round(delay/1000)}s until cast (adaptive lead ${castLeadMs}ms)...`);
                 await new Promise(r => setTimeout(r, delay));
             }
+            castFiredAtMs = Date.now();
             log(`🚀 Checkpoint 3: Casting now (lead ${castLeadMs}ms before prayer time)...`);
         }
 
@@ -575,7 +590,31 @@ class CoreScheduler {
                     if (status.isMediaSessionPlaying) {
                         log(`📺 TV is playing pause-able media. Sending PAUSE...`);
                         await hardwareService.pauseMedia(tvIp);
-                        tvWasPaused = true;
+                        // Verify PAUSE actually took effect. Some apps — Plex live TV,
+                        // Netflix/YouTube live streams, some IPTV clients — silently
+                        // ignore KEYCODE_MEDIA_PAUSE because they're live broadcasts.
+                        // If still playing, fall back to MUTE so the Adhan isn't
+                        // talking over a live channel.
+                        await new Promise(r => setTimeout(r, 750));
+                        let postPause;
+                        try {
+                            postPause = await hardwareService.getAudioStatus(tvIp);
+                        } catch (e) {
+                            log(`⚠️ Pause-verify status read failed: ${e.message}; assuming pause succeeded.`);
+                        }
+                        if (postPause && postPause.isMediaSessionPlaying) {
+                            log(`⚠️ PAUSE ignored by current app (likely live stream). Falling back to MUTE.`);
+                            if (!postPause.isMuted && !postPause.isSonyMuted) {
+                                await hardwareService.setMuteState(tvIp, true);
+                                tvWasMuted = true;
+                            } else {
+                                log(`ℹ️ TV already muted by user; nothing to do.`);
+                            }
+                            // Leave tvWasPaused=false — we don't want cleanup's
+                            // resumeMedia() to fire a stray PLAY keyevent later.
+                        } else {
+                            tvWasPaused = true;
+                        }
                     } else if (status.isAudioActive) {
                         if (!status.isMuted && !status.isSonyMuted) {
                             log(`🔇 TV is playing non-pausable audio. Muting...`);
@@ -736,6 +775,9 @@ class CoreScheduler {
                             if (this.playbackLogger) {
                                 this.playbackLogger.recordCastConnectComplete(prayerName);
                                 this.playbackLogger.recordPlaybackStarted(prayerName, targetTimeObj);
+                                if (castFiredAtMs) {
+                                    this.playbackLogger.recordCastToPlaying(prayerName, Date.now() - castFiredAtMs);
+                                }
                             }
                             safetyTimer = setTimeout(cleanup, 600000);
                             let lastState = '';
@@ -839,6 +881,7 @@ class CoreScheduler {
             this.log(`⏭️ ${prayerName}: discovery retry cap (${OFFSETS_MIN.length}) reached; not rescheduling.`);
             attempts.delete(prayerName);
             this._pendingRetries.delete(prayerName);
+            this._persistPendingRetries();
             return;
         }
 
@@ -848,21 +891,102 @@ class CoreScheduler {
             this.log(`⏭️ ${prayerName}: next retry would land +${minutesPastPrayer.toFixed(1)}min past prayer (window cap ${PRAYER_WINDOW_MIN}min); skipping.`);
             attempts.delete(prayerName);
             this._pendingRetries.delete(prayerName);
+            this._persistPendingRetries();
             return;
         }
 
-        attempts.set(prayerName, prior + 1);
-        this._pendingRetries.set(prayerName, retryAtMs);
+        const nextAttempt = prior + 1;
+        attempts.set(prayerName, nextAttempt);
+        this._pendingRetries.set(prayerName, {
+            audioFileName,
+            retryAtMs,
+            targetTimeIso: targetTimeObj.toISO(),
+            attempts: nextAttempt,
+        });
+        this._persistPendingRetries();
 
         const retryDate = new Date(retryAtMs);
-        this.log(`🔁 ${prayerName}: scheduling window-retry #${prior + 1}/${OFFSETS_MIN.length} at ${retryDate.toLocaleTimeString()} (+${OFFSETS_MIN[prior]}min, +${minutesPastPrayer.toFixed(1)}min past prayer)`);
+        this.log(`🔁 ${prayerName}: scheduling window-retry #${nextAttempt}/${OFFSETS_MIN.length} at ${retryDate.toLocaleTimeString()} (+${OFFSETS_MIN[prior]}min, +${minutesPastPrayer.toFixed(1)}min past prayer)`);
 
         this._scheduledJobs.push(
-            schedule.scheduleJob(retryDate, () => {
-                this._pendingRetries.delete(prayerName);
-                this.executePreFlightAndCast(prayerName, audioFileName, targetTimeObj);
-            })
+            schedule.scheduleJob(retryDate, () => this._fireRetry(prayerName, audioFileName, targetTimeObj))
         );
+    }
+
+    /** Fires a scheduled window-retry: clear its pending marker (+persist) then re-run the cast. */
+    _fireRetry(prayerName, audioFileName, targetTimeObj) {
+        if (this._pendingRetries) this._pendingRetries.delete(prayerName);
+        this._persistPendingRetries();
+        this.executePreFlightAndCast(prayerName, audioFileName, targetTimeObj);
+    }
+
+    /** Serializes the in-memory pending-retry map to disk (best-effort). */
+    _persistPendingRetries() {
+        try {
+            const retries = [];
+            if (this._pendingRetries) {
+                for (const [prayerName, info] of this._pendingRetries.entries()) {
+                    if (info && typeof info === 'object') retries.push({ prayerName, ...info });
+                }
+            }
+            fs.writeFileSync(this._pendingRetriesPath, JSON.stringify({ savedAt: new Date().toISOString(), retries }, null, 2));
+        } catch (e) {
+            this.log(`⚠️ Failed to persist pending retries: ${e.message}`);
+        }
+    }
+
+    /**
+     * Re-arms window-retries that were persisted before a reload/crash. Drops
+     * any entry already past its prayer window. A retry whose slot elapsed
+     * during downtime fires shortly after boot (if still in-window).
+     */
+    _restorePendingRetries() {
+        let data;
+        try {
+            if (!fs.existsSync(this._pendingRetriesPath)) return;
+            data = JSON.parse(fs.readFileSync(this._pendingRetriesPath, 'utf8'));
+        } catch (e) {
+            this.log(`⚠️ Failed to read pending retries: ${e.message}`);
+            return;
+        }
+        if (!data || !Array.isArray(data.retries) || data.retries.length === 0) return;
+
+        this._pendingRetries = this._pendingRetries || new Map();
+        this._discoveryRetryAttempts = this._discoveryRetryAttempts || new Map();
+        const now = Date.now();
+        const PRAYER_WINDOW_MIN = Number(process.env.PRAYER_RETRY_WINDOW_MIN || 15);
+        let restored = 0;
+
+        for (const r of data.retries) {
+            if (!r || !r.prayerName || !r.audioFileName || !r.retryAtMs || !r.targetTimeIso) continue;
+            const targetTimeObj = DateTime.fromISO(r.targetTimeIso, { zone: this.config.timezone });
+            if (!targetTimeObj.isValid) continue;
+            // Drop entries already past the prayer window (e.g. yesterday's).
+            if ((r.retryAtMs - targetTimeObj.toMillis()) / 60000 > PRAYER_WINDOW_MIN) continue;
+
+            this._discoveryRetryAttempts.set(r.prayerName, r.attempts || 1);
+            const fireAtMs = r.retryAtMs <= now ? now + 2000 : r.retryAtMs;
+            if (r.retryAtMs <= now) {
+                this.log(`🔁 Restoring overdue retry for ${r.prayerName}; firing shortly (was due ${new Date(r.retryAtMs).toLocaleTimeString()}).`);
+            } else {
+                this.log(`🔁 Restoring pending retry for ${r.prayerName} at ${new Date(r.retryAtMs).toLocaleTimeString()}.`);
+            }
+            this._pendingRetries.set(r.prayerName, {
+                audioFileName: r.audioFileName,
+                retryAtMs: fireAtMs,
+                targetTimeIso: r.targetTimeIso,
+                attempts: r.attempts || 1,
+            });
+            this._scheduledJobs.push(
+                schedule.scheduleJob(new Date(fireAtMs), () => this._fireRetry(r.prayerName, r.audioFileName, targetTimeObj))
+            );
+            restored++;
+        }
+
+        if (restored > 0) {
+            this.log(`✅ Restored ${restored} pending discovery-retr${restored === 1 ? 'y' : 'ies'} from disk.`);
+            this._persistPendingRetries();
+        }
     }
 
     /**
