@@ -1,0 +1,123 @@
+const axios = require('axios');
+const fs = require('fs');
+const { DateTime } = require('luxon');
+
+// Local Ollama daemon. Bound to loopback on the Pi; never leaves the device.
+const OLLAMA_URL = process.env.OLLAMA_URL || 'http://127.0.0.1:11434';
+const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'gemma3-constrained';
+
+// Critical cast window around every prayer. Gemma is forbidden from running
+// inside it: inference takes ~5-10s on a Pi 4 CPU and the cast fires ~2s
+// before prayer, so any LLM work here would threaten on-time Adhan playback.
+const CRITICAL_PRE_MIN = 5;
+const CRITICAL_POST_MIN = 8;
+
+const PRAYERS = ['Fajr', 'Dhuhr', 'Asr', 'Maghrib', 'Isha'];
+
+class OllamaService {
+  constructor({ scheduleFilePath = null, timezone = 'America/Los_Angeles', model = OLLAMA_MODEL, baseUrl = OLLAMA_URL } = {}) {
+    this.scheduleFilePath = scheduleFilePath;
+    this.timezone = timezone;
+    this.model = model;
+    this.baseUrl = baseUrl;
+    // Single-flight: a Pi 4 cannot run two inferences at once, so all callers
+    // serialize through this promise chain regardless of success/failure.
+    this._queue = Promise.resolve();
+    this.log = (msg) => console.log(`[${new Date().toLocaleTimeString()}] ${msg}`);
+  }
+
+  // Returns the model's trimmed text response, or null on any error/timeout so
+  // every caller can degrade gracefully. Calls are serialized (single-flight).
+  async ask(systemPrompt, userContext, { timeoutMs = 25000, json = false } = {}) {
+    const run = async () => {
+      try {
+        const body = {
+          model: this.model,
+          prompt: `${systemPrompt}\n\n${userContext}`,
+          stream: false,
+          options: { num_ctx: 2048 },
+        };
+        if (json) body.format = 'json';
+        const resp = await axios.post(`${this.baseUrl}/api/generate`, body, {
+          timeout: timeoutMs,
+          headers: { 'Content-Type': 'application/json' },
+        });
+        const text = resp && resp.data && resp.data.response;
+        return typeof text === 'string' ? text.trim() : null;
+      } catch (e) {
+        this.log(`❌ Ollama request failed: ${e.message}`);
+        return null;
+      }
+    };
+    const result = this._queue.then(run, run);
+    // Keep the chain alive but swallow settlement so one failure can't poison it.
+    this._queue = result.then(() => undefined, () => undefined);
+    return result;
+  }
+
+  async askJson(systemPrompt, userContext, opts = {}) {
+    const text = await this.ask(systemPrompt, userContext, { ...opts, json: true });
+    return OllamaService.parseJson(text);
+  }
+
+  // Strips ```json ... ``` fences (and stray prose) then JSON.parses. Returns
+  // null if the text can't be parsed, so callers never throw on bad output.
+  static parseJson(text) {
+    if (!text || typeof text !== 'string') return null;
+    let s = text.trim();
+    const fence = s.match(/```(?:json)?\s*([\s\S]*?)```/i);
+    if (fence) s = fence[1].trim();
+    if (s[0] !== '{' && s[0] !== '[') {
+      const block = s.match(/[{[][\s\S]*[}\]]/);
+      if (block) s = block[0];
+    }
+    try {
+      return JSON.parse(s);
+    } catch {
+      return null;
+    }
+  }
+
+  async isAvailable(timeoutMs = 2000) {
+    try {
+      const resp = await axios.get(`${this.baseUrl}/api/tags`, { timeout: timeoutMs });
+      return resp.status === 200;
+    } catch {
+      return false;
+    }
+  }
+
+  // True when NOW falls inside the critical window of any prayer today. If the
+  // schedule can't be read we fail safe (return true) so background jobs hold off.
+  isNearPrayer(now = null) {
+    if (!this.scheduleFilePath) return false;
+    try {
+      const n = now || DateTime.now().setZone(this.timezone);
+      const annual = JSON.parse(fs.readFileSync(this.scheduleFilePath, 'utf8'));
+      const monthData = annual && annual.data && annual.data[n.month.toString()];
+      const entry = Array.isArray(monthData)
+        ? monthData.find((d) => parseInt(d && d.date && d.date.gregorian && d.date.gregorian.day, 10) === n.day)
+        : null;
+      if (!entry || !entry.timings) return false;
+      for (const p of PRAYERS) {
+        const t = String(entry.timings[p] || '').split(' ')[0];
+        const [h, m] = t.split(':').map((x) => parseInt(x, 10));
+        if (!Number.isFinite(h) || !Number.isFinite(m)) continue;
+        const pt = n.set({ hour: h, minute: m, second: 0, millisecond: 0 });
+        const diffMin = n.diff(pt, 'minutes').minutes; // negative = before prayer
+        if (diffMin >= -CRITICAL_PRE_MIN && diffMin <= CRITICAL_POST_MIN) return true;
+      }
+      return false;
+    } catch {
+      return true;
+    }
+  }
+
+  // Quiet-window guard for all off-critical-path background jobs.
+  isQuiet(now = null) {
+    return !this.isNearPrayer(now);
+  }
+}
+
+module.exports = OllamaService;
+module.exports.PRAYERS = PRAYERS;
