@@ -106,6 +106,24 @@ describe('OllamaService.isAvailable', () => {
     axios.get.mockRejectedValue(new Error('ECONNREFUSED'));
     await expect(svc.isAvailable()).resolves.toBe(false);
   });
+  it('does not reset consecutive failures if circuit is CLOSED', async () => {
+    svc._consecutiveFailures = 1;
+    svc._state = 'CLOSED';
+    axios.get.mockResolvedValue({ status: 200 });
+    await expect(svc.isAvailable()).resolves.toBe(true);
+    expect(svc._consecutiveFailures).toBe(1);
+    expect(svc._state).toBe('CLOSED');
+  });
+  it('recovers on success if circuit is HALF_OPEN', async () => {
+    const s = new OllamaService({ failureThreshold: 2 });
+    s._consecutiveFailures = 2;
+    s._state = 'HALF_OPEN';
+    axios.get.mockResolvedValue({ status: 200 });
+    const isAvail = await s.isAvailable();
+    expect(isAvail).toBe(true);
+    expect(s._state).toBe('CLOSED');
+    expect(s._consecutiveFailures).toBe(0);
+  });
 });
 
 describe('OllamaService quiet-window guard', () => {

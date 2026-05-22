@@ -121,7 +121,9 @@ class OllamaService {
     try {
       const resp = await axios.get(`${this.baseUrl}/api/tags`, { timeout: timeoutMs });
       if (resp.status === 200) {
-        this._handleSuccess();
+        if (this._state !== 'CLOSED') {
+          this._handleSuccess();
+        }
         return true;
       }
       throw new Error(`Non-200 status code: ${resp.status}`);
