@@ -45,7 +45,7 @@ class OllamaService {
 
   // Returns the model's trimmed text response, or null on any error/timeout so
   // every caller can degrade gracefully. Calls are serialized (single-flight).
-  async ask(systemPrompt, userContext, { timeoutMs = 25000, json = false } = {}) {
+  async ask(systemPrompt, userContext, { timeoutMs = 90000, json = false } = {}) {
     const run = async () => {
       // 1. Circuit Breaker Check
       if (this._state === 'OPEN') {
@@ -63,7 +63,8 @@ class OllamaService {
           model: this.model,
           prompt: `${systemPrompt}\n\n${userContext}`,
           stream: false,
-          options: { num_ctx: 2048 },
+          keep_alive: -1,
+          options: { num_ctx: 2048, num_predict: 150 },
         };
         if (json) body.format = 'json';
         const resp = await axios.post(`${this.baseUrl}/api/generate`, body, {
@@ -130,6 +131,26 @@ class OllamaService {
     } catch (e) {
       this._handleFailure(e);
       return false;
+    }
+  }
+
+  // Pre-load the model into Ollama's memory so the first real query gets the
+  // fast (~4s) warm path instead of the slow (~28s) cold-load path. Fire-and-
+  // forget; failure is harmless — the first query will just cold-start instead.
+  async warmup() {
+    try {
+      if (!(await this.isAvailable(3000))) return;
+      this.log('🔥 Warming up Ollama model...');
+      await axios.post(`${this.baseUrl}/api/generate`, {
+        model: this.model,
+        prompt: 'hi',
+        stream: false,
+        keep_alive: -1,
+        options: { num_ctx: 32, num_predict: 1 },
+      }, { timeout: 60000 });
+      this.log('✅ Ollama model warm and loaded in memory.');
+    } catch (e) {
+      this.log(`⚠️ Ollama warmup failed (non-fatal): ${e.message}`);
     }
   }
 
