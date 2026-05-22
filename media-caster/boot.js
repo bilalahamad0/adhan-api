@@ -571,6 +571,9 @@ async function bootSystem() {
 
   // 3. Initiate Scheduler Flow
   console.log('⏳ Awaiting schedules...');
+  // Pre-load the Gemma model into Ollama's memory while we wait, so the first
+  // dashboard query gets the fast (~4s) warm path instead of a ~28s cold-load.
+  ollama.warmup();
   await new Promise(r => setTimeout(r, 5000));
 
   async function refreshScheduleAndPublishFirestore() {
