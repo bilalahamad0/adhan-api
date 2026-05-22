@@ -1,4 +1,10 @@
 jest.mock('axios');
+jest.mock('child_process', () => ({
+  exec: jest.fn((cmd, cb) => {
+    if (cb) cb(null, 'success', '');
+  })
+}));
+const { exec } = require('child_process');
 
 const fs = require('fs');
 const os = require('os');
@@ -143,5 +149,92 @@ describe('aiContext.getNextPrayer (deterministic fallback core)', () => {
 
   it('returns null when schedule is missing', () => {
     expect(aiContext.getNextPrayer('/no/such/file.json', tz)).toBeNull();
+  });
+});
+
+describe('OllamaService Circuit Breaker and Watchdog', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('trips the circuit after consecutive failures and enters OPEN state', async () => {
+    const svc = new OllamaService({ failureThreshold: 2, cooldownDurationMs: 1000, restartCmd: 'restart-cmd' });
+    axios.post.mockRejectedValue(new Error('timeout'));
+    
+    // First failure
+    await svc.ask('sys', 'ctx');
+    expect(svc._state).toBe('CLOSED');
+    expect(svc._consecutiveFailures).toBe(1);
+    expect(exec).not.toHaveBeenCalled();
+
+    // Second failure
+    await svc.ask('sys', 'ctx');
+    expect(svc._state).toBe('OPEN');
+    expect(svc._consecutiveFailures).toBe(2);
+    expect(exec).toHaveBeenCalledWith('restart-cmd', expect.any(Function));
+  });
+
+  it('fails-fast during cooldown without calling axios.post or axios.get', async () => {
+    const svc = new OllamaService({ failureThreshold: 1, cooldownDurationMs: 5000, restartCmd: 'restart-cmd' });
+    axios.post.mockRejectedValue(new Error('timeout'));
+    
+    // Trip it
+    await svc.ask('sys', 'ctx');
+    expect(svc._state).toBe('OPEN');
+    
+    // Try asking again while OPEN
+    jest.clearAllMocks();
+    const res = await svc.ask('sys', 'ctx');
+    expect(res).toBeNull();
+    expect(axios.post).not.toHaveBeenCalled();
+
+    // Try checking availability while OPEN
+    const isAvail = await svc.isAvailable();
+    expect(isAvail).toBe(false);
+    expect(axios.get).not.toHaveBeenCalled();
+  });
+
+  it('transitions to HALF_OPEN after cooldown expires and recovers on success', async () => {
+    const svc = new OllamaService({ failureThreshold: 1, cooldownDurationMs: 100, restartCmd: 'restart-cmd' });
+    axios.post.mockRejectedValue(new Error('timeout'));
+    
+    // Trip it
+    await svc.ask('sys', 'ctx');
+    expect(svc._state).toBe('OPEN');
+
+    // Wait for cooldown to expire
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    // Next call should run in HALF_OPEN and transition to CLOSED on success
+    axios.post.mockResolvedValue({ data: { response: 'recovered!' } });
+    jest.clearAllMocks();
+    
+    const res = await svc.ask('sys', 'ctx');
+    expect(res).toBe('recovered!');
+    expect(axios.post).toHaveBeenCalled();
+    expect(svc._state).toBe('CLOSED');
+    expect(svc._consecutiveFailures).toBe(0);
+  });
+
+  it('trips again if HALF_OPEN probe fails', async () => {
+    const svc = new OllamaService({ failureThreshold: 1, cooldownDurationMs: 100, restartCmd: 'restart-cmd' });
+    axios.post.mockRejectedValue(new Error('timeout'));
+    
+    // Trip it
+    await svc.ask('sys', 'ctx');
+    expect(svc._state).toBe('OPEN');
+
+    // Wait for cooldown to expire
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    // Next call should run in HALF_OPEN and fail
+    axios.post.mockRejectedValue(new Error('still down'));
+    jest.clearAllMocks();
+    
+    const res = await svc.ask('sys', 'ctx');
+    expect(res).toBeNull();
+    expect(axios.post).toHaveBeenCalled();
+    expect(svc._state).toBe('OPEN');
+    expect(svc._consecutiveFailures).toBe(2);
   });
 });

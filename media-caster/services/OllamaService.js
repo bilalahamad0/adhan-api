@@ -1,6 +1,7 @@
 const axios = require('axios');
 const fs = require('fs');
 const { DateTime } = require('luxon');
+const { exec } = require('child_process');
 
 // Local Ollama daemon. Bound to loopback on the Pi; never leaves the device.
 const OLLAMA_URL = process.env.OLLAMA_URL || 'http://127.0.0.1:11434';
@@ -15,7 +16,15 @@ const CRITICAL_POST_MIN = 8;
 const PRAYERS = ['Fajr', 'Dhuhr', 'Asr', 'Maghrib', 'Isha'];
 
 class OllamaService {
-  constructor({ scheduleFilePath = null, timezone = 'America/Los_Angeles', model = OLLAMA_MODEL, baseUrl = OLLAMA_URL } = {}) {
+  constructor({
+    scheduleFilePath = null,
+    timezone = 'America/Los_Angeles',
+    model = OLLAMA_MODEL,
+    baseUrl = OLLAMA_URL,
+    failureThreshold = 2,
+    cooldownDurationMs = 60000,
+    restartCmd = null,
+  } = {}) {
     this.scheduleFilePath = scheduleFilePath;
     this.timezone = timezone;
     this.model = model;
@@ -24,12 +33,31 @@ class OllamaService {
     // serialize through this promise chain regardless of success/failure.
     this._queue = Promise.resolve();
     this.log = (msg) => console.log(`[${new Date().toLocaleTimeString()}] ${msg}`);
+
+    // Circuit Breaker & Watchdog State
+    this._state = 'CLOSED'; // CLOSED, OPEN, HALF_OPEN
+    this._consecutiveFailures = 0;
+    this._failureThreshold = failureThreshold;
+    this._cooldownDurationMs = cooldownDurationMs;
+    this._cooldownUntil = 0;
+    this._restartCmd = restartCmd || process.env.OLLAMA_RESTART_CMD || (process.platform === 'linux' ? 'sudo systemctl restart ollama' : null);
   }
 
   // Returns the model's trimmed text response, or null on any error/timeout so
   // every caller can degrade gracefully. Calls are serialized (single-flight).
   async ask(systemPrompt, userContext, { timeoutMs = 25000, json = false } = {}) {
     const run = async () => {
+      // 1. Circuit Breaker Check
+      if (this._state === 'OPEN') {
+        if (Date.now() < this._cooldownUntil) {
+          this.log(`⚠️ Circuit open: failing-fast on Ollama query.`);
+          return null;
+        }
+        // Cooldown period expired, try probe in HALF_OPEN state
+        this._state = 'HALF_OPEN';
+        this.log(`🔄 Circuit cooldown expired. Attempting probe in HALF_OPEN state.`);
+      }
+
       try {
         const body = {
           model: this.model,
@@ -43,9 +71,12 @@ class OllamaService {
           headers: { 'Content-Type': 'application/json' },
         });
         const text = resp && resp.data && resp.data.response;
+        
+        this._handleSuccess();
         return typeof text === 'string' ? text.trim() : null;
       } catch (e) {
         this.log(`❌ Ollama request failed: ${e.message}`);
+        this._handleFailure(e);
         return null;
       }
     };
@@ -79,12 +110,66 @@ class OllamaService {
   }
 
   async isAvailable(timeoutMs = 2000) {
+    // Circuit Breaker Check
+    if (this._state === 'OPEN') {
+      if (Date.now() < this._cooldownUntil) {
+        return false;
+      }
+      this._state = 'HALF_OPEN';
+    }
+
     try {
       const resp = await axios.get(`${this.baseUrl}/api/tags`, { timeout: timeoutMs });
-      return resp.status === 200;
-    } catch {
+      if (resp.status === 200) {
+        this._handleSuccess();
+        return true;
+      }
+      throw new Error(`Non-200 status code: ${resp.status}`);
+    } catch (e) {
+      this._handleFailure(e);
       return false;
     }
+  }
+
+  _handleSuccess() {
+    if (this._state !== 'CLOSED') {
+      this.log(`✅ Ollama connection recovered. Resetting circuit breaker.`);
+    }
+    this._consecutiveFailures = 0;
+    this._state = 'CLOSED';
+  }
+
+  _handleFailure(error) {
+    this._consecutiveFailures++;
+    this.log(`⚠️ Ollama consecutive failure logged (${this._consecutiveFailures}/${this._failureThreshold}): ${error.message}`);
+    if (this._consecutiveFailures >= this._failureThreshold && this._state !== 'OPEN') {
+      this._tripCircuit(error);
+    }
+  }
+
+  _tripCircuit(error) {
+    this._state = 'OPEN';
+    this._cooldownUntil = Date.now() + this._cooldownDurationMs;
+    this.log(`🚨 Circuit breaker TRIPPED. Cooldown active for ${this._cooldownDurationMs / 1000}s. Last error: ${error.message}`);
+    this._triggerRestart();
+  }
+
+  _triggerRestart() {
+    if (!this._restartCmd) {
+      this.log(`⚠️ No Ollama restart command configured. Skipping restart.`);
+      return;
+    }
+    this.log(`🔄 Watchdog: Triggering Ollama restart command: ${this._restartCmd}`);
+    // Run the restart command asynchronously so we don't block any runtime code path
+    exec(this._restartCmd, (err, stdout, stderr) => {
+      if (err) {
+        this.log(`❌ Watchdog: Ollama restart command failed: ${err.message}`);
+        if (stderr) this.log(`Stderr: ${stderr.trim()}`);
+      } else {
+        this.log(`✅ Watchdog: Ollama restart command executed successfully.`);
+        if (stdout) this.log(`Stdout: ${stdout.trim()}`);
+      }
+    });
   }
 
   // True when NOW falls inside the critical window of any prayer today. If the
