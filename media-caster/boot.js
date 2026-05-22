@@ -163,6 +163,7 @@ async function bootSystem() {
   // Natural-language status query. Read-only: builds context from the schedule +
   // playback log and asks Gemma; falls back to a computed answer if Gemma is down.
   app.post('/api/ask', async (req, res) => {
+    const startedAt = Date.now();
     try {
       const question = String(req.body?.question || '').trim();
       if (!question) {
@@ -176,20 +177,23 @@ async function bootSystem() {
 
       const context = aiContext.buildStatusContext(annualSchedulePath, CONFIG.timezone, playbackLogger);
       if (!(await ollama.isAvailable(1500))) {
-        res.status(200).json({ answer: deterministicAnswer(), source: 'fallback' });
+        res.status(200).json({ answer: deterministicAnswer(), source: 'fallback', latencyMs: Date.now() - startedAt });
         return;
       }
 
       const sys =
         'You are the assistant for a home Adhan (Islamic prayer) caster. Answer the user\'s question in 1-3 short ' +
-        'sentences using ONLY the system status below. If the question is unrelated to prayer times or this system, ' +
-        'politely say you can only help with Adhan/prayer status. Never invent times.';
+        'sentences using ONLY the system status below. ' +
+        'To answer how long until a specific prayer, read that prayer\'s value verbatim from the ' +
+        '"Time until each prayer" line — never reuse the "Next prayer" countdown for a different prayer, ' +
+        'and never compute or invent times yourself. ' +
+        'If the question is unrelated to prayer times or this system, politely say you can only help with Adhan/prayer status.';
       const answer = await ollama.ask(sys, `SYSTEM STATUS:\n${context}\n\nQUESTION: ${question}`);
       if (!answer) {
-        res.status(200).json({ answer: deterministicAnswer(), source: 'fallback' });
+        res.status(200).json({ answer: deterministicAnswer(), source: 'fallback', latencyMs: Date.now() - startedAt });
         return;
       }
-      res.status(200).json({ answer, source: 'gemma' });
+      res.status(200).json({ answer, source: 'gemma', latencyMs: Date.now() - startedAt });
     } catch (e) {
       res.status(500).json({ error: e.message });
     }

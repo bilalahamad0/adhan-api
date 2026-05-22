@@ -170,6 +170,32 @@ describe('aiContext.getNextPrayer (deterministic fallback core)', () => {
   });
 });
 
+describe('aiContext.buildUpcomingList (per-prayer countdowns)', () => {
+  const tz = 'America/Los_Angeles';
+
+  it('gives each upcoming prayer its OWN countdown (not the next-prayer figure)', () => {
+    const now = DateTime.now().setZone(tz);
+    const soon = now.plus({ hours: 2 });
+    const later = now.plus({ hours: 6 });
+    const file = writeSchedule(now, { Dhuhr: soon.toFormat('HH:mm'), Asr: later.toFormat('HH:mm') });
+
+    const list = aiContext.buildUpcomingList(file, tz);
+    const dhuhr = list.find((l) => l.startsWith('Dhuhr'));
+    const asr = list.find((l) => l.startsWith('Asr'));
+    expect(dhuhr).toMatch(/in 1h 5\dm|in 2h 0?\dm/); // ~2h
+    expect(asr).toMatch(/in 5h 5\dm|in 6h 0?\dm/); // ~6h — distinct from Dhuhr
+    expect(asr).not.toEqual(dhuhr);
+  });
+
+  it('marks a prayer already finished today', () => {
+    const now = DateTime.now().setZone(tz);
+    const past = now.minus({ hours: 2 });
+    const file = writeSchedule(now, { Fajr: past.toFormat('HH:mm') });
+    const list = aiContext.buildUpcomingList(file, tz);
+    expect(list.find((l) => l.startsWith('Fajr'))).toMatch(/finished today/);
+  });
+});
+
 describe('OllamaService Circuit Breaker and Watchdog', () => {
   beforeEach(() => {
     jest.clearAllMocks();

@@ -514,6 +514,7 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
         var q = (input.value || '').trim();
         if (!q) return;
         btn.disabled = true; answerEl.textContent = 'Thinking…';
+        var t0 = (window.performance && performance.now) ? performance.now() : Date.now();
         try {
             var r = await fetch(ASK_BASE + '/api/ask', {
                 method: 'POST',
@@ -521,7 +522,12 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
                 body: JSON.stringify({ question: q })
             });
             var j = await r.json();
-            answerEl.textContent = j.answer || j.error || 'No answer.';
+            var roundTripS = ((((window.performance && performance.now) ? performance.now() : Date.now()) - t0) / 1000).toFixed(1);
+            // Prefer the server-measured time; the client round-trip is the fallback.
+            var serverS = (typeof j.latencyMs === 'number') ? (j.latencyMs / 1000).toFixed(1) : null;
+            var meta = 'answered in ' + roundTripS + 's' + (serverS ? ' (server ' + serverS + 's)' : '');
+            if (j.source === 'fallback') meta += ' · computed (AI offline)';
+            answerEl.textContent = (j.answer || j.error || 'No answer.') + '\n⏱ ' + meta;
         } catch (e) {
             answerEl.textContent = 'Could not reach the assistant.';
         } finally {

@@ -52,6 +52,39 @@ function humanizeMinutes(mins) {
   return h > 0 ? `${h}h ${m}m` : `${m}m`;
 }
 
+// Pre-computed, explicit "time until each prayer" so the 1B model never has to
+// do clock arithmetic (it's bad at it and otherwise reuses the next-prayer
+// figure for the wrong prayer). For prayers already finished today, it rolls to
+// tomorrow's same prayer.
+function buildUpcomingList(scheduleFilePath, timezone) {
+  const now = DateTime.now().setZone(timezone);
+  let today;
+  let tomorrow;
+  try {
+    today = parsePrayerTimes(getDayEntry(scheduleFilePath, now), now);
+    const tdt = now.plus({ days: 1 });
+    tomorrow = parsePrayerTimes(getDayEntry(scheduleFilePath, tdt), tdt);
+  } catch {
+    return [];
+  }
+  const tmap = {};
+  for (const t of tomorrow) tmap[t.prayer] = t;
+  const out = [];
+  for (const t of today) {
+    if (t.dt > now) {
+      out.push(`${t.prayer} ${t.time} → in ${humanizeMinutes(Math.round(t.dt.diff(now, 'minutes').minutes))}`);
+    } else {
+      const tm = tmap[t.prayer];
+      out.push(
+        tm
+          ? `${t.prayer} finished today → next ${tm.time} tomorrow, in ${humanizeMinutes(Math.round(tm.dt.diff(now, 'minutes').minutes))}`
+          : `${t.prayer} finished today`,
+      );
+    }
+  }
+  return out;
+}
+
 // Compact plain-text snapshot of system status, fed to Gemma as grounding so it
 // never invents times. Reuses PlaybackLogger query methods for today's results.
 function buildStatusContext(scheduleFilePath, timezone, playbackLogger) {
@@ -80,6 +113,11 @@ function buildStatusContext(scheduleFilePath, timezone, playbackLogger) {
     lines.push(`Next prayer: ${next.prayer} at ${next.time}${next.tomorrow ? ' (tomorrow)' : ''}, in ${humanizeMinutes(next.minutesUntil)}.`);
   }
 
+  const upcoming = buildUpcomingList(scheduleFilePath, timezone);
+  if (upcoming.length) {
+    lines.push(`Time until each prayer (already computed — use these exact values): ${upcoming.join('; ')}.`);
+  }
+
   if (playbackLogger) {
     try {
       const stats = playbackLogger.getDailyStats(now.toISODate());
@@ -101,4 +139,4 @@ function buildStatusContext(scheduleFilePath, timezone, playbackLogger) {
   return lines.join('\n');
 }
 
-module.exports = { buildStatusContext, getNextPrayer, humanizeMinutes, PRAYERS };
+module.exports = { buildStatusContext, getNextPrayer, buildUpcomingList, humanizeMinutes, PRAYERS };
