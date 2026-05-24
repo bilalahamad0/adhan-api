@@ -44,17 +44,12 @@
         <span>Prayer focus screen during Adhan</span>
         <input type="checkbox" id="focusMode" />
       </label>
-      <label class="field">
-        <span>City</span>
-        <input type="text" id="city" placeholder="Sunnyvale" />
-      </label>
-      <label class="field">
-        <span>State / Province</span>
-        <input type="text" id="state" placeholder="California" />
-      </label>
-      <label class="field">
-        <span>Country</span>
-        <input type="text" id="country" placeholder="US" />
+      <label class="field field-stack">
+        <span>Location</span>
+        <span class="city-wrap">
+          <input type="text" id="city" placeholder="Search any city…" autocomplete="off" />
+          <div id="cityResults" class="suggest" hidden></div>
+        </span>
       </label>
       <label class="field">
         <span>Heads-up before Adhan</span>
@@ -80,7 +75,7 @@
 
     <footer class="foot">
       <span id="updated"></span>
-      <span class="foot-right"><span id="ver" class="ver"></span><a href="#" id="refresh">Refresh</a></span>
+      <a href="#" id="refresh">Refresh</a>
     </footer>
 
     <script type="module" src="popup.js"></script>

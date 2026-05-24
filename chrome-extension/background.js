@@ -9,7 +9,7 @@ const API_BASE = 'https://adhan-api-mauve.vercel.app/api/prayerTimes';
 
 const DEFAULT_SETTINGS = {
   enabled: true,
-  country: 'US',
+  country: 'United States',
   state: 'California',
   city: 'Sunnyvale',
   autoResumeMinutes: 5,
@@ -122,7 +122,7 @@ async function handlePrayerFire() {
     });
   } catch (_) {}
 
-  await broadcast({ type: 'PRAYER_NOW', prayer: nextPrayer.name, time: nextPrayer.time, focus });
+  await broadcast({ type: 'PRAYER_NOW', prayer: nextPrayer.name, time: nextPrayer.time, focus, since: paused.since });
   await setPausedBadge(true);
 
   // Arm auto-resume.
@@ -156,7 +156,7 @@ async function enableFocus() {
   const { paused } = await getState();
   if (!paused.active) return;
   await chrome.storage.local.set({ paused: { ...paused, focus: true } });
-  await broadcast({ type: 'FOCUS_ON', prayer: paused.prayer, time: paused.time });
+  await broadcast({ type: 'FOCUS_ON', prayer: paused.prayer, time: paused.time, since: paused.since });
 }
 
 async function disableFocus() {
