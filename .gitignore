@@ -28,7 +28,6 @@ media-caster/data/
 dist/
 *.tar.gz
 adhan-api-production.tar.gz
-adhan-caster-pro-*.zip
 
 # OS
 .DS_Store
