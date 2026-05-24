@@ -11,6 +11,8 @@
     "format": "prettier --write .",
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
     "test:cov": "npm run test -- --coverage",
+    "test:ext": "node --experimental-vm-modules node_modules/jest/bin/jest.js chrome-extension",
+    "pack:ext": "bash chrome-extension/docs/pack.sh",
     "test:smoke": "node media-caster/boot.js --smoke",
     "test:system": "node media-caster/boot.js --test",
     "test:system:hermetic": "node media-caster/boot.js --system-test",
