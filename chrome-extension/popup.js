@@ -1,5 +1,6 @@
 // Adhan Caster Pro — popup UI logic.
 import { formatCountdown } from './lib/schedule.js';
+import { searchPlaces } from './lib/geocode.js';
 
 const $ = (id) => document.getElementById(id);
 let st = null;
@@ -7,6 +8,60 @@ let tickTimer = null;
 
 function send(msg) {
   return chrome.runtime.sendMessage(msg);
+}
+
+// ---- location search (Open-Meteo geocoding) ----
+// One field resolves city + state/province + country from a real place.
+let selectedPlace = null; // {city,state,country,lat,lon,label} or null until a real place is picked
+let searchTimer = null;
+let searchAbort = null;
+
+function placeLabel(p) {
+  return [p.city, p.state, p.country].filter(Boolean).join(', ');
+}
+
+function renderCityResults(items) {
+  const box = $('cityResults');
+  box.innerHTML = '';
+  if (!items.length) {
+    box.hidden = true;
+    return;
+  }
+  for (const p of items) {
+    const div = document.createElement('div');
+    div.className = 'suggest-item';
+    div.textContent = p.label;
+    div.addEventListener('mousedown', (e) => {
+      e.preventDefault(); // keep focus so blur doesn't close before the click
+      choosePlace(p);
+    });
+    box.appendChild(div);
+  }
+  box.hidden = false;
+}
+
+function choosePlace(p) {
+  selectedPlace = p;
+  $('city').value = p.label;
+  $('locLabel').textContent = p.label;
+  $('cityResults').hidden = true;
+}
+
+async function doCitySearch() {
+  const q = $('city').value;
+  selectedPlace = null; // typing invalidates a prior pick (forces re-validation)
+  if (q.trim().length < 2) {
+    $('cityResults').hidden = true;
+    return;
+  }
+  try {
+    if (searchAbort) searchAbort.abort();
+    searchAbort = new AbortController();
+    const items = await searchPlaces(q, { signal: searchAbort.signal });
+    renderCityResults(items.slice(0, 8));
+  } catch (_) {
+    /* aborted or offline — leave prior results */
+  }
 }
 
 async function load() {
@@ -20,12 +75,22 @@ function renderAll() {
 
   $('enabled').checked = settings.enabled !== false;
   $('focusMode').checked = settings.focusMode === true;
-  $('country').value = settings.country || '';
-  $('state').value = settings.state || '';
-  $('city').value = settings.city || '';
+  // Treat the saved location as already selected so Save works without re-picking.
+  const place = settings.city
+    ? {
+        city: settings.city,
+        state: settings.state || '',
+        country: settings.country || '',
+        lat: settings.lat,
+        lon: settings.lon,
+      }
+    : null;
+  if (place) place.label = placeLabel(place);
+  selectedPlace = place;
+  $('city').value = place ? place.label : '';
   $('resumeMin').value = settings.autoResumeMinutes != null ? settings.autoResumeMinutes : 5;
   $('leadSeconds').value = String(settings.leadSeconds || 30);
-  $('locLabel').textContent = [settings.city, settings.state, settings.country].filter(Boolean).join(', ') || '—';
+  $('locLabel').textContent = place ? place.label : '—';
 
   if (paused && paused.active) {
     $('pausedBanner').hidden = false;
@@ -123,12 +188,21 @@ $('testBtn').addEventListener('click', async () => {
 });
 
 $('save').addEventListener('click', async () => {
+  // Require a real, geocoded place — blocks invalid combos like "Sunnyvale, Morocco".
+  if (!selectedPlace || $('city').value.trim() !== selectedPlace.label) {
+    $('saveMsg').textContent = 'Pick a location from the suggestions';
+    $('city').focus();
+    setTimeout(() => ($('saveMsg').textContent = ''), 3000);
+    return;
+  }
   const settings = {
     enabled: $('enabled').checked,
     focusMode: $('focusMode').checked,
-    country: $('country').value.trim() || 'US',
-    state: $('state').value.trim(),
-    city: $('city').value.trim() || 'Sunnyvale',
+    country: selectedPlace.country || 'United States',
+    state: selectedPlace.state || '',
+    city: selectedPlace.city,
+    lat: selectedPlace.lat,
+    lon: selectedPlace.lon,
     autoResumeMinutes: Math.max(0, parseInt($('resumeMin').value, 10) || 5),
     leadSeconds: parseInt($('leadSeconds').value, 10) || 30,
   };
@@ -158,12 +232,20 @@ $('refresh').addEventListener('click', async (e) => {
   $('refresh').textContent = 'Refresh';
 });
 
-// The Test Adhan trigger is a dev-only affordance; hide it in store-installed builds.
-// Also stamp the loaded version so a stale build is obvious after a reload.
+// The Test Adhan trigger is a dev-only affordance; hidden in store-installed builds.
 try {
-  const { version } = chrome.runtime.getManifest();
-  $('ver').textContent = 'v' + version;
   document.querySelector('.dev-row').hidden = 'update_url' in chrome.runtime.getManifest();
 } catch (_) {}
+
+// Debounced location autocomplete (Open-Meteo geocoding).
+$('city').addEventListener('input', () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(doCitySearch, 300);
+});
+$('city').addEventListener('focus', (e) => {
+  e.target.select(); // select the resolved label so typing replaces it
+  if ($('cityResults').children.length) $('cityResults').hidden = false;
+});
+$('city').addEventListener('blur', () => setTimeout(() => ($('cityResults').hidden = true), 150));
 
 load().then(startTick);

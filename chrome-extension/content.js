@@ -219,10 +219,13 @@
 
     if (mode === 'paused') {
       const name = currentPrayer || (state.paused && state.paused.prayer) || (np && np.name) || 'Prayer';
+      const mins = state.settings && state.settings.autoResumeMinutes;
+      const since = state.paused && state.paused.since;
+      const rem = mins && since ? since + mins * 60000 - now : -1;
       els.card.classList.add('paused');
       els.icon.textContent = '🕌';
       els.title.textContent = name;
-      els.sub.textContent = 'Adhan time · media paused';
+      els.sub.textContent = rem > 0 ? `Auto-resumes in ${fmtMMSS(rem)}` : 'Adhan time · media paused';
       els.sub.classList.remove('pulse');
       els.bar.style.display = 'none';
       els.resume.hidden = false;
@@ -285,7 +288,7 @@
       // Carry focus intent from settings so the full-screen focus takes over
       // immediately, without the corner "Resume" card flashing first.
       const focus = !!(state.settings && state.settings.focusMode);
-      state.paused = { active: true, prayer: np.name, time: np.time, focus };
+      state.paused = { active: true, prayer: np.name, time: np.time, focus, since: now };
     }
     render();
   }
@@ -316,11 +319,17 @@
     if (!msg) return;
     if (msg.type === 'PRAYER_NOW') {
       pauseMediaFor(msg.prayer);
-      state.paused = { active: true, prayer: msg.prayer, time: msg.time, focus: !!msg.focus };
+      state.paused = { active: true, prayer: msg.prayer, time: msg.time, focus: !!msg.focus, since: msg.since };
       render();
     } else if (msg.type === 'FOCUS_ON') {
       const prev = state.paused || {};
-      state.paused = { active: true, prayer: msg.prayer || prev.prayer, time: msg.time || prev.time, focus: true };
+      state.paused = {
+        active: true,
+        prayer: msg.prayer || prev.prayer,
+        time: msg.time || prev.time,
+        focus: true,
+        since: msg.since || prev.since,
+      };
       render();
     } else if (msg.type === 'FOCUS_OFF') {
       if (state.paused) state.paused.focus = false;
