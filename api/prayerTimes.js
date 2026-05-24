@@ -3,8 +3,9 @@ import { DateTime } from 'luxon';
 
 export default async function handler(req, res) {
   try {
-    const { country, city } = req.query;
-    const apiUrl = `http://api.aladhan.com/v1/timingsByCity?country=${country}&city=${city}&method=2`;
+    const { country, city, state } = req.query;
+    let apiUrl = `http://api.aladhan.com/v1/timingsByCity?country=${country}&city=${city}&method=2`;
+    if (state) apiUrl += `&state=${encodeURIComponent(state)}`;
 
     const response = await axios.get(apiUrl);
     const timings = response.data.data.timings;
