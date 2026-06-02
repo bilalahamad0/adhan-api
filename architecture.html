@@ -1,0 +1,1268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Adhan Media Caster — Architecture, System Design & Workflow</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg: #060912;
+    --bg2: #0a0f1e;
+    --panel: rgba(15, 23, 42, 0.66);
+    --panel-solid: #0f172a;
+    --line: rgba(148, 163, 184, 0.14);
+    --line-soft: rgba(148, 163, 184, 0.08);
+
+    --gold: #fbbf24;     /* Adhan / prayer / primary */
+    --blue: #3b82f6;     /* Pi / core / orchestration */
+    --cyan: #22d3ee;     /* data / cloud / sources */
+    --emerald: #10b981;  /* success / healthy */
+    --rose: #f43f5e;     /* alert / critical window */
+    --violet: #a78bfa;   /* AI / Gemma */
+    --amber-soft: rgba(251, 191, 36, 0.12);
+
+    --text: #f1f5f9;
+    --dim: #94a3b8;
+    --faint: #64748b;
+
+    --mono: 'JetBrains Mono', ui-monospace, monospace;
+    --disp: 'Outfit', sans-serif;
+    --body: 'Inter', sans-serif;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    background:
+      radial-gradient(1200px 600px at 15% -10%, rgba(59, 130, 246, 0.10), transparent 60%),
+      radial-gradient(1000px 700px at 100% 0%, rgba(251, 191, 36, 0.07), transparent 55%),
+      radial-gradient(900px 600px at 50% 120%, rgba(167, 139, 250, 0.08), transparent 60%),
+      var(--bg);
+    color: var(--text);
+    font-family: var(--body);
+    min-height: 100vh;
+    overflow-x: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* animated star grid backdrop */
+  .grid-bg {
+    position: fixed; inset: 0; z-index: 0; pointer-events: none;
+    background-image:
+      linear-gradient(rgba(148, 163, 184, 0.04) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(148, 163, 184, 0.04) 1px, transparent 1px);
+    background-size: 48px 48px;
+    mask-image: radial-gradient(ellipse 80% 70% at 50% 30%, #000 30%, transparent 80%);
+    -webkit-mask-image: radial-gradient(ellipse 80% 70% at 50% 30%, #000 30%, transparent 80%);
+    animation: drift 80s linear infinite;
+  }
+  @keyframes drift { to { background-position: 480px 480px, 480px 480px; } }
+
+  .wrap { position: relative; z-index: 1; max-width: 1200px; margin: 0 auto; padding: 0 24px 120px; }
+
+  /* ---------- Header ---------- */
+  header { text-align: center; padding: 54px 0 22px; }
+  .crest {
+    width: 60px; height: 60px; margin: 0 auto 18px; display: block;
+    filter: drop-shadow(0 0 14px rgba(251, 191, 36, 0.45));
+    animation: floaty 6s ease-in-out infinite;
+  }
+  @keyframes floaty { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-7px); } }
+
+  h1 {
+    font-family: var(--disp); font-weight: 600; font-size: clamp(2rem, 4.5vw, 3.1rem);
+    letter-spacing: -0.02em; line-height: 1.05;
+    background: linear-gradient(120deg, var(--gold) 0%, #fff 45%, var(--cyan) 100%);
+    background-size: 200% auto;
+    -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+    animation: shine 8s linear infinite;
+  }
+  @keyframes shine { to { background-position: 200% center; } }
+  .tagline { color: var(--dim); font-size: clamp(0.95rem, 1.6vw, 1.12rem); margin-top: 12px; font-weight: 300; }
+  .tagline b { color: var(--gold); font-weight: 600; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 20px; }
+  .chip {
+    font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.02em;
+    padding: 5px 11px; border-radius: 999px; border: 1px solid var(--line);
+    background: var(--panel); color: var(--dim); backdrop-filter: blur(6px);
+  }
+  .chip b { color: var(--text); font-weight: 500; }
+
+  /* ---------- Tabs ---------- */
+  nav.tabs {
+    position: sticky; top: 0; z-index: 30; display: flex; gap: 6px; justify-content: center;
+    flex-wrap: wrap; padding: 14px 8px; margin: 28px auto 8px; max-width: 760px;
+    background: linear-gradient(180deg, rgba(6, 9, 18, 0.9), rgba(6, 9, 18, 0.5));
+    backdrop-filter: blur(10px); border-radius: 16px;
+  }
+  .tab {
+    font-family: var(--disp); font-weight: 500; font-size: 0.92rem; color: var(--dim);
+    padding: 9px 16px; border-radius: 11px; border: 1px solid transparent; cursor: pointer;
+    background: transparent; transition: all 0.25s ease; display: flex; align-items: center; gap: 8px;
+  }
+  .tab:hover { color: var(--text); background: rgba(148, 163, 184, 0.07); }
+  .tab .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; opacity: 0.6; }
+  .tab.active { color: var(--text); background: var(--panel); border-color: var(--line); box-shadow: 0 6px 24px rgba(0,0,0,0.4); }
+  .tab[data-accent="gold"].active { color: var(--gold); }
+  .tab[data-accent="cyan"].active { color: var(--cyan); }
+  .tab[data-accent="blue"].active { color: var(--blue); }
+  .tab[data-accent="violet"].active { color: var(--violet); }
+
+  /* ---------- View frame ---------- */
+  .view { display: none; animation: viewIn 0.5s ease both; }
+  .view.active { display: block; }
+  @keyframes viewIn { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+
+  .view-head { text-align: center; margin: 26px 0 30px; }
+  .view-head h2 { font-family: var(--disp); font-weight: 600; font-size: 1.7rem; letter-spacing: -0.01em; }
+  .view-head p { color: var(--dim); font-size: 0.96rem; margin-top: 8px; max-width: 640px; margin-inline: auto; line-height: 1.5; }
+
+  .panel {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 20px;
+    backdrop-filter: blur(8px); box-shadow: 0 16px 50px rgba(0,0,0,0.35);
+  }
+
+  /* ============================================================
+     VIEW 1 — ARCHITECTURE (layered)
+  ============================================================ */
+  .arch { display: flex; flex-direction: column; gap: 16px; }
+  .layer {
+    position: relative; padding: 18px 20px; border-radius: 18px;
+    border: 1px solid var(--line); background: var(--panel); backdrop-filter: blur(6px);
+    opacity: 0; transform: translateY(20px);
+  }
+  .view.active .layer { animation: layerIn 0.6s cubic-bezier(.2,.7,.2,1) forwards; }
+  .view.active .layer:nth-child(1) { animation-delay: 0.05s; }
+  .view.active .layer:nth-child(2) { animation-delay: 0.16s; }
+  .view.active .layer:nth-child(3) { animation-delay: 0.27s; }
+  .view.active .layer:nth-child(4) { animation-delay: 0.38s; }
+  .view.active .layer:nth-child(5) { animation-delay: 0.49s; }
+  @keyframes layerIn { to { opacity: 1; transform: none; } }
+
+  .layer-tag {
+    position: absolute; top: -10px; left: 18px; font-family: var(--mono); font-size: 0.64rem;
+    letter-spacing: 0.14em; text-transform: uppercase; padding: 3px 10px; border-radius: 999px;
+    background: var(--bg2); border: 1px solid var(--line); color: var(--dim);
+  }
+  .layer.l-source { border-color: rgba(34, 211, 238, 0.28); }
+  .layer.l-core { border-color: rgba(59, 130, 246, 0.34); background: linear-gradient(180deg, rgba(59,130,246,0.06), var(--panel)); }
+  .layer.l-net { border-color: rgba(251, 191, 36, 0.24); }
+  .layer.l-device { border-color: rgba(16, 185, 129, 0.26); }
+  .layer.l-cloud { border-color: rgba(167, 139, 250, 0.26); }
+
+  .layer-title { display: flex; align-items: center; gap: 9px; font-family: var(--disp); font-weight: 600; font-size: 1.04rem; margin-bottom: 14px; }
+  .layer-title .ic { width: 18px; height: 18px; }
+  .l-source .layer-title { color: var(--cyan); }
+  .l-core .layer-title { color: var(--blue); }
+  .l-net .layer-title { color: var(--gold); }
+  .l-device .layer-title { color: var(--emerald); }
+  .l-cloud .layer-title { color: var(--violet); }
+
+  .cards { display: grid; gap: 11px; }
+  .cards.c2 { grid-template-columns: repeat(2, 1fr); }
+  .cards.c3 { grid-template-columns: repeat(3, 1fr); }
+  .cards.c4 { grid-template-columns: repeat(4, 1fr); }
+
+  .card {
+    background: rgba(2, 6, 16, 0.55); border: 1px solid var(--line-soft); border-radius: 13px;
+    padding: 12px 13px; transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+  }
+  .card:hover { transform: translateY(-3px); border-color: var(--line); box-shadow: 0 10px 26px rgba(0,0,0,0.4); }
+  .card .name { font-family: var(--disp); font-weight: 600; font-size: 0.9rem; display: flex; align-items: center; gap: 7px; }
+  .card .file { font-family: var(--mono); font-size: 0.68rem; color: var(--faint); margin-top: 3px; }
+  .card .desc { font-size: 0.78rem; color: var(--dim); margin-top: 7px; line-height: 1.45; }
+  .card .star { color: var(--gold); font-size: 0.7rem; }
+  .badge-soft { font-family: var(--mono); font-size: 0.6rem; padding: 2px 7px; border-radius: 6px; border: 1px solid var(--line); color: var(--dim); }
+
+  .core-bar {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+    background: rgba(59, 130, 246, 0.10); border: 1px solid rgba(59,130,246,0.3); border-radius: 12px;
+    padding: 11px 15px; margin-bottom: 14px;
+  }
+  .core-bar .lhs { display: flex; align-items: center; gap: 10px; }
+  .core-bar .lhs b { font-family: var(--disp); font-size: 0.96rem; }
+  .core-bar .pi-led { width: 9px; height: 9px; border-radius: 50%; background: var(--blue); box-shadow: 0 0 10px var(--blue); animation: blink 1.8s ease-in-out infinite; }
+  @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+  .core-bar .endpoints { display: flex; gap: 6px; flex-wrap: wrap; }
+  .ep { font-family: var(--mono); font-size: 0.64rem; color: var(--cyan); border: 1px solid rgba(34,211,238,0.25); padding: 2px 7px; border-radius: 6px; background: rgba(34,211,238,0.05); }
+
+  .ai-sub {
+    margin-top: 12px; border: 1px dashed rgba(167,139,250,0.4); border-radius: 13px; padding: 13px;
+    background: rgba(167, 139, 250, 0.05);
+  }
+  .ai-sub .sub-h { display: flex; align-items: center; gap: 8px; color: var(--violet); font-family: var(--disp); font-weight: 600; font-size: 0.85rem; margin-bottom: 10px; }
+  .fence-pill { margin-left: auto; font-family: var(--mono); font-size: 0.6rem; color: var(--rose); border: 1px solid rgba(244,63,94,0.35); padding: 2px 8px; border-radius: 999px; background: rgba(244,63,94,0.07); }
+
+  .flow-down { display: flex; justify-content: center; margin: -6px 0; }
+  .flow-down svg { width: 22px; height: 22px; opacity: 0.5; }
+  .flow-down .a1 { animation: bob 1.6s ease-in-out infinite; }
+  @keyframes bob { 0%,100% { transform: translateY(-2px); opacity: 0.35; } 50% { transform: translateY(3px); opacity: 0.8; } }
+
+  /* ============================================================
+     VIEW 2 — SYSTEM DESIGN (hub & spoke map)
+  ============================================================ */
+  .map-wrap { position: relative; }
+  .map-stage { position: relative; width: 100%; aspect-ratio: 16 / 10; min-height: 420px; }
+  .map-stage svg.wires { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+  .wire { fill: none; stroke: var(--line); stroke-width: 1.5; }
+  .wire-flow { fill: none; stroke-width: 2.2; stroke-linecap: round; stroke-dasharray: 5 14; }
+  .wf-cyan { stroke: var(--cyan); animation: dash 1.1s linear infinite; }
+  .wf-gold { stroke: var(--gold); animation: dash 1.1s linear infinite; }
+  .wf-emerald { stroke: var(--emerald); animation: dash 1.1s linear infinite; }
+  .wf-violet { stroke: var(--violet); animation: dash 1.1s linear infinite; }
+  .wf-rev { animation: dashRev 1.1s linear infinite; }
+  @keyframes dash { to { stroke-dashoffset: -19; } }
+  @keyframes dashRev { to { stroke-dashoffset: 19; } }
+
+  .mnode {
+    position: absolute; transform: translate(-50%, -50%);
+    background: var(--panel-solid); border: 1px solid var(--line); border-radius: 14px;
+    padding: 10px 13px; min-width: 116px; text-align: center; backdrop-filter: blur(6px);
+    box-shadow: 0 10px 30px rgba(0,0,0,0.45); transition: transform 0.2s, box-shadow 0.2s, border-color 0.2s;
+    z-index: 5;
+  }
+  .mnode:hover { transform: translate(-50%, -50%) scale(1.05); z-index: 9; }
+  .mnode .ic { width: 26px; height: 26px; margin: 0 auto 6px; display: block; }
+  .mnode .t { font-family: var(--disp); font-weight: 600; font-size: 0.82rem; line-height: 1.15; }
+  .mnode .s { font-family: var(--mono); font-size: 0.62rem; color: var(--faint); margin-top: 3px; }
+  .mnode.core {
+    min-width: 150px; border-color: rgba(59,130,246,0.55);
+    background: linear-gradient(180deg, rgba(59,130,246,0.16), var(--panel-solid));
+    box-shadow: 0 0 40px rgba(59,130,246,0.28);
+  }
+  .mnode.core .t { font-size: 1rem; color: #dbeafe; }
+  .mnode.core::after {
+    content: ''; position: absolute; inset: -6px; border-radius: 18px; border: 1px solid rgba(59,130,246,0.3);
+    animation: ring 3s ease-out infinite; pointer-events: none;
+  }
+  @keyframes ring { 0% { transform: scale(0.96); opacity: 0.8; } 100% { transform: scale(1.15); opacity: 0; } }
+  .mnode.acc-cyan { border-color: rgba(34,211,238,0.4); }
+  .mnode.acc-gold { border-color: rgba(251,191,36,0.4); }
+  .mnode.acc-emerald { border-color: rgba(16,185,129,0.4); }
+  .mnode.acc-violet { border-color: rgba(167,139,250,0.4); }
+  .wire-label {
+    font-family: var(--mono); font-size: 9px; fill: var(--dim);
+    paint-order: stroke; stroke: var(--bg); stroke-width: 3px;
+  }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 14px; justify-content: center; margin-top: 18px; }
+  .legend span { display: flex; align-items: center; gap: 7px; font-size: 0.76rem; color: var(--dim); font-family: var(--mono); }
+  .legend i { width: 22px; height: 3px; border-radius: 2px; display: inline-block; }
+
+  /* REST endpoints strip */
+  .api-strip { margin-top: 22px; padding: 16px 18px; }
+  .api-strip h3 { font-family: var(--disp); font-size: 0.95rem; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; color: var(--cyan); }
+  .api-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .api-row { display: flex; gap: 9px; align-items: baseline; font-family: var(--mono); font-size: 0.72rem; padding: 6px 9px; border-radius: 8px; background: rgba(2,6,16,0.5); border: 1px solid var(--line-soft); }
+  .verb { font-weight: 700; font-size: 0.64rem; padding: 1px 5px; border-radius: 4px; }
+  .verb.get { color: var(--emerald); background: rgba(16,185,129,0.12); }
+  .verb.post { color: var(--gold); background: rgba(251,191,36,0.12); }
+  .api-row .path { color: var(--text); }
+  .api-row .ex { color: var(--faint); font-size: 0.66rem; margin-left: auto; }
+
+  /* ============================================================
+     VIEW 3 — LIVE CAST CYCLE (workflow)
+  ============================================================ */
+  .wf-controls { display: flex; align-items: center; gap: 10px; justify-content: center; margin-bottom: 18px; flex-wrap: wrap; }
+  .btn {
+    font-family: var(--disp); font-weight: 500; font-size: 0.82rem; color: var(--text);
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 8px 14px;
+    cursor: pointer; display: flex; align-items: center; gap: 7px; transition: all 0.2s;
+  }
+  .btn:hover { border-color: var(--gold); color: var(--gold); }
+  .btn .ic { width: 14px; height: 14px; }
+  .speed { font-family: var(--mono); font-size: 0.72rem; color: var(--dim); display: flex; align-items: center; gap: 6px; }
+  .speed button { font-family: var(--mono); background: transparent; border: 1px solid var(--line); color: var(--dim); border-radius: 6px; padding: 3px 7px; cursor: pointer; }
+  .speed button.on { color: var(--gold); border-color: var(--gold); }
+
+  /* timeline */
+  .timeline { position: relative; padding: 8px 4px 0; margin-bottom: 22px; }
+  .tl-track { position: relative; height: 4px; background: var(--line-soft); border-radius: 4px; }
+  .tl-fill { position: absolute; left: 0; top: 0; height: 100%; width: 0; border-radius: 4px;
+    background: linear-gradient(90deg, var(--blue), var(--gold)); transition: width 0.5s ease; }
+  .tl-steps { display: flex; justify-content: space-between; margin-top: 14px; }
+  .tl-step { flex: 1; text-align: center; position: relative; }
+  .tl-step .pip {
+    width: 13px; height: 13px; border-radius: 50%; background: var(--panel-solid);
+    border: 2px solid var(--line); margin: -23px auto 8px; transition: all 0.3s; position: relative; z-index: 2;
+  }
+  .tl-step .lbl { font-family: var(--mono); font-size: 0.6rem; color: var(--faint); letter-spacing: 0.03em; line-height: 1.3; transition: color 0.3s; }
+  .tl-step.done .pip { border-color: var(--blue); background: var(--blue); }
+  .tl-step.active .pip { border-color: var(--gold); background: var(--gold); box-shadow: 0 0 0 5px var(--amber-soft), 0 0 16px var(--gold); transform: scale(1.25); }
+  .tl-step.active .lbl { color: var(--gold); }
+
+  /* scene */
+  .scene { display: grid; grid-template-columns: 1fr 1.25fr 1fr; gap: 14px; align-items: stretch; }
+  .device, .core-mid { padding: 16px; display: flex; flex-direction: column; }
+  .device .dev-h { display: flex; align-items: center; gap: 9px; font-family: var(--disp); font-weight: 600; font-size: 0.92rem; }
+  .device .dev-h .ic { width: 22px; height: 22px; }
+  .device .dev-sub { font-family: var(--mono); font-size: 0.64rem; color: var(--faint); margin-top: 2px; margin-bottom: 14px; }
+  .screen {
+    flex: 1; min-height: 150px; border-radius: 12px; background: #02040a; border: 1px solid var(--line);
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+    transition: all 0.4s ease; position: relative; overflow: hidden;
+  }
+  .screen .big { font-size: 1.9rem; }
+  .screen .stxt { font-family: var(--disp); font-weight: 600; font-size: 0.92rem; }
+  .screen .ssub { font-family: var(--mono); font-size: 0.64rem; color: var(--dim); }
+  .screen.tv-play { border-color: #475569; }
+  .screen.tv-paused { border-color: var(--rose); background: radial-gradient(circle at 50% 40%, rgba(244,63,94,0.14), #02040a); }
+  .screen.tv-resumed { border-color: var(--emerald); background: radial-gradient(circle at 50% 40%, rgba(16,185,129,0.12), #02040a); }
+  .screen.hub-adhan { border-color: var(--gold); background: radial-gradient(circle at 50% 35%, rgba(251,191,36,0.22), #02040a); box-shadow: inset 0 0 40px rgba(251,191,36,0.15); }
+  .screen.hub-dua { border-color: var(--violet); background: radial-gradient(circle at 50% 35%, rgba(167,139,250,0.16), #02040a); }
+  .screen .ring-anim { position: absolute; width: 60px; height: 60px; border-radius: 50%; border: 2px solid var(--gold); opacity: 0; }
+  .screen.hub-adhan .ring-anim { animation: sonar 1.6s ease-out infinite; }
+  @keyframes sonar { 0% { transform: scale(0.5); opacity: 0.7; } 100% { transform: scale(2.6); opacity: 0; } }
+
+  .device .wire-state { margin-top: 12px; font-family: var(--mono); font-size: 0.64rem; color: var(--dim); display: flex; align-items: center; gap: 7px; min-height: 16px; }
+  .device .wire-state .pd { width: 6px; height: 6px; border-radius: 50%; background: var(--faint); }
+  .device.lit-rose .wire-state .pd { background: var(--rose); box-shadow: 0 0 8px var(--rose); }
+  .device.lit-gold .wire-state .pd { background: var(--gold); box-shadow: 0 0 8px var(--gold); }
+  .device.lit-emerald .wire-state .pd { background: var(--emerald); box-shadow: 0 0 8px var(--emerald); }
+
+  /* center core */
+  .core-mid { align-items: center; text-align: center; border-color: rgba(59,130,246,0.3); background: linear-gradient(180deg, rgba(59,130,246,0.07), var(--panel)); }
+  .core-mid .pi-icon { width: 46px; height: 46px; margin-bottom: 8px; filter: drop-shadow(0 0 10px rgba(59,130,246,0.5)); }
+  .core-mid .pi-name { font-family: var(--disp); font-weight: 600; font-size: 0.95rem; color: #dbeafe; }
+  .countdown {
+    font-family: var(--mono); font-weight: 700; font-size: 2.5rem; letter-spacing: 0.02em;
+    margin: 12px 0 4px; color: var(--gold); text-shadow: 0 0 24px rgba(251,191,36,0.4); transition: color 0.3s;
+  }
+  .countdown.crit { color: var(--rose); text-shadow: 0 0 24px rgba(244,63,94,0.5); }
+  .phase-name { font-family: var(--disp); font-weight: 600; font-size: 1.05rem; min-height: 26px; }
+  .phase-desc { font-size: 0.78rem; color: var(--dim); margin-top: 6px; line-height: 1.45; min-height: 48px; }
+  .fence-flag {
+    margin-top: 10px; font-family: var(--mono); font-size: 0.62rem; padding: 4px 10px; border-radius: 999px;
+    border: 1px solid var(--line); color: var(--faint); transition: all 0.3s; opacity: 0.5;
+  }
+  .fence-flag.blocked { color: var(--rose); border-color: rgba(244,63,94,0.4); background: rgba(244,63,94,0.08); opacity: 1; }
+  .fence-flag.open { color: var(--emerald); border-color: rgba(16,185,129,0.4); background: rgba(16,185,129,0.08); opacity: 1; }
+
+  /* log console */
+  .console { margin-top: 16px; padding: 0; overflow: hidden; }
+  .console .con-h { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--line); font-family: var(--mono); font-size: 0.7rem; color: var(--dim); }
+  .console .con-h .dots { display: flex; gap: 5px; }
+  .console .con-h .dots i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+  .log-body { padding: 12px 14px; height: 150px; overflow-y: auto; font-family: var(--mono); font-size: 0.72rem; line-height: 1.7; }
+  .log-body::-webkit-scrollbar { width: 6px; }
+  .log-body::-webkit-scrollbar-thumb { background: var(--line); border-radius: 3px; }
+  .log-line { opacity: 0; animation: logIn 0.3s ease forwards; display: flex; gap: 9px; }
+  @keyframes logIn { to { opacity: 1; } }
+  .log-line .ts { color: var(--faint); flex-shrink: 0; }
+  .log-line .tag { flex-shrink: 0; font-weight: 700; }
+  .log-line.c-blue .tag { color: var(--blue); }
+  .log-line.c-gold .tag { color: var(--gold); }
+  .log-line.c-cyan .tag { color: var(--cyan); }
+  .log-line.c-emerald .tag { color: var(--emerald); }
+  .log-line.c-rose .tag { color: var(--rose); }
+  .log-line.c-violet .tag { color: var(--violet); }
+  .log-line .msg { color: var(--text); }
+  .log-line .msg b { color: var(--gold); font-weight: 500; }
+
+  /* ============================================================
+     VIEW 4 — AI FENCE
+  ============================================================ */
+  .fence-grid { display: grid; grid-template-columns: 1.4fr 1fr; gap: 16px; }
+  @media (max-width: 860px) { .fence-grid { grid-template-columns: 1fr; } }
+  .fence-panel { padding: 18px; }
+  .fence-panel h3 { font-family: var(--disp); font-size: 1rem; margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
+  .fence-panel .ph-sub { font-size: 0.8rem; color: var(--dim); margin-bottom: 16px; line-height: 1.5; }
+
+  /* day timeline with prayer spikes */
+  .day-tl { position: relative; height: 130px; margin: 24px 0 8px; }
+  .day-axis { position: absolute; bottom: 26px; left: 0; right: 0; height: 2px; background: var(--line); }
+  .qzone { position: absolute; bottom: 26px; height: 30px; background: rgba(16,185,129,0.10); border-top: 2px solid rgba(16,185,129,0.4); }
+  .czone { position: absolute; bottom: 26px; height: 64px; background: rgba(244,63,94,0.12); border: 1px solid rgba(244,63,94,0.35); border-bottom: none; border-radius: 6px 6px 0 0; }
+  .czone .pk { position: absolute; top: -8px; left: 50%; transform: translateX(-50%); font-size: 0.95rem; }
+  .czone .nm { position: absolute; bottom: 4px; left: 50%; transform: translateX(-50%); font-family: var(--mono); font-size: 0.58rem; color: var(--rose); white-space: nowrap; }
+  .tl-marker { position: absolute; bottom: 26px; width: 2px; background: var(--gold); box-shadow: 0 0 12px var(--gold); z-index: 4; transition: left 0.1s linear; }
+  .tl-marker .ai-bot { position: absolute; top: -34px; left: 50%; transform: translateX(-50%); font-size: 1.2rem; transition: filter 0.3s; }
+  .tl-marker.blocked .ai-bot { filter: grayscale(1) brightness(0.6); }
+  .day-labels { position: absolute; bottom: 0; left: 0; right: 0; display: flex; justify-content: space-between; font-family: var(--mono); font-size: 0.6rem; color: var(--faint); }
+  .fence-status { text-align: center; margin-top: 14px; font-family: var(--disp); font-weight: 600; font-size: 0.95rem; min-height: 24px; transition: color 0.3s; }
+
+  .job-list { display: flex; flex-direction: column; gap: 10px; margin-top: 4px; }
+  .job { display: flex; gap: 11px; align-items: flex-start; padding: 11px 13px; border-radius: 11px; background: rgba(2,6,16,0.5); border: 1px solid var(--line-soft); }
+  .job .jic { width: 30px; height: 30px; flex-shrink: 0; border-radius: 8px; display: flex; align-items: center; justify-content: center; background: rgba(167,139,250,0.1); font-size: 1rem; }
+  .job .jt { font-family: var(--disp); font-weight: 600; font-size: 0.84rem; }
+  .job .jd { font-size: 0.74rem; color: var(--dim); margin-top: 3px; line-height: 1.4; }
+  .job .when { font-family: var(--mono); font-size: 0.6rem; color: var(--violet); margin-top: 5px; display: inline-block; border: 1px solid rgba(167,139,250,0.3); padding: 1px 6px; border-radius: 5px; }
+
+  /* circuit breaker state machine */
+  .cb { display: flex; align-items: center; justify-content: center; gap: 8px; margin: 18px 0 6px; flex-wrap: wrap; }
+  .cb-state { font-family: var(--mono); font-size: 0.74rem; padding: 9px 13px; border-radius: 10px; border: 1px solid var(--line); color: var(--dim); position: relative; transition: all 0.4s; text-align: center; }
+  .cb-state .sn { font-weight: 700; display: block; }
+  .cb-state .sd { font-size: 0.58rem; color: var(--faint); margin-top: 2px; }
+  .cb-state.on.closed { color: var(--emerald); border-color: var(--emerald); box-shadow: 0 0 18px rgba(16,185,129,0.3); }
+  .cb-state.on.open { color: var(--rose); border-color: var(--rose); box-shadow: 0 0 18px rgba(244,63,94,0.3); }
+  .cb-state.on.half { color: var(--gold); border-color: var(--gold); box-shadow: 0 0 18px rgba(251,191,36,0.3); }
+  .cb-arrow { color: var(--faint); font-size: 0.9rem; }
+  .cb-note { font-family: var(--mono); font-size: 0.66rem; color: var(--dim); text-align: center; margin-top: 12px; line-height: 1.6; }
+  .cb-note b { color: var(--rose); }
+
+  .resil { display: grid; grid-template-columns: repeat(2, 1fr); gap: 9px; margin-top: 6px; }
+  .resil .r { display: flex; gap: 9px; align-items: flex-start; font-size: 0.76rem; color: var(--dim); padding: 9px 11px; border-radius: 9px; background: rgba(2,6,16,0.4); border: 1px solid var(--line-soft); line-height: 1.4; }
+  .resil .r .ck { color: var(--emerald); flex-shrink: 0; }
+  .resil .r b { color: var(--text); font-weight: 600; }
+
+  footer { text-align: center; margin-top: 60px; color: var(--faint); font-size: 0.78rem; }
+  footer b { color: var(--dim); }
+  footer .mono { font-family: var(--mono); font-size: 0.7rem; }
+
+  @media (max-width: 760px) {
+    .cards.c3, .cards.c4 { grid-template-columns: repeat(2, 1fr); }
+    .api-grid { grid-template-columns: 1fr; }
+    .scene { grid-template-columns: 1fr; }
+    .resil { grid-template-columns: 1fr; }
+    .tl-step .lbl { font-size: 0.5rem; }
+  }
+</style>
+</head>
+<body>
+<div class="grid-bg"></div>
+<div class="wrap">
+
+  <!-- ================= HEADER ================= -->
+  <header>
+    <svg class="crest" viewBox="0 0 24 24" fill="none">
+      <path d="M12 2c-1 0-2 .3-2 .3 2.5.8 4 3 4 5.7 0 3.3-2.7 6-6 6-.6 0-1.2-.1-1.7-.3.9 2.5 3.3 4.3 6.1 4.3 3.6 0 6.5-2.9 6.5-6.5C19 5.9 16 2.7 12 2z" fill="#fbbf24"/>
+      <circle cx="18.5" cy="5.5" r="1.1" fill="#fff"/>
+    </svg>
+    <h1>Adhan Media Caster</h1>
+    <p class="tagline">An <b>edge-AI IoT orchestration engine</b> on a Raspberry&nbsp;Pi&nbsp;4 — precision prayer-audio casting, ADB device choreography, and a fully on-device LLM that never touches the real-time path.</p>
+    <div class="chips">
+      <span class="chip"><b>Node.js 18+</b> · Express 5</span>
+      <span class="chip"><b>Gemma 3 (1B)</b> · Ollama</span>
+      <span class="chip"><b>Google Cast</b> · mDNS/castv2</span>
+      <span class="chip"><b>ADB</b> · Sony Android TV</span>
+      <span class="chip"><b>FFmpeg</b> · Canvas</span>
+      <span class="chip"><b>Firestore</b> · PM2</span>
+    </div>
+  </header>
+
+  <!-- ================= TABS ================= -->
+  <nav class="tabs">
+    <button class="tab active" data-view="architecture" data-accent="blue"><span class="dot"></span>Architecture</button>
+    <button class="tab" data-view="design" data-accent="cyan"><span class="dot"></span>System Design</button>
+    <button class="tab" data-view="workflow" data-accent="gold"><span class="dot"></span>Live Cast Cycle</button>
+    <button class="tab" data-view="fence" data-accent="violet"><span class="dot"></span>The AI Fence</button>
+  </nav>
+
+  <!-- ================================================================
+       VIEW 1 — ARCHITECTURE
+  ================================================================ -->
+  <section class="view active" id="architecture">
+    <div class="view-head">
+      <h2>Layered Architecture</h2>
+      <p>One Raspberry Pi is the entire backend. External data flows down through the edge core's service mesh, out over the local network to physical devices, and up to the cloud for the operations dashboard.</p>
+    </div>
+
+    <div class="arch">
+
+      <!-- Layer: Data sources -->
+      <div class="layer l-source">
+        <span class="layer-tag">Layer 0 · External Data</span>
+        <div class="layer-title"><svg class="ic" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 100 20 10 10 0 000-20zm0 2c1.6 0 3 .5 4.2 1.4-.4 1-.9 1.4-1.7 1.4-.6 0-1-.2-1.5-.4-.5-.2-1-.4-1.7-.4-1 0-1.7.5-2.3 1-.5.4-.9.7-1.5.7-.6 0-1-.2-1.4-.6A8 8 0 0112 4zm-7.7 7.3c.6.3 1.2.5 1.9.5 1 0 1.7-.5 2.3-1 .5-.4.9-.7 1.5-.7s1 .3 1.5.7c.6.5 1.3 1 2.3 1s1.7-.5 2.3-1c.5-.4.9-.7 1.5-.7.5 0 .9.2 1.3.5a8 8 0 11-14.6.2z"/></svg>Source APIs</div>
+        <div class="cards c2">
+          <div class="card">
+            <div class="name">Aladhan API</div>
+            <div class="file">api.aladhan.com · calendarByCity</div>
+            <div class="desc">Annual prayer-time calendar, fetched <b>once per year</b> and cached to <code>annual_schedule.json</code> (incl. Hijri dates).</div>
+          </div>
+          <div class="card">
+            <div class="name">Open-Meteo</div>
+            <div class="file">api.open-meteo.com/v1/forecast</div>
+            <div class="desc">Current WMO weather code + day/night, on a <b>15-min cache</b>, driving procedural rain/snow/fog FFmpeg filters.</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="flow-down"><svg class="a1" viewBox="0 0 24 24" fill="none" stroke="var(--cyan)" stroke-width="2"><path d="M12 4v16M6 14l6 6 6-6"/></svg></div>
+
+      <!-- Layer: Edge core -->
+      <div class="layer l-core">
+        <span class="layer-tag">Layer 1 · Edge Core — Raspberry Pi 4</span>
+        <div class="core-bar">
+          <div class="lhs"><span class="pi-led"></span><b>boot.js</b> — Orchestration Core + REST API</div>
+          <div class="endpoints">
+            <span class="ep">:3001</span>
+            <span class="ep">/health</span>
+            <span class="ep">/api/metrics</span>
+            <span class="ep">/api/ask</span>
+            <span class="ep">/api/trigger/prayer</span>
+          </div>
+        </div>
+
+        <div class="layer-title" style="font-size:0.82rem; color:var(--dim); margin-bottom:10px;">Service Mesh</div>
+        <div class="cards c4">
+          <div class="card">
+            <div class="name"><span class="star">★</span> CoreScheduler</div>
+            <div class="file">CoreScheduler.js</div>
+            <div class="desc">Authoritative scheduler & player — pre-flight, adaptive lead, cast lifecycle, retries.</div>
+          </div>
+          <div class="card">
+            <div class="name">MediaService</div>
+            <div class="file">MediaService.js</div>
+            <div class="desc">Audio cache, Adhan selection, FFmpeg encode + weather filters.</div>
+          </div>
+          <div class="card">
+            <div class="name">visual_generator</div>
+            <div class="file">visual_generator.js</div>
+            <div class="desc">HD 1280×800 dashboard render via Canvas; procedural weather.</div>
+          </div>
+          <div class="card">
+            <div class="name">HardwareService</div>
+            <div class="file">HardwareService.js</div>
+            <div class="desc">ADB control of the Sony TV — pause/resume, ghost-power detect.</div>
+          </div>
+          <div class="card">
+            <div class="name">DiscoveryService</div>
+            <div class="file">DiscoveryService.js</div>
+            <div class="desc">mDNS Cast discovery with a cache-first warm path (6h TTL).</div>
+          </div>
+          <div class="card">
+            <div class="name">PlaybackLogger</div>
+            <div class="file">PlaybackLogger.js</div>
+            <div class="desc">Durable event log + rolling metrics, latency p75/p95, streaks.</div>
+          </div>
+          <div class="card">
+            <div class="name">FirestoreSync</div>
+            <div class="file">FirestoreSync.js</div>
+            <div class="desc">Debounced push of metrics + schedule to Firestore.</div>
+          </div>
+          <div class="card">
+            <div class="name">SecurityService</div>
+            <div class="file">SecurityService.js</div>
+            <div class="desc">Self-healing <code>npm audit fix</code>, dependency hygiene.</div>
+          </div>
+        </div>
+
+        <div class="ai-sub">
+          <div class="sub-h">
+            <svg class="ic" viewBox="0 0 24 24" width="16" height="16" fill="var(--violet)"><path d="M12 2a2 2 0 012 2v1h3a3 3 0 013 3v3h1a2 2 0 010 4h-1v3a3 3 0 01-3 3H7a3 3 0 01-3-3v-3H3a2 2 0 010-4h1V8a3 3 0 013-3h3V4a2 2 0 012-2zM9 11a1.5 1.5 0 100 3 1.5 1.5 0 000-3zm6 0a1.5 1.5 0 100 3 1.5 1.5 0 000-3z"/></svg>
+            On-Device AI Layer (local-first, no cloud, no API keys)
+            <span class="fence-pill">⛔ fenced off the cast path</span>
+          </div>
+          <div class="cards c3">
+            <div class="card">
+              <div class="name" style="color:var(--violet)">OllamaService</div>
+              <div class="file">Gemma 3 1B · 127.0.0.1:11434</div>
+              <div class="desc">Single-flight queue, circuit breaker, watchdog, quiet-window guard.</div>
+            </div>
+            <div class="card">
+              <div class="name" style="color:var(--violet)">AdvisoryAgent</div>
+              <div class="file">AdvisoryAgent.js</div>
+              <div class="desc">Failure diagnosis, daily blurb, advisory-only tuning (never auto-applied).</div>
+            </div>
+            <div class="card">
+              <div class="name" style="color:var(--violet)">aiContext</div>
+              <div class="file">aiContext.js</div>
+              <div class="desc">Grounds Gemma in computed schedule + log so it never invents times.</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="layer-title" style="font-size:0.82rem; color:var(--dim); margin:14px 0 10px;">Local Data Stores (on-disk)</div>
+        <div class="cards c4">
+          <div class="card"><div class="name" style="font-size:0.8rem">annual_schedule.json</div><div class="desc">Yearly prayer times</div></div>
+          <div class="card"><div class="name" style="font-size:0.8rem">playback_log.json</div><div class="desc">Event journal + archives</div></div>
+          <div class="card"><div class="name" style="font-size:0.8rem">.cast-cache.json</div><div class="desc">Last-known device host:port</div></div>
+          <div class="card"><div class="name" style="font-size:0.8rem">ai-memory · ai-blurb</div><div class="desc">Diagnoses, suggestions, greeting</div></div>
+        </div>
+      </div>
+
+      <div class="flow-down"><svg class="a1" viewBox="0 0 24 24" fill="none" stroke="var(--gold)" stroke-width="2"><path d="M12 4v16M6 14l6 6 6-6"/></svg></div>
+
+      <!-- Layer: Network/protocols -->
+      <div class="layer l-net">
+        <span class="layer-tag">Layer 2 · Local Network & Protocols</span>
+        <div class="cards c2">
+          <div class="card">
+            <div class="name">Google Cast — castv2 / mDNS</div>
+            <div class="desc">Service discovery + media session control to the Nest Hub. Hybrid watchdog: passive event listening + serialized active polling.</div>
+          </div>
+          <div class="card">
+            <div class="name">ADB — Android Debug Bridge</div>
+            <div class="desc">Deep state inspection (<code>dumpsys power / media_session / audio</code>) and key-event injection to the Android TV, with 8s timeout + SIGKILL guards.</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="flow-down"><svg class="a1" viewBox="0 0 24 24" fill="none" stroke="var(--emerald)" stroke-width="2"><path d="M12 4v16M6 14l6 6 6-6"/></svg></div>
+
+      <!-- Layer: Devices -->
+      <div class="layer l-device">
+        <span class="layer-tag">Layer 3 · Physical Devices</span>
+        <div class="cards c2">
+          <div class="card">
+            <div class="name">🕌 Google Nest Hub Max</div>
+            <div class="desc">Casts the HD Adhan video + live dashboard, then the Dua image. Volume tuned per-prayer and per TV-activity state.</div>
+          </div>
+          <div class="card">
+            <div class="name">📺 Sony Android TV</div>
+            <div class="desc">Netflix/YouTube intelligently paused (or muted for live streams) before the Adhan and resumed after — zero user intervention.</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="flow-down"><svg class="a1" viewBox="0 0 24 24" fill="none" stroke="var(--violet)" stroke-width="2"><path d="M12 4v16M6 14l6 6 6-6"/></svg></div>
+
+      <!-- Layer: Cloud & ops -->
+      <div class="layer l-cloud">
+        <span class="layer-tag">Layer 4 · Cloud & Operations</span>
+        <div class="cards c4">
+          <div class="card">
+            <div class="name">Firestore</div>
+            <div class="file">project adhan-79908</div>
+            <div class="desc">dailyMetrics · dailyEvents · meta/prayerSchedule.</div>
+          </div>
+          <div class="card">
+            <div class="name">dashboard.html</div>
+            <div class="file">GitHub Pages</div>
+            <div class="desc">Live ops dashboard reading Firestore in real time.</div>
+          </div>
+          <div class="card">
+            <div class="name">PM2</div>
+            <div class="file">ecosystem.config.cjs</div>
+            <div class="desc">Supervises boot.js — restart on crash, log rotation.</div>
+          </div>
+          <div class="card">
+            <div class="name">GitHub Actions</div>
+            <div class="file">.github/workflows</div>
+            <div class="desc">Weekly <code>npm audit fix</code> + CI.</div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ================================================================
+       VIEW 2 — SYSTEM DESIGN
+  ================================================================ -->
+  <section class="view" id="design">
+    <div class="view-head">
+      <h2>System Design — Data &amp; Control Flow</h2>
+      <p>The Pi core sits at the center. Hover any node. Flowing lines show direction and payload: cyan = data ingest, gold = real-time cast/control, emerald = device telemetry, violet = local AI.</p>
+    </div>
+
+    <div class="panel map-wrap" style="padding:18px;">
+      <div class="map-stage" id="mapStage">
+        <svg class="wires" viewBox="0 0 1000 620" preserveAspectRatio="xMidYMid meet">
+          <!-- Aladhan -> core (ingest) -->
+          <path class="wire" d="M150,90 C320,140 380,220 470,280" />
+          <path class="wire-flow wf-cyan" d="M150,90 C320,140 380,220 470,280" />
+          <!-- Open-Meteo -> core -->
+          <path class="wire" d="M150,300 C260,300 360,300 460,310" />
+          <path class="wire-flow wf-cyan" d="M150,300 C260,300 360,300 460,310" />
+          <!-- Ollama <-> core (local AI, bidirectional) -->
+          <path class="wire" d="M150,520 C320,500 390,430 470,360" />
+          <path class="wire-flow wf-violet" d="M150,520 C320,500 390,430 470,360" />
+          <!-- core -> Nest Hub (cast) -->
+          <path class="wire" d="M540,290 C660,200 740,150 840,110" />
+          <path class="wire-flow wf-gold" d="M540,290 C660,200 740,150 840,110" />
+          <!-- core <-> Sony TV (ADB, bidirectional control+telemetry) -->
+          <path class="wire" d="M545,320 C680,320 760,310 850,300" />
+          <path class="wire-flow wf-emerald wf-rev" d="M545,320 C680,320 760,310 850,300" />
+          <!-- core -> Firestore -->
+          <path class="wire" d="M530,360 C640,440 740,470 840,500" />
+          <path class="wire-flow wf-gold" d="M530,360 C640,440 740,470 840,500" />
+          <!-- Firestore -> dashboard -->
+          <path class="wire" d="M905,530 C905,560 850,580 720,585" />
+          <path class="wire-flow wf-cyan" d="M905,530 C905,560 850,580 720,585" />
+          <!-- clients -> core (REST) -->
+          <path class="wire" d="M150,470 C280,440 360,400 465,345" />
+          <path class="wire-flow wf-gold wf-rev" d="M150,470 C280,440 360,400 465,345" />
+
+          <text class="wire-label" x="305" y="165">yearly schedule</text>
+          <text class="wire-label" x="270" y="292">weather 15m</text>
+          <text class="wire-label" x="300" y="455">/api/ask · curl</text>
+          <text class="wire-label" x="690" y="150">Cast · castv2</text>
+          <text class="wire-label" x="700" y="295">ADB control</text>
+          <text class="wire-label" x="690" y="455">metrics sync</text>
+          <text class="wire-label" x="300" y="500">Gemma 3</text>
+        </svg>
+
+        <!-- nodes -->
+        <div class="mnode acc-cyan" style="left:9%; top:14%;">
+          <svg class="ic" viewBox="0 0 24 24" fill="var(--cyan)"><path d="M12 2a10 10 0 100 20 10 10 0 000-20zM4.3 11.3c.6.3 1.2.5 1.9.5 1 0 1.7-.5 2.3-1 .5-.4.9-.7 1.5-.7s1 .3 1.5.7c.6.5 1.3 1 2.3 1s1.7-.5 2.3-1c.5-.4.9-.7 1.5-.7.5 0 .9.2 1.3.5a8 8 0 11-14.6.2z"/></svg>
+          <div class="t">Aladhan API</div>
+          <div class="s">prayer times</div>
+        </div>
+        <div class="mnode acc-cyan" style="left:9%; top:48%;">
+          <svg class="ic" viewBox="0 0 24 24" fill="var(--cyan)"><path d="M6 19a5 5 0 010-10 7 7 0 0113.3 2.1A4.5 4.5 0 0118 19H6z"/></svg>
+          <div class="t">Open-Meteo</div>
+          <div class="s">weather FX</div>
+        </div>
+        <div class="mnode acc-cyan" style="left:9%; top:70%;">
+          <svg class="ic" viewBox="0 0 24 24" fill="var(--gold)"><path d="M4 5h16v10H4zM2 19h20v2H2zM9 8h6M9 11h6" stroke="var(--gold)" stroke-width="1.4" fill="none"/></svg>
+          <div class="t">REST clients</div>
+          <div class="s">curl · ext.</div>
+        </div>
+        <div class="mnode acc-violet" style="left:9%; top:90%;">
+          <svg class="ic" viewBox="0 0 24 24" fill="var(--violet)"><path d="M12 2a2 2 0 012 2v1h3a3 3 0 013 3v3h1a2 2 0 010 4h-1v3a3 3 0 01-3 3H7a3 3 0 01-3-3v-3H3a2 2 0 010-4h1V8a3 3 0 013-3h3V4a2 2 0 012-2zM9 11a1.5 1.5 0 100 3 1.5 1.5 0 000-3zm6 0a1.5 1.5 0 100 3 1.5 1.5 0 000-3z"/></svg>
+          <div class="t">Ollama · Gemma 3</div>
+          <div class="s">local LLM</div>
+        </div>
+
+        <!-- CORE -->
+        <div class="mnode core" style="left:50%; top:51%;">
+          <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="#93c5fd" stroke-width="1.6" style="width:30px;height:30px"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M1 9h3M1 15h3M20 9h3M20 15h3"/></svg>
+          <div class="t">Raspberry Pi 4</div>
+          <div class="s">boot.js · :3001</div>
+        </div>
+
+        <div class="mnode acc-gold" style="left:88%; top:17%;">
+          <svg class="ic" viewBox="0 0 24 24" fill="var(--gold)"><path d="M11 3l7 .5 1 6.5h2v2h-2.5L19 19h-3l-1-7H11v7H8l-1-7H4.5v-2H7l1-6.5L11 3z"/></svg>
+          <div class="t">Nest Hub Max</div>
+          <div class="s">Adhan + dash</div>
+        </div>
+        <div class="mnode acc-emerald" style="left:89%; top:48%;">
+          <svg class="ic" viewBox="0 0 24 24" fill="var(--emerald)"><path d="M3 4h18a1 1 0 011 1v12a1 1 0 01-1 1h-7v2h3v2H7v-2h3v-2H3a1 1 0 01-1-1V5a1 1 0 011-1z"/></svg>
+          <div class="t">Sony Android TV</div>
+          <div class="s">pause / resume</div>
+        </div>
+        <div class="mnode acc-violet" style="left:89%; top:80%;">
+          <svg class="ic" viewBox="0 0 24 24" fill="var(--violet)"><path d="M4 6a8 4 0 0016 0 8 4 0 00-16 0zM4 6v6a8 4 0 0016 0V6M4 12v6a8 4 0 0016 0v-6"/></svg>
+          <div class="t">Firestore</div>
+          <div class="s">adhan-79908</div>
+        </div>
+        <div class="mnode acc-cyan" style="left:64%; top:94%;">
+          <svg class="ic" viewBox="0 0 24 24" fill="var(--cyan)"><path d="M3 5h18v12H3zM2 19h20v2H2zM8 9l3 3-3 3M13 15h4"/></svg>
+          <div class="t">dashboard.html</div>
+          <div class="s">GitHub Pages</div>
+        </div>
+      </div>
+
+      <div class="legend">
+        <span><i style="background:var(--cyan)"></i>Data ingest</span>
+        <span><i style="background:var(--gold)"></i>Real-time cast / control</span>
+        <span><i style="background:var(--emerald)"></i>Device telemetry</span>
+        <span><i style="background:var(--violet)"></i>Local AI</span>
+      </div>
+    </div>
+
+    <div class="panel api-strip">
+      <h3><svg width="16" height="16" viewBox="0 0 24 24" fill="var(--cyan)"><path d="M8 3v2H5v14h3v2H3V3zM16 3h5v18h-5v-2h3V5h-3z"/></svg>REST Control &amp; Telemetry Surface — <span style="font-family:var(--mono); font-size:0.78rem; color:var(--dim)">boot.js · default :3001</span></h3>
+      <div class="api-grid">
+        <div class="api-row"><span class="verb get">GET</span><span class="path">/health</span><span class="ex">build + SHA</span></div>
+        <div class="api-row"><span class="verb get">GET</span><span class="path">/api/metrics?days=N</span><span class="ex">rollup</span></div>
+        <div class="api-row"><span class="verb get">GET</span><span class="path">/api/metrics/today</span><span class="ex">today</span></div>
+        <div class="api-row"><span class="verb post">POST</span><span class="path">/api/ask</span><span class="ex">Gemma + fallback</span></div>
+        <div class="api-row"><span class="verb get">GET</span><span class="path">/api/ask/health</span><span class="ex">LLM reachable?</span></div>
+        <div class="api-row"><span class="verb get">GET</span><span class="path">/api/blurb</span><span class="ex">daily greeting</span></div>
+        <div class="api-row"><span class="verb get">GET</span><span class="path">/api/advisory</span><span class="ex">tuning notes</span></div>
+        <div class="api-row"><span class="verb post">POST</span><span class="path">/api/trigger/prayer</span><span class="ex">manual fire</span></div>
+        <div class="api-row"><span class="verb post">POST</span><span class="path">/api/metrics/sync</span><span class="ex">→ Firestore</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================================================================
+       VIEW 3 — LIVE CAST CYCLE
+  ================================================================ -->
+  <section class="view" id="workflow">
+    <div class="view-head">
+      <h2>Live Cast Cycle — the Prayer Lifecycle</h2>
+      <p>One full autonomous cycle, from idle monitoring through the millisecond-precise trigger to recovery and cloud sync. This is the real sequence encoded in <code>CoreScheduler.js</code>.</p>
+    </div>
+
+    <div class="wf-controls">
+      <button class="btn" id="wfToggle"><svg class="ic" viewBox="0 0 24 24" fill="currentColor"><path d="M6 4h4v16H6zM14 4h4v16h-4z"/></svg><span>Pause</span></button>
+      <button class="btn" id="wfRestart"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 109-9 9 9 0 00-6.4 2.6L3 8M3 4v4h4"/></svg><span>Restart</span></button>
+      <div class="speed">speed
+        <button data-speed="1.6">0.5×</button>
+        <button data-speed="1" class="on">1×</button>
+        <button data-speed="0.5">2×</button>
+      </div>
+    </div>
+
+    <!-- timeline -->
+    <div class="panel" style="padding:18px 22px 14px;">
+      <div class="timeline">
+        <div class="tl-track"><div class="tl-fill" id="tlFill"></div></div>
+        <div class="tl-steps" id="tlSteps"></div>
+      </div>
+    </div>
+
+    <!-- scene -->
+    <div class="scene" style="margin-top:14px;">
+      <!-- TV -->
+      <div class="device panel" id="devTV">
+        <div>
+          <div class="dev-h"><svg class="ic" viewBox="0 0 24 24" fill="var(--emerald)"><path d="M3 4h18a1 1 0 011 1v12a1 1 0 01-1 1h-7v2h3v2H7v-2h3v-2H3a1 1 0 01-1-1V5a1 1 0 011-1z"/></svg>Sony Android TV</div>
+          <div class="dev-sub">ADB · dumpsys</div>
+        </div>
+        <div class="screen tv-play" id="tvScreen">
+          <div class="big" id="tvBig">▶</div>
+          <div class="stxt" id="tvTxt">Playing Netflix</div>
+          <div class="ssub" id="tvSub">media session active</div>
+        </div>
+        <div class="wire-state"><span class="pd"></span><span id="tvState">idle — monitoring</span></div>
+      </div>
+
+      <!-- CORE -->
+      <div class="core-mid panel">
+        <svg class="pi-icon" viewBox="0 0 24 24" fill="none" stroke="#93c5fd" stroke-width="1.5"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M1 9h3M1 15h3M20 9h3M20 15h3"/></svg>
+        <div class="pi-name">Raspberry Pi · CoreScheduler</div>
+        <div class="countdown" id="countdown">05:00</div>
+        <div class="phase-name" id="phaseName">Monitoring</div>
+        <div class="phase-desc" id="phaseDesc">Waiting for the next prayer window.</div>
+        <div class="fence-flag" id="fenceFlag">AI: idle</div>
+      </div>
+
+      <!-- HUB -->
+      <div class="device panel" id="devHub">
+        <div>
+          <div class="dev-h"><svg class="ic" viewBox="0 0 24 24" fill="var(--gold)"><path d="M11 3l7 .5 1 6.5h2v2h-2.5L19 19h-3l-1-7H11v7H8l-1-7H4.5v-2H7l1-6.5L11 3z"/></svg>Nest Hub Max</div>
+          <div class="dev-sub">Cast · castv2</div>
+        </div>
+        <div class="screen" id="hubScreen">
+          <div class="ring-anim"></div>
+          <div class="big" id="hubBig">⏾</div>
+          <div class="stxt" id="hubTxt">Standby</div>
+          <div class="ssub" id="hubSub">awaiting cast</div>
+        </div>
+        <div class="wire-state"><span class="pd"></span><span id="hubState">idle</span></div>
+      </div>
+    </div>
+
+    <!-- console -->
+    <div class="panel console">
+      <div class="con-h">
+        <span class="dots"><i style="background:var(--rose)"></i><i style="background:var(--gold)"></i><i style="background:var(--emerald)"></i></span>
+        media-caster — pm2 log · adhan-caster
+      </div>
+      <div class="log-body" id="logBody"></div>
+    </div>
+  </section>
+
+  <!-- ================================================================
+       VIEW 4 — AI FENCE
+  ================================================================ -->
+  <section class="view" id="fence">
+    <div class="view-head">
+      <h2>The AI Fence — keeping Gemma off the real-time path</h2>
+      <p>The on-device LLM is powerful but a Pi 4 inference can take seconds. The architecture <b>forbids</b> any AI work inside each prayer's critical window, so the Adhan always fires on time — no matter what the model is doing.</p>
+    </div>
+
+    <div class="fence-grid">
+      <!-- left: timeline + jobs -->
+      <div class="fence-panel panel">
+        <h3 style="color:var(--rose)">⛔ Critical Window <span style="color:var(--dim); font-weight:400; font-size:0.8rem;">— T−5m → T+8m</span></h3>
+        <p class="ph-sub">Watch the AI agent (🤖) travel across the day. In a red prayer window it is <b style="color:var(--rose)">blocked</b>; in the green quiet zones it is <b style="color:var(--emerald)">free to run</b>.</p>
+
+        <div class="day-tl" id="dayTl">
+          <div class="day-axis"></div>
+          <!-- quiet zones fill the whole axis behind; critical zones overlay -->
+          <div class="qzone" style="left:0; right:0;"></div>
+          <!-- 5 prayers positioned across the day -->
+          <div class="czone" style="left:18%; width:7%;"><span class="pk">🕌</span><span class="nm">Fajr</span></div>
+          <div class="czone" style="left:46%; width:7%;"><span class="pk">🕌</span><span class="nm">Dhuhr</span></div>
+          <div class="czone" style="left:60%; width:7%;"><span class="pk">🕌</span><span class="nm">Asr</span></div>
+          <div class="czone" style="left:74%; width:7%;"><span class="pk">🕌</span><span class="nm">Maghrib</span></div>
+          <div class="czone" style="left:86%; width:7%;"><span class="pk">🕌</span><span class="nm">Isha</span></div>
+          <div class="tl-marker" id="aiMarker" style="left:0; height:64px;"><span class="ai-bot">🤖</span></div>
+          <div class="day-labels"><span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>24:00</span></div>
+        </div>
+        <div class="fence-status" id="fenceStatus">— quiet window · AI free to run —</div>
+
+        <h3 style="margin-top:22px; color:var(--violet)">Jobs that run only in quiet windows</h3>
+        <div class="job-list">
+          <div class="job">
+            <div class="jic">🩺</div>
+            <div><div class="jt">Self-diagnosing failures</div><div class="jd">A failed cast is queued, then explained in plain English and attached to the dashboard history.</div><span class="when">drains every ~20 min</span></div>
+          </div>
+          <div class="job">
+            <div class="jic">💬</div>
+            <div><div class="jt">Daily dashboard greeting</div><div class="jd">A warm one-liner generated once per day, grounded in the live schedule and stats.</div><span class="when">~05:30 daily</span></div>
+          </div>
+          <div class="job">
+            <div class="jic">🎛️</div>
+            <div><div class="jt">Advisory tuning loop</div><div class="jd">Reviews rolling 14-day reliability and proposes env-var tuning — surfaced for a human, never auto-applied.</div><span class="when">~03:15 daily</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- right: resilience + circuit breaker -->
+      <div class="fence-panel panel">
+        <h3 style="color:var(--gold)">Circuit Breaker + Watchdog</h3>
+        <p class="ph-sub">A Pi 4 can't run two inferences at once, and Ollama can wedge. The breaker fails fast and self-heals.</p>
+
+        <div class="cb" id="cbMachine">
+          <div class="cb-state closed" data-state="closed"><span class="sn">CLOSED</span><span class="sd">healthy</span></div>
+          <span class="cb-arrow">→</span>
+          <div class="cb-state open" data-state="open"><span class="sn">OPEN</span><span class="sd">2 fails · 60s cooldown</span></div>
+          <span class="cb-arrow">→</span>
+          <div class="cb-state half" data-state="half"><span class="sn">HALF-OPEN</span><span class="sd">1 probe</span></div>
+        </div>
+        <div class="cb-note">On trip → watchdog runs <b>systemctl restart ollama</b>.<br/>During cooldown every call fails fast to a deterministic answer.</div>
+
+        <h3 style="margin-top:24px; color:var(--emerald)">Why it never blocks the Adhan</h3>
+        <div class="resil">
+          <div class="r"><span class="ck">✓</span><span><b>Single-flight queue</b> — asks serialized; one inference at a time.</span></div>
+          <div class="r"><span class="ck">✓</span><span><b>Quiet-window guard</b> — isQuiet() gates every job.</span></div>
+          <div class="r"><span class="ck">✓</span><span><b>Model warm-keeping</b> — avoids cold-start stalls.</span></div>
+          <div class="r"><span class="ck">✓</span><span><b>Deterministic fallback</b> — <code>/api/ask</code> never hard-fails.</span></div>
+          <div class="r"><span class="ck">✓</span><span><b>No cloud, no keys</b> — nothing leaves the house.</span></div>
+          <div class="r"><span class="ck">✓</span><span><b>Optional</b> — caster runs fully without Ollama.</span></div>
+        </div>
+
+        <div style="margin-top:18px; padding:13px 15px; border-radius:12px; background:rgba(16,185,129,0.07); border:1px solid rgba(16,185,129,0.25); font-size:0.8rem; color:var(--dim); line-height:1.5;">
+          <b style="color:var(--emerald); font-family:var(--disp);">Net effect:</b> the LLM is a bolt-on observer and advisor. Strip it out entirely and prayers still fire to the millisecond — the AI only ever makes the system <i>more</i> explainable, never less reliable.
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <b>Adhan Media Caster</b> — Designed &amp; engineered by Bilal Ahamad ·
+    <span class="mono">single-file animated overview · architecture · system design · workflow</span>
+  </footer>
+
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  /* ---------- Tab switching ---------- */
+  const tabs = document.querySelectorAll('.tab');
+  const views = document.querySelectorAll('.view');
+  tabs.forEach(function (tab) {
+    tab.addEventListener('click', function () {
+      const id = tab.dataset.view;
+      tabs.forEach(function (t) { t.classList.toggle('active', t === tab); });
+      views.forEach(function (v) { v.classList.toggle('active', v.id === id); });
+      if (id === 'workflow') { startWorkflow(); } else { stopWorkflow(); }
+      if (id === 'fence') { startFence(); } else { stopFence(); }
+      window.scrollTo({ top: document.querySelector('nav.tabs').offsetTop - 8, behavior: 'smooth' });
+    });
+  });
+
+  /* ============================================================
+     WORKFLOW ENGINE
+  ============================================================ */
+  // Each step: timeline pip label, full phase, description, countdown text,
+  // crit flag, TV state, Hub state, AI fence state, and a log line.
+  const STEPS = [
+    {
+      pip: 'BOOT', phase: 'Cold Boot', crit: false,
+      desc: 'Cache audio sources, start the Express server on :3001, mount /audio + /images.',
+      cd: '—', fence: { txt: 'AI: warming model', cls: '' },
+      tv: 'idle', hub: 'standby',
+      log: { c: 'blue', tag: 'boot', msg: 'Audio cache synced · Express listening on <b>:3001</b>' }
+    },
+    {
+      pip: 'SCHEDULE', phase: 'Auto-Scheduler', crit: false,
+      desc: 'Read annual_schedule.json (refreshed yearly from Aladhan). Register 5 × {T−5m trigger, T+30s audit}.',
+      cd: '—', fence: { txt: 'AI: idle', cls: '' },
+      tv: 'idle', hub: 'standby',
+      log: { c: 'blue', tag: 'sched', msg: 'Parsed today · scheduled <b>5 prayers</b> (node-schedule jobs)' }
+    },
+    {
+      pip: 'IDLE', phase: 'Monitoring', crit: false,
+      desc: 'System idle. Next up: Dhuhr. The on-device AI is free to run advisory jobs now.',
+      cd: '05:00', fence: { txt: 'AI: free (quiet window)', cls: 'open' },
+      tv: 'play', hub: 'standby',
+      log: { c: 'emerald', tag: 'idle', msg: 'Next prayer <b>Dhuhr</b> — quiet window, AdvisoryAgent may run' }
+    },
+    {
+      pip: 'PRE-FLIGHT', phase: 'T−5m · Pre-Flight Render', crit: false,
+      desc: 'Render the 1280×800 HD dashboard (Canvas), fetch Open-Meteo weather, bake procedural FX, encode MP4 with FFmpeg.',
+      cd: '04:59', fence: { txt: 'AI: idle', cls: '' },
+      tv: 'play', hub: 'standby',
+      log: { c: 'gold', tag: 'preflight', msg: 'Canvas render + Open-Meteo · FFmpeg encode → <b>encodingDurationMs</b>' }
+    },
+    {
+      pip: 'PRE-STAGE', phase: 'Pre-Stage Discovery', crit: false,
+      desc: 'Discover the Cast device during the 5-min wait — cache-first (.cast-cache.json, 6h TTL), mDNS only if stale. Hold ready-state.',
+      cd: '02:30', fence: { txt: 'AI: idle', cls: '' },
+      tv: 'play', hub: 'standby',
+      log: { c: 'gold', tag: 'discover', msg: 'Cache hit → device probed in 3s · <b>discoveryDurationMs</b> logged' }
+    },
+    {
+      pip: 'LEAD', phase: 'Adaptive Cast Lead', crit: true,
+      desc: 'Fire early by the learned p75 of cast-to-playing latency (≈2000ms) so audio lands at exactly T+0. AI is now fenced out.',
+      cd: '00:02', fence: { txt: 'AI: BLOCKED (critical)', cls: 'blocked' },
+      tv: 'play', hub: 'standby',
+      log: { c: 'rose', tag: 'lead', msg: 'Lead = p75(castToPlayingMs) ≈ <b>2000ms</b> · entering critical window' }
+    },
+    {
+      pip: 'ADB', phase: 'Trigger · ADB Pause', crit: true,
+      desc: 'Ping + dumpsys power confirms the TV is truly on (ghost-power check), then pause Netflix/YouTube — or mute if it’s a live stream.',
+      cd: '00:01', fence: { txt: 'AI: BLOCKED (critical)', cls: 'blocked' },
+      tv: 'paused', hub: 'standby',
+      log: { c: 'rose', tag: 'adb', msg: 'dumpsys power → screen ON · KEYCODE_MEDIA_PAUSE sent → <b>TV paused</b>' }
+    },
+    {
+      pip: 'CAST', phase: 'Trigger · Cast Adhan', crit: true,
+      desc: 'Open the castv2 session and push the baked Adhan video to the Nest Hub. Volume tuned per-prayer.',
+      cd: '00:00', fence: { txt: 'AI: BLOCKED (critical)', cls: 'blocked' },
+      tv: 'paused', hub: 'adhan',
+      log: { c: 'gold', tag: 'cast', msg: 'Cast session open → playing · <b>castConnectMs</b> + <b>triggerLatencyMs</b> recorded' }
+    },
+    {
+      pip: 'ADHAN', phase: 'Adhan In Progress', crit: true,
+      desc: 'Audio plays. Hybrid watchdog (passive events + serialized polling) tracks status; validate elapsed ≥ 50% of nominal length.',
+      cd: '00:00', fence: { txt: 'AI: BLOCKED (critical)', cls: 'blocked' },
+      tv: 'paused', hub: 'adhan',
+      log: { c: 'gold', tag: 'play', msg: 'Status: PLAYING · watchdog polling · elapsed ✓ ≥ 50% nominal' }
+    },
+    {
+      pip: 'DUA', phase: 'Du’a Transition', crit: true,
+      desc: 'On FINISHED, transition to the Du’a-after-Adhan image for ~20s, then close out.',
+      cd: '+0:30', fence: { txt: 'AI: BLOCKED (critical)', cls: 'blocked' },
+      tv: 'paused', hub: 'dua',
+      log: { c: 'violet', tag: 'dua', msg: 'Adhan FINISHED → Du’a image (20s hold)' }
+    },
+    {
+      pip: 'CLEANUP', phase: 'Recovery · Auto-Resume', crit: false,
+      desc: 'Restore the TV (unmute / KEYCODE_MEDIA_PLAY via ADB), close the cast session, release the device.',
+      cd: '+3:00', fence: { txt: 'AI: idle', cls: '' },
+      tv: 'resumed', hub: 'standby',
+      log: { c: 'emerald', tag: 'cleanup', msg: 'TV resumed · cast session closed · device released' }
+    },
+    {
+      pip: 'LOG', phase: 'Persist Metrics', crit: false,
+      desc: 'PlaybackLogger finalizes one canonical row (PLAYED) → playback_log.json. Update rolling p75 lead and the success streak.',
+      cd: '+3:01', fence: { txt: 'AI: free (quiet window)', cls: 'open' },
+      tv: 'play', hub: 'standby',
+      log: { c: 'cyan', tag: 'log', msg: 'Event finalized <b>PLAYED</b> → playback_log.json · p75 + streak updated' }
+    },
+    {
+      pip: 'SYNC', phase: 'Cloud Sync', crit: false,
+      desc: 'Debounced (≥30s) push of metrics + schedule to Firestore (adhan-79908). The live dashboard updates.',
+      cd: '+3:30', fence: { txt: 'AI: free (quiet window)', cls: 'open' },
+      tv: 'play', hub: 'standby',
+      log: { c: 'cyan', tag: 'sync', msg: 'FirestoreSync → <b>adhan-79908</b> · dashboard.html refreshed' }
+    },
+    {
+      pip: 'AUDIT', phase: 'T+30s · Audit', crit: false,
+      desc: 'The scheduled audit job verifies the playback actually happened and marks the result PASS.',
+      cd: '+0:30', fence: { txt: 'AI: free (quiet window)', cls: 'open' },
+      tv: 'play', hub: 'standby',
+      log: { c: 'emerald', tag: 'audit', msg: 'Audit PASS ✓ · cycle complete — back to monitoring' }
+    }
+  ];
+
+  // Device visual states
+  const TV_STATES = {
+    idle:    { cls: 'tv-play',    big: '▶', txt: 'Playing Netflix', sub: 'media session active', wire: 'idle — monitoring', lit: '' },
+    play:    { cls: 'tv-play',    big: '▶', txt: 'Playing Netflix', sub: 'media session active', wire: 'streaming', lit: '' },
+    paused:  { cls: 'tv-paused',  big: '⏸', txt: 'PAUSED via ADB',  sub: 'KEYCODE_MEDIA_PAUSE', wire: 'paused by Pi', lit: 'lit-rose' },
+    resumed: { cls: 'tv-resumed', big: '▶', txt: 'RESUMED via ADB', sub: 'KEYCODE_MEDIA_PLAY', wire: 'auto-resumed', lit: 'lit-emerald' }
+  };
+  const HUB_STATES = {
+    standby: { cls: '',          big: '⏾', txt: 'Standby',       sub: 'awaiting cast',   wire: 'idle', lit: '' },
+    adhan:   { cls: 'hub-adhan', big: '🕌', txt: 'CASTING ADHAN', sub: 'castv2 · playing', wire: 'casting', lit: 'lit-gold' },
+    dua:     { cls: 'hub-dua',   big: '🤲', txt: 'Du’a Image',    sub: '20s hold',        wire: 'du’a', lit: 'lit-gold' }
+  };
+
+  // Build timeline pips
+  const tlSteps = document.getElementById('tlSteps');
+  STEPS.forEach(function (s, i) {
+    const el = document.createElement('div');
+    el.className = 'tl-step';
+    el.dataset.idx = i;
+    // Only show a label on a subset to avoid crowding
+    const showLabel = ['BOOT','SCHEDULE','IDLE','PRE-FLIGHT','PRE-STAGE','LEAD','ADB','CAST','ADHAN','DUA','CLEANUP','LOG','SYNC','AUDIT'].indexOf(s.pip) > -1;
+    el.innerHTML = '<div class="pip"></div><div class="lbl">' + (showLabel ? s.pip : '') + '</div>';
+    tlSteps.appendChild(el);
+  });
+  const pipEls = Array.from(tlSteps.children);
+
+  const els = {
+    fill: document.getElementById('tlFill'),
+    cd: document.getElementById('countdown'),
+    phase: document.getElementById('phaseName'),
+    desc: document.getElementById('phaseDesc'),
+    fence: document.getElementById('fenceFlag'),
+    tvScreen: document.getElementById('tvScreen'),
+    tvBig: document.getElementById('tvBig'), tvTxt: document.getElementById('tvTxt'),
+    tvSub: document.getElementById('tvSub'), tvState: document.getElementById('tvState'),
+    devTV: document.getElementById('devTV'),
+    hubScreen: document.getElementById('hubScreen'),
+    hubBig: document.getElementById('hubBig'), hubTxt: document.getElementById('hubTxt'),
+    hubSub: document.getElementById('hubSub'), hubState: document.getElementById('hubState'),
+    devHub: document.getElementById('devHub'),
+    log: document.getElementById('logBody')
+  };
+
+  let wfIdx = 0;
+  let wfTimer = null;
+  let wfRunning = false;
+  let speed = 1;
+  const BASE_MS = 2600;
+
+  function pad(n) { return n < 10 ? '0' + n : '' + n; }
+  function ts() {
+    // deterministic faux timestamp derived from step index (no Date.now use)
+    const base = 12 * 3600 + 26 * 60; // 12:26:00
+    const t = base + wfIdx * 7;
+    const h = Math.floor(t / 3600) % 24, m = Math.floor((t % 3600) / 60), s = t % 60;
+    return pad(h) + ':' + pad(m) + ':' + pad(s);
+  }
+
+  function applyStep(i) {
+    const s = STEPS[i];
+
+    // timeline
+    pipEls.forEach(function (p, idx) {
+      p.classList.toggle('active', idx === i);
+      p.classList.toggle('done', idx < i);
+    });
+    els.fill.style.width = (i / (STEPS.length - 1) * 100) + '%';
+
+    // core
+    els.cd.textContent = s.cd;
+    els.cd.classList.toggle('crit', !!s.crit);
+    els.phase.textContent = s.phase;
+    els.desc.textContent = s.desc;
+    els.fence.textContent = s.fence.txt;
+    els.fence.className = 'fence-flag ' + (s.fence.cls || '');
+
+    // TV
+    const tv = TV_STATES[s.tv];
+    els.tvScreen.className = 'screen ' + tv.cls;
+    els.tvBig.textContent = tv.big;
+    els.tvTxt.textContent = tv.txt;
+    els.tvSub.textContent = tv.sub;
+    els.tvState.textContent = tv.wire;
+    els.devTV.className = 'device panel ' + tv.lit;
+
+    // Hub
+    const hub = HUB_STATES[s.hub];
+    els.hubScreen.className = 'screen ' + hub.cls;
+    els.hubBig.textContent = hub.big;
+    els.hubTxt.textContent = hub.txt;
+    els.hubSub.textContent = hub.sub;
+    els.hubState.textContent = hub.wire;
+    els.devHub.className = 'device panel ' + hub.lit;
+
+    // log
+    addLog(s.log);
+  }
+
+  function addLog(l) {
+    const line = document.createElement('div');
+    line.className = 'log-line c-' + l.c;
+    line.innerHTML = '<span class="ts">' + ts() + '</span><span class="tag">[' + l.tag + ']</span><span class="msg">' + l.msg + '</span>';
+    els.log.appendChild(line);
+    // keep last ~16 lines
+    while (els.log.children.length > 16) { els.log.removeChild(els.log.firstChild); }
+    els.log.scrollTop = els.log.scrollHeight;
+  }
+
+  function tick() {
+    applyStep(wfIdx);
+    wfIdx = (wfIdx + 1) % STEPS.length;
+    if (wfIdx === 0) {
+      // brief separator on loop
+      addLog({ c: 'blue', tag: 'loop', msg: '──────── next cycle ────────' });
+    }
+    wfTimer = setTimeout(tick, BASE_MS * speed);
+  }
+
+  function startWorkflow() {
+    if (wfRunning) return;
+    wfRunning = true;
+    setToggle(true);
+    tick();
+  }
+  function stopWorkflow() {
+    wfRunning = false;
+    if (wfTimer) { clearTimeout(wfTimer); wfTimer = null; }
+  }
+  function setToggle(running) {
+    const btn = document.getElementById('wfToggle');
+    btn.querySelector('span').textContent = running ? 'Pause' : 'Play';
+    btn.querySelector('path').setAttribute('d', running ? 'M6 4h4v16H6zM14 4h4v16h-4z' : 'M8 5v14l11-7z');
+  }
+
+  document.getElementById('wfToggle').addEventListener('click', function () {
+    if (wfRunning) { stopWorkflow(); setToggle(false); }
+    else { startWorkflow(); }
+  });
+  document.getElementById('wfRestart').addEventListener('click', function () {
+    stopWorkflow();
+    wfIdx = 0; els.log.innerHTML = '';
+    startWorkflow();
+  });
+  document.querySelectorAll('.speed button').forEach(function (b) {
+    b.addEventListener('click', function () {
+      document.querySelectorAll('.speed button').forEach(function (x) { x.classList.remove('on'); });
+      b.classList.add('on');
+      speed = parseFloat(b.dataset.speed);
+    });
+  });
+
+  /* ============================================================
+     AI FENCE animation
+  ============================================================ */
+  // critical zones expressed as [startPct, endPct] of the day axis
+  const CRIT = [[18,25],[46,53],[60,67],[74,81],[86,93]];
+  const marker = document.getElementById('aiMarker');
+  const fenceStatus = document.getElementById('fenceStatus');
+  const cbStates = document.querySelectorAll('#cbMachine .cb-state');
+  let fencePos = 0;
+  let fenceTimer = null;
+  let cbStep = 0;
+  let cbTimer = null;
+
+  function fenceTick() {
+    fencePos += 0.45;
+    if (fencePos > 100) fencePos = 0;
+    marker.style.left = fencePos + '%';
+    let blocked = false;
+    for (let i = 0; i < CRIT.length; i++) {
+      if (fencePos >= CRIT[i][0] && fencePos <= CRIT[i][1]) { blocked = true; break; }
+    }
+    marker.classList.toggle('blocked', blocked);
+    marker.style.background = blocked ? 'var(--rose)' : 'var(--gold)';
+    marker.style.boxShadow = '0 0 12px ' + (blocked ? 'var(--rose)' : 'var(--gold)');
+    if (blocked) {
+      fenceStatus.textContent = '⛔ critical window · AI inference forbidden';
+      fenceStatus.style.color = 'var(--rose)';
+    } else {
+      fenceStatus.textContent = '✓ quiet window · AI free to run';
+      fenceStatus.style.color = 'var(--emerald)';
+    }
+    fenceTimer = setTimeout(fenceTick, 60);
+  }
+
+  // circuit breaker demo loop: CLOSED (long) -> OPEN -> HALF -> CLOSED ...
+  const CB_SEQ = [
+    { state: 'closed', ms: 3600 },
+    { state: 'open', ms: 2200 },
+    { state: 'half', ms: 1600 }
+  ];
+  function cbTick() {
+    const cur = CB_SEQ[cbStep];
+    cbStates.forEach(function (el) {
+      el.classList.toggle('on', el.dataset.state === cur.state);
+    });
+    cbStep = (cbStep + 1) % CB_SEQ.length;
+    cbTimer = setTimeout(cbTick, cur.ms);
+  }
+
+  function startFence() {
+    if (!fenceTimer) fenceTick();
+    if (!cbTimer) cbTick();
+  }
+  function stopFence() {
+    if (fenceTimer) { clearTimeout(fenceTimer); fenceTimer = null; }
+    if (cbTimer) { clearTimeout(cbTimer); cbTimer = null; }
+  }
+
+  /* ---------- init ---------- */
+  // Architecture view is active by default; nothing to start.
+})();
+</script>
+</body>
+</html>
