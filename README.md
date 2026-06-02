@@ -85,6 +85,9 @@ This project also serves as a flagship for **AI-native hardware development**. T
 
 <img src="./images/system_flow/flow_animation.webp" width="100%" alt="System Flow Animation" />
 
+> **[🎛️ Open the Interactive Architecture & System Design ↗](https://bilalahamad0.github.io/adhan-api/architecture.html)**
+> — a single-page, animated walkthrough of the **layered architecture**, the **data/control-flow map**, the **live prayer-cast lifecycle**, and the on-device AI **quiet-window fence**. ([source](./architecture.html))
+
 ## 📊 Development Analytics
 
 This project features a **Live AI-Driven Engineering Dashboard** that tracks development metrics, AI utilization, and system health in real-time.
@@ -218,6 +221,7 @@ The platform is designed for "Set-and-Forget" reliability:
 - [DEPLOYMENT_GUIDE_PI.md](./DEPLOYMENT_GUIDE_PI.md) — Comprehensive Raspberry Pi setup guide.
 - [PROJECT_PLAN.md](./PROJECT_PLAN.md) — Original design, architecture evolution, and what's been retired.
 - [Edge AI Whitepaper: Gemma 3 + Ollama](./docs/blog/gemma-ollama-raspberry-pi-adhan.md) — Deep dive into the on-device AI layer.
+- [architecture.html](./architecture.html) — Interactive, animated architecture · system design · prayer-cast workflow ([live ↗](https://bilalahamad0.github.io/adhan-api/architecture.html)).
 
 ---
 
