@@ -1,6 +1,6 @@
 {
   "projectId": "adhan",
-  "lastUpdated": "2026-06-07",
+  "lastUpdated": "2026-06-09",
   "aiContribution": 92,
   "agents": [
     {
@@ -24,9 +24,19 @@
       ],
       "tokens": 200000,
       "role": "v3 pipeline, auto-updater & dashboard"
+    },
+    {
+      "name": "Claude Code",
+      "provider": "Anthropic",
+      "period": "May 2026",
+      "models": [
+        "Claude Opus 4.7"
+      ],
+      "tokens": 215542213,
+      "role": "Edge-AI assistant tuning & Chrome extension build"
     }
   ],
-  "totalTokens": 455000,
+  "totalTokens": 215997213,
   "totalCommits": 244,
   "linesOfCode": 10740,
   "devCycleDays": 4,
