@@ -68,7 +68,8 @@ class PushNotifier {
    * Send a prayer notification to every subscribed device. Fire-and-forget:
    * resolves silently and never rejects, so the caller's cast flow is unaffected.
    * @param {string} prayerName e.g. "Maghrib"
-   * @param {{body?:string, url?:string}} [opts]
+   * @param {{body?:string, url?:string, time?:string}} [opts] `time` is the
+   *   scheduled Adhan time label (e.g. "8:31 PM") shown in the notification.
    */
   async notifyPrayer(prayerName, opts = {}) {
     if (!this._enabled) return;
@@ -82,9 +83,14 @@ class PushNotifier {
         return;
       }
 
+      const time = opts.time ? String(opts.time).trim() : '';
+      const body = opts.body || (time
+        ? `It’s time for ${prayerName} prayer (${time}).`
+        : `It’s time for ${prayerName} prayer.`);
+
       const payload = JSON.stringify({
-        title: `${prayerName} • Adhan`,
-        body: opts.body || `It’s time for ${prayerName} prayer.`,
+        title: time ? `${prayerName} • Adhan • ${time}` : `${prayerName} • Adhan`,
+        body,
         tag: `adhan-${String(prayerName).toLowerCase()}`,
         url: opts.url || DASHBOARD_URL,
       });

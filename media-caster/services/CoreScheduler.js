@@ -361,8 +361,9 @@ class CoreScheduler {
         // Fire-and-forget push to subscribed phones. Fully isolated: never
         // awaited, never throws into the cast path (PushNotifier swallows errors).
         if (this.pushNotifier) {
+            const scheduledTimeLabel = targetTimeObj ? targetTimeObj.toFormat('h:mm a') : null;
             Promise.resolve()
-                .then(() => this.pushNotifier.notifyPrayer(prayerName))
+                .then(() => this.pushNotifier.notifyPrayer(prayerName, scheduledTimeLabel ? { time: scheduledTimeLabel } : {}))
                 .catch(() => {});
         }
 
