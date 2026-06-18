@@ -24,7 +24,8 @@
     "ip": "file:./ip-patch",
     "luxon": "^3.7.2",
     "node-schedule": "^2.1.1",
-    "pm2": "^7.0.1"
+    "pm2": "^7.0.1",
+    "web-push": "^3.6.7"
   },
   "overrides": {
     "systeminformation": "^5.31.3",

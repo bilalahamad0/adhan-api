@@ -12,12 +12,13 @@ const ChromecastAPI = require('chromecast-api');
  * No classes or services are touched during the casting flow.
  */
 class CoreScheduler {
-    constructor(config, hardwareService, mediaService, castService, scheduleFilePath, playbackLogger) {
+    constructor(config, hardwareService, mediaService, castService, scheduleFilePath, playbackLogger, pushNotifier) {
         this.config = config;
         this.hardware = hardwareService;
         this.media = mediaService;
         this.scheduleFilePath = scheduleFilePath;
         this.playbackLogger = playbackLogger || null;
+        this.pushNotifier = pushNotifier || null;
         this.log = (msg) => console.log(`[${new Date().toLocaleTimeString()}] ${msg}`);
         this.executePreFlightAndCast = this.executePreFlightAndCast.bind(this);
         this.auditPlayback = this.auditPlayback.bind(this);
@@ -356,6 +357,14 @@ class CoreScheduler {
         this.activeRuns.add(prayerName);
 
         log(`🚀 TRIGGER: ${prayerName} Time! Starting sequence...`);
+
+        // Fire-and-forget push to subscribed phones. Fully isolated: never
+        // awaited, never throws into the cast path (PushNotifier swallows errors).
+        if (this.pushNotifier) {
+            Promise.resolve()
+                .then(() => this.pushNotifier.notifyPrayer(prayerName))
+                .catch(() => {});
+        }
 
         const scheduledTimeStr = targetTimeObj ? targetTimeObj.toFormat('HH:mm') : null;
         if (this.playbackLogger) {

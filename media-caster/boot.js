@@ -5,6 +5,7 @@ const CoreScheduler = require('./services/CoreScheduler');
 const HardwareService = require('./services/HardwareService');
 const PlaybackLogger = require('./services/PlaybackLogger');
 const FirestoreSync = require('./services/FirestoreSync');
+const PushNotifier = require('./services/PushNotifier');
 const OllamaService = require('./services/OllamaService');
 const AdvisoryAgent = require('./services/AdvisoryAgent');
 const aiContext = require('./services/aiContext');
@@ -65,6 +66,13 @@ const firestoreSync = new FirestoreSync(
   path.join(__dirname, 'annual_schedule.json'),
 );
 
+// Prayer-time iPhone/web push (no-op unless VAPID keys + FIREBASE_SERVICE_KEY set).
+const pushNotifier = new PushNotifier(process.env.FIREBASE_SERVICE_KEY, {
+  publicKey: process.env.VAPID_PUBLIC_KEY,
+  privateKey: process.env.VAPID_PRIVATE_KEY,
+  subject: process.env.VAPID_SUBJECT,
+});
+
 // THE SCHEDULER: Now standalone and self-sufficient
 const scheduler = new CoreScheduler(
   CONFIG,
@@ -72,7 +80,8 @@ const scheduler = new CoreScheduler(
   media,
   null, // No global cast/scanner
   path.join(__dirname, 'annual_schedule.json'),
-  playbackLogger
+  playbackLogger,
+  pushNotifier
 );
 
 // Local LLM (Gemma via Ollama) — strictly off the real-time cast path.
