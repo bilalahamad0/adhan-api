@@ -1,6 +1,6 @@
 {
-  "name": "Adhan Media Caster — Operations Dashboard",
-  "short_name": "Adhan Ops",
+  "name": "Adhan Caster — Operations Dashboard",
+  "short_name": "Adhan Caster",
   "description": "Live prayer schedule, cast status, and system metrics for the Adhan Media Caster.",
   "start_url": "./dashboard.html",
   "scope": "./",
