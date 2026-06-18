@@ -79,12 +79,13 @@ function sample(u, v, opaque) {
   return [Math.round(r), Math.round(g), Math.round(b), 255];
 }
 
-function renderPNG(size, opaque) {
+function renderPNG(size, opaque, noAlpha) {
   const ss = 4; // supersample factor for anti-aliasing
   const N = size * ss;
-  const raw = Buffer.alloc(size * (1 + size * 4));
+  const bpp = noAlpha ? 3 : 4; // RGB (no alpha) vs RGBA
+  const raw = Buffer.alloc(size * (1 + size * bpp));
   for (let y = 0; y < size; y++) {
-    const rowStart = y * (1 + size * 4);
+    const rowStart = y * (1 + size * bpp);
     raw[rowStart] = 0; // filter: none
     for (let x = 0; x < size; x++) {
       let r = 0, g = 0, b = 0, a = 0;
@@ -97,11 +98,11 @@ function renderPNG(size, opaque) {
         }
       }
       const n = ss * ss;
-      const o = rowStart + 1 + x * 4;
+      const o = rowStart + 1 + x * bpp;
       raw[o] = Math.round(r / n);
       raw[o + 1] = Math.round(g / n);
       raw[o + 2] = Math.round(b / n);
-      raw[o + 3] = Math.round(a / n);
+      if (!noAlpha) raw[o + 3] = Math.round(a / n);
     }
   }
   const sig = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
@@ -109,7 +110,7 @@ function renderPNG(size, opaque) {
   ihdr.writeUInt32BE(size, 0);
   ihdr.writeUInt32BE(size, 4);
   ihdr[8] = 8; // bit depth
-  ihdr[9] = 6; // color type RGBA
+  ihdr[9] = noAlpha ? 2 : 6; // color type: 2 = RGB (opaque, iOS-safe), 6 = RGBA
   ihdr[10] = 0; ihdr[11] = 0; ihdr[12] = 0;
   const idat = zlib.deflateSync(raw, { level: 9 });
   return Buffer.concat([
@@ -153,23 +154,26 @@ const ICONS_DIR = path.join(__dirname, '..', 'icons');
 const ROOT = path.join(__dirname, '..');
 fs.mkdirSync(ICONS_DIR, { recursive: true });
 
-// Rounded/transparent favicons
+// Rounded/transparent favicons (RGBA — browser tabs)
 for (const size of [16, 32, 48]) {
   const out = path.join(ICONS_DIR, `icon-${size}.png`);
-  fs.writeFileSync(out, renderPNG(size, false));
-  console.log(`wrote ${out} (${size}x${size}, round)`);
+  fs.writeFileSync(out, renderPNG(size, false, false));
+  console.log(`wrote ${out} (${size}x${size}, round RGBA)`);
 }
 
-// Opaque full-bleed icons for iOS Home Screen + PWA manifest
-const opaqueSizes = { 180: 'apple-touch-icon.png', 192: 'icon-192.png', 512: 'icon-512.png' };
+// Opaque iOS Home Screen + PWA icons. CRITICAL: flattened to RGB with NO alpha
+// channel — iOS composites any alpha onto BLACK, which turns the green backplate
+// black on the Home Screen. Versioned filenames also bust iOS's per-URL web-clip
+// icon cache (a remove/re-add alone does not re-fetch a same-URL icon).
+const opaqueSizes = { 180: 'apple-touch-icon-v2.png', 192: 'icon-192-v2.png', 512: 'icon-512-v2.png' };
 for (const [size, name] of Object.entries(opaqueSizes)) {
   const out = path.join(ICONS_DIR, name);
-  fs.writeFileSync(out, renderPNG(Number(size), true));
-  console.log(`wrote ${out} (${size}x${size}, opaque)`);
+  fs.writeFileSync(out, renderPNG(Number(size), true, true));
+  console.log(`wrote ${out} (${size}x${size}, opaque RGB no-alpha)`);
 }
 
-// favicon.ico at web root (16/32/48 PNG-in-ICO)
-const ico = buildICO([16, 32, 48].map((size) => ({ size, png: renderPNG(size, false) })));
+// favicon.ico at web root (16/32/48 PNG-in-ICO, RGBA)
+const ico = buildICO([16, 32, 48].map((size) => ({ size, png: renderPNG(size, false, false) })));
 const icoOut = path.join(ROOT, 'favicon.ico');
 fs.writeFileSync(icoOut, ico);
 console.log(`wrote ${icoOut} (16/32/48 ICO)`);
