@@ -313,6 +313,18 @@ class CoreScheduler {
                 schedule.scheduleJob(auditTime.toJSDate(), () => this.auditPlayback(prayer, audioFile)),
             );
 
+            // Push notification fires AT the scheduled prayer time (not 5 min
+            // early like the cast preflight), so the alert matches the Adhan.
+            const scheduledTimeLabel = scheduleTime.toFormat('h:mm a');
+            this._scheduledJobs.push(
+                schedule.scheduleJob(scheduleTime.toJSDate(), () => {
+                    if (!this.pushNotifier) return;
+                    Promise.resolve()
+                        .then(() => this.pushNotifier.notifyPrayer(prayer, { time: scheduledTimeLabel }))
+                        .catch(() => {});
+                }),
+            );
+
             log(`   - ${prayer}: ${timeStr} (Trigger: ${triggerTime.toFormat('h:mm:ss a')}, Audit: ${auditTime.toFormat('h:mm:ss a')})`);
         });
     }
@@ -358,14 +370,9 @@ class CoreScheduler {
 
         log(`🚀 TRIGGER: ${prayerName} Time! Starting sequence...`);
 
-        // Fire-and-forget push to subscribed phones. Fully isolated: never
-        // awaited, never throws into the cast path (PushNotifier swallows errors).
-        if (this.pushNotifier) {
-            const scheduledTimeLabel = targetTimeObj ? targetTimeObj.toFormat('h:mm a') : null;
-            Promise.resolve()
-                .then(() => this.pushNotifier.notifyPrayer(prayerName, scheduledTimeLabel ? { time: scheduledTimeLabel } : {}))
-                .catch(() => {});
-        }
+        // NOTE: the prayer push notification is scheduled separately, AT the
+        // actual prayer time (see scheduleToday). It is intentionally NOT sent
+        // here because this preflight runs ~5 min early to prepare the cast.
 
         const scheduledTimeStr = targetTimeObj ? targetTimeObj.toFormat('HH:mm') : null;
         if (this.playbackLogger) {
