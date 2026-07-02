@@ -2,6 +2,7 @@ const schedule = require('node-schedule');
 const { DateTime } = require('luxon');
 const path = require('path');
 const fs = require('fs');
+const dns = require('dns');
 const axios = require('axios');
 const { exec } = require('child_process');
 const ChromecastAPI = require('chromecast-api');
@@ -39,11 +40,14 @@ class CoreScheduler {
             if (!fs.existsSync(this._castCachePath)) return null;
             const data = JSON.parse(fs.readFileSync(this._castCachePath, 'utf8'));
             if (!data || !data.host || !data.friendlyName) return null;
-            // TTL: ignore entries older than CAST_CACHE_TTL_HOURS (default 6h).
-            // Chromecast mDNS hostnames (e.g. fuchsia-XXXX.local) can change across
-            // device reboots / DHCP renewals; an aged cache silently keeps probing
-            // a dead host instead of going to mDNS where the new hostname lives.
-            const ttlHours = Number(process.env.CAST_CACHE_TTL_HOURS || 6);
+            // TTL: ignore entries older than CAST_CACHE_TTL_HOURS (default 24h).
+            // The cache now stores a resolved IPv4 (see _writeCastCache), so a
+            // stale entry is caught cheaply by the unicast probe rather than by
+            // the timer — meaning the TTL only needs to bound how long we trust a
+            // DHCP lease. 24h is the smallest value that spans the longest daily
+            // prayer gap (Fajr→Dhuhr ≈ 9h): a 6h TTL forced every Dhuhr back onto
+            // cold mDNS, which is what let a multicast stall delay playback.
+            const ttlHours = Number(process.env.CAST_CACHE_TTL_HOURS || 24);
             if (data.lastSuccessIso && Number.isFinite(ttlHours) && ttlHours > 0) {
                 const ageMs = Date.now() - Date.parse(data.lastSuccessIso);
                 if (Number.isFinite(ageMs) && ageMs > ttlHours * 3600 * 1000) {
@@ -56,16 +60,116 @@ class CoreScheduler {
         }
     }
 
-    _writeCastCache(device) {
+    async _writeCastCache(device, log) {
         try {
+            // Capture fields synchronously — the device object may be mutated /
+            // torn down while we resolve.
+            const rawHost = device && device.host;
+            const friendlyName = device && device.friendlyName;
+            const port = (device && device.port) || 8009;
+            if (!rawHost || !friendlyName) return;
+
+            // Store a resolved IPv4, NOT the mDNS SRV target. chromecast-api 0.4.2
+            // sets device.host to the SRV target (e.g. fuchsia-XXXX.local); probing
+            // that later forces the OS resolver back through mDNS/multicast (a .local
+            // getaddrinfo needs the announcement still cached in avahi, TTL ~120s),
+            // so the warm cache silently missed every prayer. We resolve here, while
+            // the device was just seen over multicast, so the warm path becomes a
+            // pure unicast TCP probe that no longer touches the flaky Wi-Fi↔LAN bridge.
+            const ip = await this._resolveHostToIpv4(rawHost, log);
             const payload = {
-                friendlyName: device.friendlyName,
-                host: device.host,
-                port: device.port || 8009,
+                friendlyName,
+                host: ip || rawHost, // fall back to raw host so we never regress
+                port,
+                mdnsHost: rawHost,   // keep the SRV target for debugging / re-resolution
+                resolved: Boolean(ip),
                 lastSuccessIso: new Date().toISOString(),
             };
             fs.writeFileSync(this._castCachePath, JSON.stringify(payload, null, 2));
+            if (log && ip && ip !== rawHost) {
+                log(`🧭 Cast cache stored IP ${ip} for "${friendlyName}" (mDNS host ${rawHost}).`);
+            }
         } catch (_) { /* cache write failure is non-fatal */ }
+    }
+
+    /**
+     * Bump lastSuccessIso on a validated warm hit so a device that keeps
+     * answering never ages out of the cache. (A cold mDNS discovery rewrites
+     * the whole entry; this only slides the TTL for the hit path.)
+     */
+    _touchCastCache() {
+        try {
+            if (!fs.existsSync(this._castCachePath)) return;
+            const data = JSON.parse(fs.readFileSync(this._castCachePath, 'utf8'));
+            if (!data || !data.host) return;
+            data.lastSuccessIso = new Date().toISOString();
+            fs.writeFileSync(this._castCachePath, JSON.stringify(data, null, 2));
+        } catch (_) { /* non-fatal */ }
+    }
+
+    /**
+     * Resolve a discovered cast host to a stable IPv4. Returns null on failure so
+     * the caller can fall back to the raw host. Order: pass through a literal
+     * IPv4 (the SSDP path already yields rinfo.address); else a direct mDNS
+     * A-record query (works even on avahi-only Pis where nss-mdns is not wired
+     * into nsswitch); else the OS resolver.
+     */
+    async _resolveHostToIpv4(host, log) {
+        if (!host || typeof host !== 'string') return null;
+        if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) return host;
+        const name = host.endsWith('.') ? host.slice(0, -1) : host;
+
+        const viaMdns = await this._resolveViaMdns(name).catch(() => null);
+        if (viaMdns) return viaMdns;
+
+        const viaLookup = await new Promise((resolve) => {
+            try {
+                dns.lookup(name, { family: 4 }, (err, address) => resolve(err ? null : address));
+            } catch (_) { resolve(null); }
+        });
+        if (viaLookup) return viaLookup;
+
+        if (log) log(`⚠️ Cast cache: could not resolve ${name} to IPv4; caching raw host.`);
+        return null;
+    }
+
+    /**
+     * Direct mDNS A-record lookup on its own socket (independent of the scanner).
+     * Resolves to an IPv4 string or null. multicast-dns is a transitive dep of
+     * chromecast-api; required lazily so a dependency-tree change degrades to the
+     * dns.lookup fallback instead of crashing the caster.
+     */
+    _resolveViaMdns(name, timeoutMs = 2000) {
+        return new Promise((resolve) => {
+            let mdns;
+            try {
+                mdns = require('multicast-dns')();
+            } catch (_) {
+                return resolve(null);
+            }
+            let done = false;
+            const finish = (ip) => {
+                if (done) return;
+                done = true;
+                try { mdns.destroy(); } catch (_) { /* ignore */ }
+                resolve(ip || null);
+            };
+            const timer = setTimeout(() => finish(null), timeoutMs);
+            mdns.on('response', (res) => {
+                const records = (res.answers || []).concat(res.additionals || []);
+                const a = records.find((r) => r && r.type === 'A' && r.name === name && r.data);
+                if (a) {
+                    clearTimeout(timer);
+                    finish(a.data);
+                }
+            });
+            try {
+                mdns.query(name, 'A');
+            } catch (_) {
+                clearTimeout(timer);
+                finish(null);
+            }
+        });
     }
 
     /**
@@ -171,7 +275,7 @@ class CoreScheduler {
         const skipDueToStreak = staleStreak >= STALE_STREAK_SKIP;
 
         if (cache && cache.friendlyName === deviceName && cache._expired) {
-            log(`📡 Cast cache expired (>${process.env.CAST_CACHE_TTL_HOURS || 6}h since last success); forcing mDNS.`);
+            log(`📡 Cast cache expired (>${process.env.CAST_CACHE_TTL_HOURS || 24}h since last success); forcing mDNS.`);
         } else if (cache && cache.friendlyName === deviceName && skipDueToStreak) {
             log(`📡 Cast cache skipped: ${staleStreak} consecutive stale events for ${deviceName}; going straight to mDNS.`);
         } else if (cache && cache.friendlyName === deviceName) {
@@ -179,6 +283,7 @@ class CoreScheduler {
             const cached = await this._connectToCachedDevice(cache, log);
             if (cached) {
                 log(`✅ Cast cache validated; skipping mDNS discovery.`);
+                this._touchCastCache();
                 if (this.playbackLogger) {
                     this.playbackLogger.recordDeviceDiscovered(prayerName, deviceName, { cacheHit: true });
                 }
@@ -217,7 +322,9 @@ class CoreScheduler {
                 scanner.on('device', (device) => {
                     if (device && device.friendlyName === deviceName) {
                         log(`📡 Device Discovered & Cached: ${device.friendlyName}`);
-                        this._writeCastCache(device);
+                        // Fire-and-forget: resolving + persisting the IP only helps
+                        // future casts, so it must not delay finish()/this cast.
+                        this._writeCastCache(device, log);
                         if (this.playbackLogger) this.playbackLogger.recordDeviceDiscovered(prayerName, device.friendlyName, { cacheHit: false });
                         finish(device);
                     }
