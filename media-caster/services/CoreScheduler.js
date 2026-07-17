@@ -434,7 +434,247 @@ class CoreScheduler {
 
             log(`   - ${prayer}: ${timeStr} (Trigger: ${triggerTime.toFormat('h:mm:ss a')}, Audit: ${auditTime.toFormat('h:mm:ss a')})`);
         });
+
+        this._scheduleMorningScene(today, todayEntry, log, 'sunrise');
+        this._scheduleMorningScene(today, todayEntry, log, 'ishraq');
     }
+
+    /**
+     * Per-scene metadata. runKey is the activeRuns entry (chosen so it can never
+     * collide with a prayer name); file is the cached clip served over HTTP.
+     */
+    static get MORNING_SCENES() {
+        return {
+            sunrise: { runKey: 'Sunrise', label: 'Sunrise', emoji: '🌅', file: 'sunrise.mp4' },
+            ishraq: { runKey: 'Ishraq', label: 'Ishraq', emoji: '🌤️', file: 'ishraq.mp4' },
+        };
+    }
+
+    /**
+     * Arms a decorative morning clip (sunrise or ishraq) off
+     * todayEntry.timings.Sunrise — already location-matched and zoned by the
+     * Aladhan calendar fetch above, so there is no extra request and no schema
+     * change. Ishraq is simply sunrise + a larger offset (the voluntary Duha
+     * prayer becomes permissible ~15-20min after sunrise).
+     *
+     * Neither is a prayer, so neither joins the `prayers` array: no adhan audio,
+     * no T-5min preflight, no audit, no push, no PlaybackLogger playback event.
+     * See castScene() for the Adhan-safety contract.
+     *
+     * Jobs go on this._scheduledJobs so the next scheduleToday() cancels them,
+     * exactly like the prayer jobs.
+     */
+    _scheduleMorningScene(today, todayEntry, log, sceneKey) {
+        const cfg = (this.config && this.config[sceneKey]) || {};
+        const meta = CoreScheduler.MORNING_SCENES[sceneKey];
+        if (!cfg.enabled) return;
+
+        const raw = todayEntry && todayEntry.timings && todayEntry.timings.Sunrise;
+        if (!raw) return log(`   - ${meta.label}: no sunrise timing in schedule, skipped.`);
+
+        const [hours, minutes] = String(raw).split(' ')[0].split(':').map(Number);
+        if (!Number.isFinite(hours) || !Number.isFinite(minutes)) {
+            return log(`   - ${meta.label}: unparseable timing "${raw}", skipped.`);
+        }
+
+        const now = DateTime.now().setZone(this.config.timezone);
+        const castTime = today
+            .set({ hour: hours, minute: minutes, second: 0, millisecond: 0 })
+            .plus({ seconds: cfg.offsetSec || 0 });
+        if (castTime < now) return; // Already passed today — same guard as the prayers loop.
+
+        // Pre-bake ahead of the cast so encoding never overlaps the cast itself.
+        // The clip is identical every day, so after the first bake this is a
+        // no-op stat(). Even Ishraq (sunrise+~20min) pre-bakes long after any
+        // Fajr run or retry window has closed — the tightest Fajr->Sunrise gap in
+        // the annual schedule is ~71min.
+        const bakeTime = castTime.minus({ seconds: cfg.prebakeSec });
+        if (bakeTime > now) {
+            this._scheduledJobs.push(
+                schedule.scheduleJob(bakeTime.toJSDate(), () =>
+                    this.ensureSceneClip(sceneKey).catch((e) => log(`⚠️ ${meta.label} bake failed: ${e.message}`))),
+            );
+        }
+
+        this._scheduledJobs.push(
+            schedule.scheduleJob(castTime.toJSDate(), () =>
+                this.castScene(sceneKey, castTime.toFormat('h:mm a'))
+                    .catch((e) => log(`⚠️ ${meta.label} cast failed: ${e.message}`))),
+        );
+
+        log(`   - ${meta.label}: ${castTime.toFormat('h:mm')} (silent, ${cfg.clipSeconds}s, Bake: ${bakeTime.toFormat('h:mm:ss a')})`);
+    }
+
+    /**
+     * Bakes a scene clip if the cached one is missing or was built with different
+     * settings. Each clip is fully procedural and date-independent, so this is a
+     * once-ever cost per scene that self-heals if the file is removed.
+     */
+    async ensureSceneClip(sceneKey) {
+        const cfg = (this.config && this.config[sceneKey]) || {};
+        const meta = CoreScheduler.MORNING_SCENES[sceneKey];
+        const outputPath = path.join(__dirname, '..', '..', 'images', 'generated', meta.file);
+        const stampPath = `${outputPath}.json`;
+        // v11: Arabic -> y650, tagline -> y750 — bump so v10 clips rebake. The
+        // caption layout isn't otherwise in the stamp, so this version bump is
+        // what invalidates them. tagline stays part of identity.
+        const stamp = JSON.stringify({
+            v: 11, scene: sceneKey, durationSec: cfg.clipSeconds, tagline: cfg.tagline || null,
+        });
+
+        try {
+            if (fs.existsSync(outputPath) && fs.statSync(outputPath).size > 10000
+                && fs.existsSync(stampPath) && fs.readFileSync(stampPath, 'utf8') === stamp) {
+                return outputPath;
+            }
+        } catch (_) { /* fall through and rebake */ }
+
+        // Single-flight, PER SCENE. The pre-bake job and a manual trigger can both
+        // land here while an encode is running; without this they would run two
+        // ffmpeg processes against the same output path, and the loser would stamp
+        // a half-written file as valid — poisoning the cache until the next config
+        // change. Sunrise and ishraq bake independently, so the lock is keyed.
+        this._sceneBakes = this._sceneBakes || {};
+        if (this._sceneBakes[sceneKey]) return this._sceneBakes[sceneKey];
+
+        this._sceneBakes[sceneKey] = (async () => {
+            const dir = path.dirname(outputPath);
+            if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+
+            const { promise, abort } = this.media.encodeSceneClip(outputPath, sceneKey, {
+                durationSec: cfg.clipSeconds,
+                tagline: cfg.tagline,
+            });
+
+            let timer;
+            try {
+                await Promise.race([
+                    promise,
+                    new Promise((_, reject) => {
+                        timer = setTimeout(() => {
+                            abort();
+                            reject(new Error('SCENE_ENCODE_TIMEOUT'));
+                        }, 120000);
+                    }),
+                ]);
+            } finally {
+                clearTimeout(timer);
+            }
+
+            // Stamp only after a clean encode, so an aborted bake is retried
+            // rather than cached.
+            fs.writeFileSync(stampPath, stamp);
+            return outputPath;
+        })();
+
+        try {
+            return await this._sceneBakes[sceneKey];
+        } finally {
+            this._sceneBakes[sceneKey] = null;
+        }
+    }
+
+    /**
+     * Casts a scene clip. Intentionally NOT routed through
+     * executePreFlightAndCast: that path requires an adhan mp3, a dashboard
+     * render, a fallback video and a Dua phase, and it logs playback events.
+     *
+     * Three things this must never do, each of which would harm the Adhan:
+     *  - Log a PlaybackLogger playback event. A non-adhan PLAYED/FAILED would
+     *    count toward the daily success rate and break the streak.
+     *  - Touch the TV via ADB. Yanking a user's stream for a decorative clip is
+     *    worse than skipping the clip.
+     *  - Touch the device volume. The next prayer reads the live volume as its
+     *    "original" and restores to it afterwards, so any change left behind
+     *    would make the Adhan itself play quiet. The clips are silent, so there
+     *    is no reason to set a level at all — the safest handling of volume is to
+     *    never call setVolume.
+     */
+    async castScene(sceneKey, timeLabel = '') {
+        const cfg = this.config[sceneKey];
+        const meta = CoreScheduler.MORNING_SCENES[sceneKey];
+        if (!cfg || !cfg.enabled) return;
+        const log = this.log;
+        const runKey = meta.runKey;
+
+        // Check self first: otherwise a double-trigger reports "another cast is
+        // active" when the only active run is this one.
+        if (this.activeRuns.has(runKey)) {
+            return log(`${meta.emoji} ${meta.label} skipped: already casting.`);
+        }
+        // Never contend with a prayer (or the other scene). A missed clip is a
+        // non-event; the Adhan always wins the device.
+        if (this.activeRuns.size > 0) {
+            return log(`${meta.emoji} ${meta.label} skipped: another cast is active.`);
+        }
+        this.activeRuns.add(runKey);
+
+        let device = null;
+        let finished = false;
+        let watchdog = null;
+
+        const finish = () => {
+            if (finished) return;
+            finished = true;
+            if (device) {
+                // A prayer starting mid-clip should be impossible: it holds
+                // activeRuns from T-5min through the Dua, so the guard above
+                // rejects us first. But a second Device joins the SAME receiver
+                // session, so if it ever did overlap, stop() would cut off the
+                // Adhan. Skipped in that case; close() still runs, since it only
+                // drops our own socket and would otherwise leak the connection.
+                const prayerOwnsDevice = [...this.activeRuns].some((r) => r !== runKey);
+                if (!prayerOwnsDevice) {
+                    try { device.stop(() => {}); } catch (_) { /* ignore */ }
+                }
+                try { device.close(); } catch (_) { /* ignore */ }
+            }
+            this.activeRuns.delete(runKey);
+        };
+
+        try {
+            const clipPath = await this.ensureSceneClip(sceneKey);
+            device = await this.discoverDeviceByName(this.config.device.name, log, runKey, 60000);
+            if (!device) return log(`${meta.emoji} ${meta.label} skipped: display not found.`);
+
+            const localIp = require('ip').address();
+            const url = `http://${localIp}:${this.config.serverPort}/images/generated/${path.basename(clipPath)}?t=${Date.now()}`;
+
+            // Armed only now, and only around the cast itself. Arming it earlier
+            // would let it fire during discovery (60s budget) or a cold bake
+            // (120s), running the one-shot finish() while the cast was still
+            // starting — leaving the connection open for the next prayer to
+            // inherit. The phases before this each carry their own timeout.
+            watchdog = setTimeout(finish, (cfg.clipSeconds + 25) * 1000);
+
+            // Volume is deliberately never touched. The clip is silent, so there
+            // is nothing to set a level for — and not calling setVolume means
+            // there is no way to leave the Hub at the wrong level for the next
+            // Adhan, which reads the live volume as its own "original".
+            await new Promise((resolve, reject) => {
+                device.play({
+                    url,
+                    contentType: 'video/mp4',
+                    // Carries today's time without rebaking the clip.
+                    metadata: {
+                        type: 1,
+                        metadataType: 0,
+                        title: timeLabel ? `${meta.label} · ${timeLabel}` : meta.label,
+                    },
+                }, (playErr) => (playErr ? reject(playErr) : resolve()));
+            });
+
+            log(`${meta.emoji} ${meta.label} cast (${cfg.clipSeconds}s, silent).`);
+            await new Promise((r) => setTimeout(r, (cfg.clipSeconds + 2) * 1000));
+        } finally {
+            if (watchdog) clearTimeout(watchdog);
+            finish();
+        }
+    }
+
+    /** Back-compat aliases: the sunrise scene. */
+    ensureSunriseClip() { return this.ensureSceneClip('sunrise'); }
+    castSunrise(timeLabel = '') { return this.castScene('sunrise', timeLabel); }
 
     /**
      * 1:1 LEGACY STRUCTURAL PORT (NO SERVICES, NO CLASSES, NO LEAKS)
