@@ -21,6 +21,17 @@ process.on('uncaughtException', (err) => {
   process.exit(1);
 });
 
+/**
+ * Clamps a numeric env var, falling back to the default when it isn't a number.
+ * Math.min/Math.max alone can't do this: NaN propagates through both, so
+ * Math.min(20, Math.max(3, parseInt('abc'))) is NaN rather than the default.
+ */
+const envNumber = (raw, fallback, min, max) => {
+  const n = parseFloat(raw);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, n));
+};
+
 const CONFIG = {
   location: {
     city: process.env.LOCATION_CITY || 'CityName',
@@ -49,6 +60,30 @@ const CONFIG = {
   },
   timezone: process.env.TIMEZONE || 'America/Los_Angeles',
   serverPort: parseInt(process.env.SERVER_PORT || 3001),
+  // Decorative morning clips — silent by design, since they play in the early
+  // morning while someone may still be asleep. Values are clamped rather than
+  // trusted: a fat-fingered *_CLIP_SECONDS=600 would otherwise put a 10-minute
+  // encode on the Pi.
+  //
+  // Sunrise (Shuruq): the sun emerges at the horizon, at sunrise itself.
+  sunrise: {
+    enabled: (process.env.SUNRISE_ENABLED || 'true') !== 'false',
+    clipSeconds: envNumber(process.env.SUNRISE_CLIP_SECONDS, 12, 5, 20),
+    prebakeSec: envNumber(process.env.SUNRISE_PREBAKE_SEC, 600, 60, 7200),
+    offsetSec: envNumber(process.env.SUNRISE_OFFSET_SEC, 0, -3600, 7200),
+    // Caption tagline; undefined -> the scene's built-in default.
+    tagline: process.env.SUNRISE_TAGLINE || undefined,
+  },
+  // Ishraq: a distinct radiant clip ~20 min after sunrise, marking when the
+  // voluntary Duha prayer becomes permissible. Its offset is measured from
+  // sunrise, so the default 1200s lands it at Duha time.
+  ishraq: {
+    enabled: (process.env.ISHRAQ_ENABLED || 'true') !== 'false',
+    clipSeconds: envNumber(process.env.ISHRAQ_CLIP_SECONDS, 12, 5, 20),
+    prebakeSec: envNumber(process.env.ISHRAQ_PREBAKE_SEC, 600, 60, 7200),
+    offsetSec: envNumber(process.env.ISHRAQ_OFFSET_SEC, 1200, 0, 7200),
+    tagline: process.env.ISHRAQ_TAGLINE || undefined,
+  },
 };
 
 // Global Services
@@ -274,6 +309,41 @@ async function bootSystem() {
         scheduledTime: scheduledPrayerTime.toFormat('HH:mm'),
         audioFile,
         targetVolume: CONFIG.device.targetVolume,
+      });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Separate from /api/trigger/prayer on purpose: that route's `allowed` list
+  // gates executePreFlightAndCast, which requires an adhan mp3. The morning
+  // scenes have none. One route serves both: /api/trigger/sunrise|ishraq.
+  //
+  // The scene is validated against a whitelist rather than an inline route regex:
+  // Express 5's path-to-regexp rejects `:scene(sunrise|ishraq)` and would throw
+  // at mount time, taking down the whole server.
+  app.post('/api/trigger/:scene', async (req, res) => {
+    try {
+      const scene = String(req.params.scene || '').toLowerCase();
+      if (!Object.prototype.hasOwnProperty.call(CONFIG, scene)
+          || !CoreScheduler.MORNING_SCENES[scene]) {
+        res.status(404).json({ error: 'Unknown scene. Use sunrise|ishraq' });
+        return;
+      }
+      const cfg = CONFIG[scene];
+      if (!cfg.enabled) {
+        res.status(409).json({ error: `${scene} disabled (${scene.toUpperCase()}_ENABLED=false)` });
+        return;
+      }
+      const today = DateTime.now().setZone(CONFIG.timezone);
+      scheduler.castScene(scene, today.toFormat('h:mm a'))
+        .catch((e) => console.error(`[manual-trigger] ${scene} failed:`, e.message));
+
+      res.status(202).json({
+        status: 'triggered',
+        mode: `${scene}-manual`,
+        clipSeconds: cfg.clipSeconds,
+        silent: true,
       });
     } catch (e) {
       res.status(500).json({ error: e.message });
