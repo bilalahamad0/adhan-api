@@ -124,6 +124,19 @@ describe('CoreScheduler', () => {
     expect(fakeMedia.encodeVideoFromImageAndAudio).toHaveBeenCalled();
   });
 
+  // The chromecast-api file is lib/device.js (lowercase). Capital 'Device'
+  // resolves on case-insensitive macOS but THROWS on the Pi's case-sensitive
+  // Linux fs, silently killing the warm-cache path. A mocked unit test can't
+  // catch that (and passes either way on macOS), so guard the source string —
+  // this fails on every platform if the capital form is reintroduced.
+  it('requires the chromecast Device class by its real lowercase path', () => {
+    const realFs = jest.requireActual('fs');
+    const p = require('path').join(__dirname, '..', 'services', 'CoreScheduler.js');
+    const src = realFs.readFileSync(p, 'utf8');
+    expect(src).toContain("require('chromecast-api/lib/device')");
+    expect(src).not.toMatch(/require\('chromecast-api\/lib\/Device'\)/);
+  });
+
   // Both morning scenes share one implementation, so the Adhan-safety contract is
   // exercised against both. SCENES maps the scene key to its expected surface.
   describe.each([
