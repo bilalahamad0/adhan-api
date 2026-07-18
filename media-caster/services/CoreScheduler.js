@@ -182,8 +182,15 @@ class CoreScheduler {
     async _connectToCachedDevice(cache, log) {
         let DeviceCls;
         try {
-            DeviceCls = require('chromecast-api/lib/Device');
-        } catch (_) {
+            // MUST be lowercase 'device' — the file is chromecast-api/lib/device.js.
+            // Capital 'Device' resolves on case-insensitive macOS but throws on the
+            // Pi's case-sensitive Linux fs, which silently disabled the entire
+            // warm-cache path (every cast fell back to flaky mDNS).
+            DeviceCls = require('chromecast-api/lib/device');
+        } catch (e) {
+            // Log rather than swallow: if this ever fails to load again, the
+            // warm-cache path is dead and we want it visible, not silent.
+            log(`⚠️ Cast cache: could not load Device class (${e.message}); using mDNS.`);
             return null;
         }
         if (!DeviceCls) return null;
