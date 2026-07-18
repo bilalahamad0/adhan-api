@@ -9,7 +9,7 @@ const { exec } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { DateTime } = require('luxon');
+const { DateTime, Settings } = require('luxon');
 const axios = require('axios');
 
 const OllamaService = require('../services/OllamaService');
@@ -26,6 +26,18 @@ function writeSchedule(now, timings) {
   };
   fs.writeFileSync(file, JSON.stringify({ year: now.toFormat('yyyy'), data: { [now.month.toString()]: [entry] } }));
   return file;
+}
+
+// Tests that place prayers at now±Nh assert their past/future status. aiContext
+// reads the wall clock via luxon's DateTime.now(), so near a day boundary those
+// offsets cross midnight and flip (e.g. at 00:10 a "2h ago" prayer reads as "22h
+// from now today"), making the suite fail by the hour. Pin luxon's clock — its
+// DateTime.now() seam — to local noon so the offsets stay within one day and the
+// result is deterministic at any host time. Call at the top of such a describe.
+function pinClockToLocalNoon() {
+  const NOON = new Date('2026-07-17T12:00:00-07:00').valueOf(); // noon America/Los_Angeles
+  beforeEach(() => { Settings.now = () => NOON; });
+  afterEach(() => { Settings.now = () => Date.now(); });
 }
 
 describe('OllamaService.parseJson', () => {
@@ -153,6 +165,7 @@ describe('OllamaService quiet-window guard', () => {
 
 describe('aiContext.getNextPrayer (deterministic fallback core)', () => {
   const tz = 'America/Los_Angeles';
+  pinClockToLocalNoon();
 
   it('returns the next upcoming prayer today', () => {
     const now = DateTime.now().setZone(tz);
@@ -172,6 +185,7 @@ describe('aiContext.getNextPrayer (deterministic fallback core)', () => {
 
 describe('aiContext.buildUpcomingList (per-prayer countdowns)', () => {
   const tz = 'America/Los_Angeles';
+  pinClockToLocalNoon();
 
   it('gives each upcoming prayer its OWN countdown (not the next-prayer figure)', () => {
     const now = DateTime.now().setZone(tz);
