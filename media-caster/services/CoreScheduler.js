@@ -255,10 +255,10 @@ class CoreScheduler {
     _getDynamicVolume(prayerName, isTvActive) {
         const normalizedName = String(prayerName || '')
             .charAt(0).toUpperCase() + String(prayerName || '').slice(1).toLowerCase();
-        if (isTvActive) return normalizedName === 'Fajr' ? 0.40 : 0.45;
+        if (isTvActive) return normalizedName === 'Fajr' ? 0.35 : 0.45;
 
         const baseVolumeMap = {
-            Fajr: 0.35,
+            Fajr: 0.30,
             Dhuhr: 0.40,
             Asr: 0.40,
             Maghrib: 0.40,
