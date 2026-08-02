@@ -28,15 +28,17 @@
     {
       "name": "Claude Code",
       "provider": "Anthropic",
-      "period": "May 2026",
+      "period": "May 2026 – Present",
       "models": [
-        "Claude Opus 4.7"
+        "Claude Opus 4.8",
+        "Claude Opus 4.7",
+        "Claude Fable 5"
       ],
-      "tokens": 215542213,
+      "tokens": 438972981,
       "role": "Edge-AI assistant tuning & Chrome extension build"
     }
   ],
-  "totalTokens": 215997213,
+  "totalTokens": 439427981,
   "totalCommits": 265,
   "linesOfCode": 12776,
   "devCycleDays": 4,
@@ -46,6 +48,6 @@
   "beforeAI": "No automation, manual device control",
   "afterAI": "Zero-touch IoT orchestration system",
   "microservices": 10,
-  "tests": 54,
-  "testSuites": 12
+  "tests": 165,
+  "testSuites": 13
 }
