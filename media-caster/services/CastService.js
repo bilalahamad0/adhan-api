@@ -28,7 +28,7 @@ class CastService {
         this.client.destroy();
         this.client = null;
       }
-    } catch (e) { }
+    } catch { }
   }
 }
 

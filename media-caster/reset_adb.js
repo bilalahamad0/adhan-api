@@ -12,7 +12,7 @@ function log(msg) {
 
 function run(cmd) {
   return new Promise((resolve) => {
-    exec(cmd, (error, stdout, stderr) => {
+    exec(cmd, (error, stdout, _stderr) => {
       if (error) log(`⚠️ Error: ${error.message}`);
       resolve(stdout ? stdout.trim() : '');
     });
@@ -32,7 +32,7 @@ async function resetAdb() {
       });
     });
     log(`✅ TV is ONLINE (Ping successful). Proceeding...`);
-  } catch (e) {
+  } catch {
     log(`❌ CRITICAL ERROR: TV at ${TV_IP} is NOT REACHABLE.`);
     log(`   -> Check if TV is ON.`);
     log(`   -> Check if TV IP Address changed.`);

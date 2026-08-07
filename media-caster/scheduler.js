@@ -14,7 +14,6 @@ require('dotenv').config();
 const HardwareService = require('./services/HardwareService');
 const hardware = new HardwareService();
 
-const DEBUG = process.argv.includes('--debug') || process.argv.includes('--test');
 function log(msg) {
     console.log(`[${new Date().toLocaleTimeString()}] ${msg}`);
 }
@@ -150,7 +149,6 @@ async function executePreFlightAndCast(prayerName, audioFileName, targetTimeObj,
         fs.writeFileSync(generatedDuaPath, duaBuffer);
 
         // 5. Select Weather Filter (v22 Audited Manual-Stitch)
-        let filterChain = '[bg][weath]lut2=c0=\'x+y\':c1=\'x\':c2=\'x\',format=yuv420p[v]'; // Default Clear
         let weatherFilter = 'color=black:s=1280x800:d=5'; // Default constant black block
 
         if (weather.code >= 51 && weather.code <= 67) {
@@ -264,7 +262,7 @@ async function executePreFlightAndCast(prayerName, audioFileName, targetTimeObj,
                 try {
                     if (adhanDevice) adhanDevice.close();
                     if (Client) Client.destroy();
-                } catch (e) { }
+                } catch { }
                 if (safetyTimer) clearTimeout(safetyTimer);
                 if (process.argv.includes('--test')) {
                     log("🧪 Test Complete. Exiting.");
@@ -278,7 +276,7 @@ async function executePreFlightAndCast(prayerName, audioFileName, targetTimeObj,
                     const receiver = adhanDevice.client.receiver;
                     if (receiver) {
                         log(`🛑 Sending RECEIVER STOP (Return to Clock)...`);
-                        adhanDevice.client.stop(receiver, (err) => {
+                        adhanDevice.client.stop(receiver, (_err) => {
                             log(`✅ Receiver exited.`);
                             adhanDevice.client.close();
                             killSystem();
@@ -288,7 +286,7 @@ async function executePreFlightAndCast(prayerName, audioFileName, targetTimeObj,
                         killSystem();
                     }
                 } else { killSystem(); }
-            } catch (e) { killSystem(); }
+            } catch { killSystem(); }
         };
 
         // 1. RESTORE VOLUME FIRST
@@ -438,7 +436,7 @@ async function scheduleToday() {
     log("📅 Loading Schedule...");
     let annualData;
     if (fs.existsSync(SCHEDULE_FILE)) {
-        try { annualData = JSON.parse(fs.readFileSync(SCHEDULE_FILE)); } catch (e) { }
+        try { annualData = JSON.parse(fs.readFileSync(SCHEDULE_FILE)); } catch { }
     }
     const currentYear = DateTime.now().setZone(CONFIG.timezone).toFormat('yyyy');
     if (!annualData || annualData.year !== currentYear) {
@@ -448,7 +446,7 @@ async function scheduleToday() {
             const response = await axios.get(url);
             annualData = { year: currentYear, data: response.data.data };
             fs.writeFileSync(SCHEDULE_FILE, JSON.stringify(annualData, null, 2));
-        } catch (error) { log("❌ Fetch Error."); return; }
+        } catch { log("❌ Fetch Error."); return; }
     }
     await ensureAudioCache();
     const today = DateTime.now().setZone(CONFIG.timezone);

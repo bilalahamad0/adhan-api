@@ -1,7 +1,6 @@
 const VisualGenerator = require('./visual_generator');
 const fs = require('fs');
 const path = require('path');
-const { DateTime } = require('luxon');
 
 const CONFIG = {
   location: { city: 'Sunnyvale', country: 'US', method: 2, school: 1 },

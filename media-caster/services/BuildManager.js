@@ -507,16 +507,34 @@ class BuildManager {
     }
   }
 
+  /** Every string value reachable in a payload, keys included. */
+  static stringLeaves(value, out = []) {
+    if (typeof value === 'string') out.push(value);
+    else if (Array.isArray(value)) value.forEach((v) => BuildManager.stringLeaves(v, out));
+    else if (value && typeof value === 'object')
+      for (const [k, v] of Object.entries(value)) {
+        out.push(k);
+        BuildManager.stringLeaves(v, out);
+      }
+    return out;
+  }
+
   /**
    * Privacy gate: refuse to publish a payload that contains any process.env
    * value longer than 4 chars. Returns { ok: true } or { ok: false, reason }.
+   *
+   * Matches against the payload's string leaves rather than its serialised JSON.
+   * Serialising folds structure into the haystack, so an env var set to the
+   * string "false" collides with a JSON boolean and blocks publishing forever
+   * — a live env var tripped exactly that. Only strings can carry a secret;
+   * booleans, numbers and null cannot.
    */
   static assertPrivacy(payload, env = process.env) {
-    const stringified = JSON.stringify(payload || {});
+    const leaves = BuildManager.stringLeaves(payload || {});
     for (const [k, v] of Object.entries(env)) {
       if (typeof v !== 'string') continue;
       if (v.length <= 4) continue;
-      if (stringified.includes(v)) {
+      if (leaves.some((leaf) => leaf.includes(v))) {
         return { ok: false, reason: `env value of ${k} appears in payload` };
       }
     }

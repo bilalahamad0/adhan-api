@@ -21,7 +21,17 @@ function runInProcess() {
   const BuildManager = require(path.join(__dirname, '..', 'media-caster', 'services', 'BuildManager'));
   const SmokeRunner = require(path.join(__dirname, '..', 'media-caster', 'services', 'SmokeRunner'));
   const FirestoreSync = require(path.join(__dirname, '..', 'media-caster', 'services', 'FirestoreSync'));
-  require('dotenv').config({ path: path.join(__dirname, '..', 'media-caster', '.env') });
+  // dotenv is a media-caster dependency, not a root one, so a bare
+  // require('dotenv') from scripts/ resolves against the root tree and throws
+  // MODULE_NOT_FOUND — which crashed this script before it did anything. Same
+  // fallback shape as scripts/generate-vapid.cjs.
+  let dotenv;
+  try {
+    dotenv = require('dotenv');
+  } catch {
+    dotenv = require(path.join(__dirname, '..', 'media-caster', 'node_modules', 'dotenv'));
+  }
+  dotenv.config({ path: path.join(__dirname, '..', 'media-caster', '.env') });
 
   const REPO_ROOT = path.resolve(__dirname, '..');
   const STAGING_PATH = process.env.UPDATE_STAGING_PATH || '/tmp/adhan-staging';

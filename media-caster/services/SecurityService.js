@@ -511,15 +511,6 @@ class SecurityService {
     return result;
   }
 
-  /** Every string value reachable in a payload — the only leaf type that can leak a secret. */
-  static stringLeaves(value, out = []) {
-    if (typeof value === 'string') out.push(value);
-    else if (Array.isArray(value)) value.forEach((v) => SecurityService.stringLeaves(v, out));
-    else if (value && typeof value === 'object')
-      Object.values(value).forEach((v) => SecurityService.stringLeaves(v, out));
-    return out;
-  }
-
   /**
    * Put the run's outcome somewhere other than a pm2 log line. Same meta/*
    * pattern and privacy linter the build info already uses.
@@ -537,11 +528,7 @@ class SecurityService {
     };
     try {
       const BuildManager = require('./BuildManager');
-      // Lint the string leaves only. assertPrivacy substring-matches every env
-      // value against the serialised payload, so an env var set to "false"
-      // collides with a JSON boolean and would block publishing forever. Only
-      // strings can carry a leaked secret; booleans and counts cannot.
-      const verdict = BuildManager.assertPrivacy(SecurityService.stringLeaves(payload), process.env);
+      const verdict = BuildManager.assertPrivacy(payload, process.env);
       if (!verdict.ok) {
         this._warn(`❌ [SecurityService] Refusing to publish run summary: ${verdict.reason}`);
         return false;

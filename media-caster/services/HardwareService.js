@@ -33,7 +33,7 @@ class HardwareService {
           resolve(!err);
         });
       });
-    } catch (e) {
+    } catch {
       return false;
     }
   }
@@ -73,7 +73,7 @@ class HardwareService {
                         res.includes('Display Power: state=ON');
       
       return isScreenOn ? 'ON' : 'OFF';
-    } catch (e) {
+    } catch {
       return 'UNKNOWN';
     }
   }
@@ -159,11 +159,11 @@ class HardwareService {
       if (!res) return { isSonyMuted: null };
 
       // Look for JSON-like or key-value muted property
-      const mutedMatch = res.match(/\"muted\":\s*(\w+)/i) || res.match(/muted=\s*(\w+)/i);
+      const mutedMatch = res.match(/"muted":\s*(\w+)/i) || res.match(/muted=\s*(\w+)/i);
       return {
         isSonyMuted: mutedMatch ? (mutedMatch[1] === 'true' || mutedMatch[1] === '1') : null
       };
-    } catch (e) {
+    } catch {
       return { isSonyMuted: null };
     }
   }

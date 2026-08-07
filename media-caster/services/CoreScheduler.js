@@ -4,7 +4,6 @@ const path = require('path');
 const fs = require('fs');
 const dns = require('dns');
 const axios = require('axios');
-const { exec } = require('child_process');
 const ChromecastAPI = require('chromecast-api');
 
 /**
@@ -386,7 +385,7 @@ class CoreScheduler {
 
         let annualData;
         if (fs.existsSync(this.scheduleFilePath)) {
-            try { annualData = JSON.parse(fs.readFileSync(this.scheduleFilePath)); } catch (e) { }
+            try { annualData = JSON.parse(fs.readFileSync(this.scheduleFilePath)); } catch { }
         }
 
         const currentYear = DateTime.now().setZone(config.timezone).toFormat('yyyy');
@@ -397,7 +396,7 @@ class CoreScheduler {
                 const response = await axios.get(url);
                 annualData = { year: currentYear, data: response.data.data };
                 fs.writeFileSync(this.scheduleFilePath, JSON.stringify(annualData, null, 2));
-            } catch (error) { log("❌ Fetch Error."); return; }
+            } catch { log("❌ Fetch Error."); return; }
         }
 
         const today = DateTime.now().setZone(config.timezone);
@@ -1098,7 +1097,7 @@ class CoreScheduler {
                                                 completeFinalize();
                                             });
                                         } else { completeFinalize(); }
-                                    } catch (e) { completeFinalize(); }
+                                    } catch { completeFinalize(); }
                                 }, 500);
                             });
                         } else {
@@ -1114,7 +1113,7 @@ class CoreScheduler {
                     log(`🔊 Restoring Volume...`);
                     try {
                         adhanDevice.setVolume(originalVolume, () => setTimeout(finalize, 500));
-                    } catch (e) { setTimeout(finalize, 500); }
+                    } catch { setTimeout(finalize, 500); }
                 } else { finalize(); }
             }
         };
