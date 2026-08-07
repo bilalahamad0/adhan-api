@@ -67,7 +67,8 @@ const CONFIG = {
   //
   // Sunrise (Shuruq): the sun emerges at the horizon, at sunrise itself.
   sunrise: {
-    enabled: (process.env.SUNRISE_ENABLED || 'true') !== 'false',
+    // Toggled OFF: opt-in only. Set SUNRISE_ENABLED=true to bring the clip back.
+    enabled: process.env.SUNRISE_ENABLED === 'true',
     clipSeconds: envNumber(process.env.SUNRISE_CLIP_SECONDS, 12, 5, 20),
     prebakeSec: envNumber(process.env.SUNRISE_PREBAKE_SEC, 600, 60, 7200),
     offsetSec: envNumber(process.env.SUNRISE_OFFSET_SEC, 0, -3600, 7200),
@@ -78,7 +79,8 @@ const CONFIG = {
   // voluntary Duha prayer becomes permissible. Its offset is measured from
   // sunrise, so the default 1200s lands it at Duha time.
   ishraq: {
-    enabled: (process.env.ISHRAQ_ENABLED || 'true') !== 'false',
+    // Toggled OFF: opt-in only. Set ISHRAQ_ENABLED=true to bring the clip back.
+    enabled: process.env.ISHRAQ_ENABLED === 'true',
     clipSeconds: envNumber(process.env.ISHRAQ_CLIP_SECONDS, 12, 5, 20),
     prebakeSec: envNumber(process.env.ISHRAQ_PREBAKE_SEC, 600, 60, 7200),
     offsetSec: envNumber(process.env.ISHRAQ_OFFSET_SEC, 1200, 0, 7200),
