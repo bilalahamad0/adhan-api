@@ -361,6 +361,38 @@ class FirestoreSync {
       return false;
     }
   }
+
+  /**
+   * Publish the nightly dependency auto-fix outcome. Same allow-listed shape as
+   * publishBuildInfo: a failed security run needs somewhere to surface other
+   * than a pm2 log line nobody reads.
+   */
+  async publishSecurityInfo(record) {
+    const db = this._initFirestore();
+    if (!db || !record) return false;
+    const ALLOWED = [
+      'lastRunAt',
+      'ok',
+      'committed',
+      'pushed',
+      'failureReason',
+      'remainingHighCritical',
+      'needsHuman',
+    ];
+    const safe = {};
+    for (const k of ALLOWED) {
+      if (record[k] === undefined) continue;
+      safe[k] = record[k];
+    }
+    safe.updatedAt = new Date().toISOString();
+    try {
+      await db.collection('meta').doc('security').set(safe, { merge: true });
+      return true;
+    } catch (e) {
+      console.error(`[FirestoreSync] publishSecurityInfo failed: ${e.message}`);
+      return false;
+    }
+  }
 }
 
 module.exports = FirestoreSync;

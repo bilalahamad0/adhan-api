@@ -548,6 +548,9 @@ async function bootSystem() {
       './services/PlaybackLogger', './services/FirestoreSync', './services/ScheduleService',
       './services/CastService', './services/DiscoveryService',
       './services/BuildManager', './services/SmokeRunner',
+      // SecurityService pulls in semver, a production dependency the Pi only
+      // gets via `npm ci --omit=dev` — catch a missing one here, not at midnight.
+      './services/SecurityService',
       './auto_updater',
     ];
     for (const mod of SERVICE_MODULES) {
@@ -717,9 +720,11 @@ async function bootSystem() {
       console.error('[boot] Daily schedule refresh failed:', e.message);
     });
 
-    // Run Security Auto-Fix
+    // Run Security Auto-Fix. firestoreSync is passed so a run that cannot land
+    // its fix surfaces on the ops dashboard (meta/security) instead of dying in
+    // a pm2 log line — the failure mode that let 51 alerts pile up unnoticed.
     const SecurityService = require('./services/SecurityService');
-    const security = new SecurityService(console);
+    const security = new SecurityService({ logger: console, firestoreSync });
     security.autoFixVulnerabilities().catch(e => {
       console.error('[boot] Security auto-fix failed:', e.message);
     });
