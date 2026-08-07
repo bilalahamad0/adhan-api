@@ -8,7 +8,7 @@ console.log(`\n🔍 --- NETWORK DIAGNOSTICS FOR ${TV_IP} ---\n`);
 
 // 1. Ping Test
 console.log(`1️⃣  Running PING check...`);
-exec(`ping -c 1 -W 2 ${TV_IP}`, (err, stdout, stderr) => {
+exec(`ping -c 1 -W 2 ${TV_IP}`, (err, stdout, _stderr) => {
   if (err) {
     console.log(`❌ PING FAILED: Host unreachable.`);
     console.log(`   -> CRITICAL: The Pi cannot reach the TV at ${TV_IP}.`);

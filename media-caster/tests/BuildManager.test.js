@@ -84,6 +84,27 @@ describe('BuildManager.assertPrivacy', () => {
     const payload = { x: 'PST in payload' };
     expect(BuildManager.assertPrivacy(payload, env).ok).toBe(true);
   });
+
+  // Matching against serialised JSON folds structure into the haystack: an env
+  // var whose value is "false" collided with a JSON boolean and blocked
+  // publishing outright. A live env var tripped exactly this.
+  test('does not mistake JSON syntax for an env value', () => {
+    const env = { SOME_FLAG: 'false', OTHER_FLAG: 'null' };
+    const payload = { ok: false, pushed: false, failureReason: null, count: 0 };
+    expect(BuildManager.assertPrivacy(payload, env).ok).toBe(true);
+  });
+
+  test('still catches a secret nested in an array or object', () => {
+    const env = { TOKEN: 'sk-super-secret-token' };
+    expect(
+      BuildManager.assertPrivacy({ needsHuman: [{ reason: 'failed for sk-super-secret-token' }] }, env)
+    ).toMatchObject({ ok: false, reason: expect.stringMatching(/TOKEN/) });
+  });
+
+  test('catches a secret that leaked into a key rather than a value', () => {
+    const env = { TOKEN: 'sk-super-secret-token' };
+    expect(BuildManager.assertPrivacy({ 'sk-super-secret-token': 1 }, env).ok).toBe(false);
+  });
 });
 
 describe('BuildManager.checkForUpdate', () => {
@@ -380,7 +401,7 @@ describe('BuildManager drift preflight integration', () => {
   test('detects drift and includes it in result without blocking update', async () => {
     const driftStatus = '?? stray-photo.jpg\n M src/server.js\n';
     const logs = [];
-    const { runExec, calls } = makeRunExecRecorder({
+    const { runExec } = makeRunExecRecorder({
       'rev-parse HEAD': { stdout: 'oldsha7777777\n', stderr: '' },
       'rev-parse origin/main': { stdout: 'newsha8888888\n', stderr: '' },
       'log -1 --pretty=%s': { stdout: 'fix: drift test\n', stderr: '' },

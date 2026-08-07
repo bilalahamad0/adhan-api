@@ -1,4 +1,4 @@
-const { createCanvas, loadImage, registerFont } = require('canvas');
+const { createCanvas, loadImage } = require('canvas');
 const axios = require('axios');
 const path = require('path');
 const fs = require('fs');
@@ -423,7 +423,7 @@ class VisualGenerator {
     try {
       image = await loadImage(bgFile);
       console.log(`✅ Image Loaded: ${path.basename(bgFile)}`);
-    } catch (e) {
+    } catch {
       console.error(`❌ Failed to load ${bgFile}, falling back to default.`);
       // Ensure default exists
       if (!fs.existsSync(this.bgPath)) await this.downloadDefaultBackground();

@@ -201,7 +201,7 @@
     try {
       if (prev === 'on') await disable();
       else await enable();
-    } catch (err) {
+    } catch {
       // enable()/disable() already toasted the reason; restore real state.
       await refreshState();
       return;

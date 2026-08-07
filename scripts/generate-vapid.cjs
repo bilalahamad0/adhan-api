@@ -23,7 +23,7 @@ try {
 } catch (_) {
   try {
     webpush = require('../media-caster/node_modules/web-push');
-  } catch (e) {
+  } catch {
     console.error('web-push not found. Run inside media-caster (npm i) or use: npx web-push generate-vapid-keys');
     process.exit(1);
   }
