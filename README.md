@@ -131,12 +131,12 @@ pm2 restart adhan-caster --update-env
 Then, if you rely on the [Operations Dashboard](https://bilalahamad0.github.io/adhan-api/dashboard.html) and Firestore metrics, trigger a sync from the Pi: `curl -sS -X POST "http://localhost:3001/api/metrics/sync"` (expect `"prayersScheduled":5` when the schedule file is current). See [DEPLOYMENT_GUIDE_PI.md](./DEPLOYMENT_GUIDE_PI.md) for full detail.
 
 ### 3. Optional: Enable the On-Device AI
-The AI layer is entirely optional — the caster runs fully without it. To enable it, install [Ollama](https://ollama.com/) on the Pi, then build the resource-capped model the system expects by default (`OLLAMA_MODEL=gemma3-constrained`, `OLLAMA_URL` also configurable):
+The AI layer is entirely optional and **off by default** — the caster runs fully without it, and while it is off the system never probes for an Ollama server. To enable it, install [Ollama](https://ollama.com/) on the Pi, build the resource-capped model the system expects by default (`OLLAMA_MODEL=gemma3-constrained`, `OLLAMA_URL` also configurable), and set `OLLAMA_ENABLED=true` in `media-caster/.env`:
 ```bash
 ollama pull gemma3:1b
 ollama create gemma3-constrained -f ./Modelfile   # Modelfile detailed in the whitepaper
 ```
-If Ollama is unavailable, every AI endpoint degrades gracefully to a deterministic, computed response. See the [Edge AI Whitepaper](./docs/blog/gemma-ollama-raspberry-pi-adhan.md) for the full Modelfile and rationale.
+If Ollama becomes unavailable while enabled, every AI endpoint degrades gracefully to a deterministic, computed response. See the [Edge AI Whitepaper](./docs/blog/gemma-ollama-raspberry-pi-adhan.md) for the full Modelfile and rationale.
 
 ---
 

@@ -57,6 +57,9 @@ class AdvisoryAgent {
   // --- Failure diagnosis (queued at failure time, drained in quiet windows) ---
 
   enqueueFailure(date, prayer, failureReason) {
+    // With the AI layer disabled nothing ever drains this queue, so don't let
+    // it grow for the lifetime of the process.
+    if (!this.ollama.enabled) return;
     this._failureQueue.push({ date, prayer, failureReason, queuedAt: Date.now() });
   }
 

@@ -15,6 +15,12 @@ const axios = require('axios');
 const OllamaService = require('../services/OllamaService');
 const aiContext = require('../services/aiContext');
 
+// The AI layer is opt-in (OLLAMA_ENABLED=true); these suites exercise the
+// enabled behavior. The env var is read at construction time, so setting it
+// here covers every `new OllamaService(...)` below. Disabled-mode behavior
+// has its own describe at the bottom.
+process.env.OLLAMA_ENABLED = 'true';
+
 const flush = () => new Promise((r) => setImmediate(r));
 
 // Build a one-day annual_schedule.json fixture anchored to `now`.
@@ -277,7 +283,7 @@ describe('OllamaService Circuit Breaker and Watchdog', () => {
   it('trips again if HALF_OPEN probe fails', async () => {
     const svc = new OllamaService({ failureThreshold: 1, cooldownDurationMs: 100, restartCmd: 'restart-cmd' });
     axios.post.mockRejectedValue(new Error('timeout'));
-    
+
     // Trip it
     await svc.ask('sys', 'ctx');
     expect(svc._state).toBe('OPEN');
@@ -288,11 +294,75 @@ describe('OllamaService Circuit Breaker and Watchdog', () => {
     // Next call should run in HALF_OPEN and fail
     axios.post.mockRejectedValue(new Error('still down'));
     jest.clearAllMocks();
-    
+
     const res = await svc.ask('sys', 'ctx');
     expect(res).toBeNull();
     expect(axios.post).toHaveBeenCalled();
     expect(svc._state).toBe('OPEN');
     expect(svc._consecutiveFailures).toBe(2);
+  });
+});
+
+describe('OllamaService disabled mode (OLLAMA_ENABLED unset — the default)', () => {
+  const tz = 'America/Los_Angeles';
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    delete process.env.OLLAMA_ENABLED;
+  });
+  afterAll(() => {
+    process.env.OLLAMA_ENABLED = 'true';
+  });
+
+  it('is disabled by default when the env var is unset', () => {
+    expect(new OllamaService().enabled).toBe(false);
+  });
+
+  it('is disabled for any value other than "true" (case-insensitive)', () => {
+    for (const v of ['false', '1', 'yes', 'TRUE ', '']) {
+      process.env.OLLAMA_ENABLED = v;
+      expect(new OllamaService().enabled).toBe(false);
+    }
+    process.env.OLLAMA_ENABLED = 'TRUE';
+    expect(new OllamaService().enabled).toBe(true);
+  });
+
+  it('ask() resolves null without any network call', async () => {
+    const svc = new OllamaService();
+    await expect(svc.ask('sys', 'ctx')).resolves.toBeNull();
+    expect(axios.post).not.toHaveBeenCalled();
+  });
+
+  it('isAvailable() resolves false without any network call', async () => {
+    const svc = new OllamaService();
+    await expect(svc.isAvailable()).resolves.toBe(false);
+    expect(axios.get).not.toHaveBeenCalled();
+  });
+
+  it('warmup() is a no-op without any network call', async () => {
+    const svc = new OllamaService();
+    await svc.warmup();
+    expect(axios.get).not.toHaveBeenCalled();
+    expect(axios.post).not.toHaveBeenCalled();
+  });
+
+  it('never triggers the watchdog restart command', async () => {
+    const svc = new OllamaService({ failureThreshold: 1, restartCmd: 'restart-cmd' });
+    await svc.ask('sys', 'ctx');
+    await svc.isAvailable();
+    expect(exec).not.toHaveBeenCalled();
+  });
+
+  it('quiet-window guard still works (schedule-based, no server needed)', () => {
+    const now = DateTime.fromObject({ year: 2026, month: 5, day: 21, hour: 12, minute: 0 }, { zone: tz });
+    const file = writeSchedule(now, { Dhuhr: '12:03' });
+    const svc = new OllamaService({ scheduleFilePath: file, timezone: tz });
+    expect(svc.isQuiet(now)).toBe(false);
+  });
+
+  it('an explicit enabled:true option overrides the unset env var', async () => {
+    const svc = new OllamaService({ enabled: true });
+    axios.get.mockResolvedValue({ status: 200 });
+    await expect(svc.isAvailable()).resolves.toBe(true);
   });
 });

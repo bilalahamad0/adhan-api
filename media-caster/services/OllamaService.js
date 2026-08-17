@@ -24,7 +24,12 @@ class OllamaService {
     failureThreshold = 2,
     cooldownDurationMs = 60000,
     restartCmd = null,
+    // Master switch. Off unless OLLAMA_ENABLED is exactly "true": a Pi without
+    // an Ollama install must never see probes, queries, or watchdog restarts.
+    // Read at construction (not module load) so tests can flip the env var.
+    enabled = String(process.env.OLLAMA_ENABLED || '').toLowerCase() === 'true',
   } = {}) {
+    this.enabled = !!enabled;
     this.scheduleFilePath = scheduleFilePath;
     this.timezone = timezone;
     this.model = model;
@@ -46,6 +51,7 @@ class OllamaService {
   // Returns the model's trimmed text response, or null on any error/timeout so
   // every caller can degrade gracefully. Calls are serialized (single-flight).
   async ask(systemPrompt, userContext, { timeoutMs = 90000, json = false } = {}) {
+    if (!this.enabled) return null;
     const run = async () => {
       // 1. Circuit Breaker Check
       if (this._state === 'OPEN') {
@@ -111,6 +117,7 @@ class OllamaService {
   }
 
   async isAvailable(timeoutMs = 2000) {
+    if (!this.enabled) return false;
     // Circuit Breaker Check
     if (this._state === 'OPEN') {
       if (Date.now() < this._cooldownUntil) {
@@ -138,6 +145,7 @@ class OllamaService {
   // fast (~4s) warm path instead of the slow (~28s) cold-load path. Fire-and-
   // forget; failure is harmless — the first query will just cold-start instead.
   async warmup() {
+    if (!this.enabled) return;
     try {
       if (!(await this.isAvailable(3000))) return;
       this.log('🔥 Warming up Ollama model...');

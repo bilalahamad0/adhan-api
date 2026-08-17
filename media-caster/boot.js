@@ -134,6 +134,9 @@ const advisory = new AdvisoryAgent({
   timezone: CONFIG.timezone,
   scheduleFilePath: annualSchedulePath,
 });
+console.log(ollama.enabled
+  ? '🤖 Local AI (Gemma via Ollama) enabled.'
+  : '🤖 Local AI disabled — install Ollama and set OLLAMA_ENABLED=true to enable.');
 
 // Deterministic answer used whenever Gemma is offline/slow, so /api/ask never
 // hard-fails — it always returns at least the next-prayer countdown.
@@ -203,7 +206,7 @@ async function bootSystem() {
   // Health probe; the dashboard uses it to decide whether to reveal the chat box.
   app.get('/api/ask/health', async (req, res) => {
     const available = await ollama.isAvailable();
-    res.status(200).json({ available });
+    res.status(200).json({ available, enabled: ollama.enabled });
   });
 
   // Natural-language status query. Read-only: builds context from the schedule +
@@ -753,28 +756,31 @@ async function bootSystem() {
 
   // AI advisory jobs — all quiet-window gated inside AdvisoryAgent; none run
   // within a prayer's critical window, and none touch the live cast path.
-  schedule.scheduleJob('*/20 * * * *', () =>
-    advisory.drainFailures().catch((e) => console.error('[ai] drainFailures failed:', e.message)));
+  // Not scheduled at all while the AI layer is disabled (OLLAMA_ENABLED unset).
+  if (ollama.enabled) {
+    schedule.scheduleJob('*/20 * * * *', () =>
+      advisory.drainFailures().catch((e) => console.error('[ai] drainFailures failed:', e.message)));
 
-  const blurbRule = new schedule.RecurrenceRule();
-  blurbRule.hour = 5;
-  blurbRule.minute = 30;
-  blurbRule.tz = CONFIG.timezone;
-  schedule.scheduleJob(blurbRule, () =>
-    advisory.generateDailyBlurb().catch((e) => console.error('[ai] daily blurb failed:', e.message)));
+    const blurbRule = new schedule.RecurrenceRule();
+    blurbRule.hour = 5;
+    blurbRule.minute = 30;
+    blurbRule.tz = CONFIG.timezone;
+    schedule.scheduleJob(blurbRule, () =>
+      advisory.generateDailyBlurb().catch((e) => console.error('[ai] daily blurb failed:', e.message)));
 
-  const tuningRule = new schedule.RecurrenceRule();
-  tuningRule.hour = 3;
-  tuningRule.minute = 15;
-  tuningRule.tz = CONFIG.timezone;
-  schedule.scheduleJob(tuningRule, () =>
-    advisory.runTuningAdvisory().catch((e) => console.error('[ai] tuning advisory failed:', e.message)));
+    const tuningRule = new schedule.RecurrenceRule();
+    tuningRule.hour = 3;
+    tuningRule.minute = 15;
+    tuningRule.tz = CONFIG.timezone;
+    schedule.scheduleJob(tuningRule, () =>
+      advisory.runTuningAdvisory().catch((e) => console.error('[ai] tuning advisory failed:', e.message)));
 
-  // Best-effort blurb shortly after boot so the dashboard has something today
-  // (skipped automatically if booting inside a prayer window or Ollama is down).
-  setTimeout(() => {
-    advisory.generateDailyBlurb().catch((e) => console.error('[ai] boot blurb failed:', e.message));
-  }, 30000);
+    // Best-effort blurb shortly after boot so the dashboard has something today
+    // (skipped automatically if booting inside a prayer window or Ollama is down).
+    setTimeout(() => {
+      advisory.generateDailyBlurb().catch((e) => console.error('[ai] boot blurb failed:', e.message));
+    }, 30000);
+  }
 
   // SYSTEM TEST MODE (hermetic): schedule resolve → image gen → audio probe
   // → encode to a temp file. Never calls device.play(). Auto-updater uses
