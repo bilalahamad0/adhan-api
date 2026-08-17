@@ -3,9 +3,9 @@ const fs = require('fs');
 const { DateTime } = require('luxon');
 const { exec } = require('child_process');
 
-// Local Ollama daemon. Bound to loopback on the Pi; never leaves the device.
-const OLLAMA_URL = process.env.OLLAMA_URL || 'http://127.0.0.1:11434';
-const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'gemma3-constrained';
+// All OLLAMA_* env vars are read at construction time, NOT module load:
+// boot.js requires this module before dotenv.config() runs, so module-level
+// reads would never see values set in media-caster/.env.
 
 // Critical cast window around every prayer. Gemma is forbidden from running
 // inside it: inference takes ~5-10s on a Pi 4 CPU and the cast fires ~2s
@@ -19,14 +19,14 @@ class OllamaService {
   constructor({
     scheduleFilePath = null,
     timezone = 'America/Los_Angeles',
-    model = OLLAMA_MODEL,
-    baseUrl = OLLAMA_URL,
+    // Local Ollama daemon. Bound to loopback on the Pi; never leaves the device.
+    model = process.env.OLLAMA_MODEL || 'gemma3-constrained',
+    baseUrl = process.env.OLLAMA_URL || 'http://127.0.0.1:11434',
     failureThreshold = 2,
     cooldownDurationMs = 60000,
     restartCmd = null,
     // Master switch. Off unless OLLAMA_ENABLED is exactly "true": a Pi without
     // an Ollama install must never see probes, queries, or watchdog restarts.
-    // Read at construction (not module load) so tests can flip the env var.
     enabled = String(process.env.OLLAMA_ENABLED || '').toLowerCase() === 'true',
   } = {}) {
     this.enabled = !!enabled;

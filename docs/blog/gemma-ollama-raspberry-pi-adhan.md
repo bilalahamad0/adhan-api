@@ -57,6 +57,8 @@ PARAMETER top_p 0.7
 ollama create gemma3-constrained -f ./Modelfile
 ```
 
+The AI layer is **off by default**: after installing Ollama and building the model, set `OLLAMA_ENABLED=true` in `media-caster/.env` (and restart with `pm2 restart adhan-caster --update-env`) to activate it. While the flag is unset the system never probes for an Ollama server and every AI endpoint serves a deterministic computed response.
+
 ## Architecture: an intelligence layer, bolted on the side
 
 The cardinal rule — *off the real-time cast path* — drove the entire design. Inference on a Pi 4 CPU takes anywhere from ~3 s (warm) to ~30–60 s (cold load), while the cast must fire roughly **2 seconds** before prayer time. Putting an LLM call anywhere in that window would be reckless. So the AI lives entirely in its own modules and is **forbidden from running inside a prayer's critical window**.
@@ -253,6 +255,7 @@ curl -fsSL https://ollama.com/install.sh | sh
 ollama pull gemma3:1b
 ollama create gemma3-constrained -f ./Modelfile   # see Modelfile above
 ```
+Then enable the layer — it is off by default: `OLLAMA_ENABLED=true` in `media-caster/.env`, followed by `pm2 restart adhan-caster --update-env`.
 
 **Endpoints (served from the Pi on port 3001)**
 | Method | Path | Purpose |

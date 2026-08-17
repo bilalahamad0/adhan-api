@@ -18,7 +18,9 @@ const aiContext = require('../services/aiContext');
 // The AI layer is opt-in (OLLAMA_ENABLED=true); these suites exercise the
 // enabled behavior. The env var is read at construction time, so setting it
 // here covers every `new OllamaService(...)` below. Disabled-mode behavior
-// has its own describe at the bottom.
+// has its own describe at the bottom, which restores this original value so
+// nothing leaks into other test files sharing this Jest worker's process.env.
+const ORIGINAL_OLLAMA_ENABLED = process.env.OLLAMA_ENABLED;
 process.env.OLLAMA_ENABLED = 'true';
 
 const flush = () => new Promise((r) => setImmediate(r));
@@ -311,7 +313,8 @@ describe('OllamaService disabled mode (OLLAMA_ENABLED unset — the default)', (
     delete process.env.OLLAMA_ENABLED;
   });
   afterAll(() => {
-    process.env.OLLAMA_ENABLED = 'true';
+    if (ORIGINAL_OLLAMA_ENABLED === undefined) delete process.env.OLLAMA_ENABLED;
+    else process.env.OLLAMA_ENABLED = ORIGINAL_OLLAMA_ENABLED;
   });
 
   it('is disabled by default when the env var is unset', () => {
