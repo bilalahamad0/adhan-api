@@ -2,7 +2,7 @@
 /**
  * Dependency-free web/PWA icon generator for the Adhan Operations Dashboard.
  *
- * Renders the same crescent + sparkle on a green square as the Adhan Caster Pro
+ * Renders the same crescent + sparkle on a green square as the Adhan Caster
  * Chrome extension (icons/generate-icons.cjs in the adhan-ce repo) so the
  * dashboard's browser-tab favicon and iPhone Home-Screen icon match the brand.
  *
