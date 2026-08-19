@@ -212,7 +212,7 @@ The platform is designed for "Set-and-Forget" reliability:
 
 ## 📱 Companion App
 
-**[Adhan Caster Pro (Chrome Extension) ↗](https://github.com/bilalahamad0/adhan-ce)** — a browser companion that shows upcoming prayer times with a live countdown and auto-pauses media in every tab at Adhan time. (Previously bundled here; now maintained in its own repository.)
+**[Adhan Caster (Chrome Extension) ↗](https://github.com/bilalahamad0/adhan-ce)** — a browser companion that shows upcoming prayer times with a live countdown and auto-pauses media in every tab at Adhan time. (Previously bundled here; now maintained in its own repository.)
 
 ---
 

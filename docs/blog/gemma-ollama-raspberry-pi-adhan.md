@@ -10,7 +10,7 @@ canonical: "https://bilalahamad.com/blog/gemma-ollama-raspberry-pi-adhan"
 hero: "/images/blog/adhan/architecture.png"
 ---
 
-> **Related project:** [Adhan Caster Pro](https://bilalahamad.com/projects#adhan) — a self-hosted, zero-latency Islamic prayer automation system running on a Raspberry Pi 4.
+> **Related project:** [Adhan Caster](https://bilalahamad.com/projects#adhan) — a self-hosted, zero-latency Islamic prayer automation system running on a Raspberry Pi 4.
 
 ## TL;DR
 
