@@ -267,21 +267,6 @@
             <div class="countdown-time" id="countdown-time">--:--:--</div>
         </div>
 
-        <!-- Local AI Assistant (Gemma on the Pi). Hidden unless /api/ask/health
-             reports the Ollama daemon is reachable from where this page loaded.
-             Same-origin when served from the Pi; over a VPN, set a base URL via
-             localStorage 'adhanApiBase' or the ?api= query param. -->
-        <div class="card" id="ai-assistant-card" style="display:none; margin-bottom:1.5rem">
-            <h2 class="card-title">Assistant <span style="font-size:0.6rem;color:var(--text-muted);font-weight:500">· local Gemma</span></h2>
-            <div id="ai-blurb" style="font-size:0.8rem;color:var(--text-dim);margin-bottom:0.75rem;line-height:1.5"></div>
-            <div style="display:flex;gap:0.5rem">
-                <input id="ai-input" type="text" maxlength="500" aria-label="Ask the local assistant about today's prayers" placeholder="Ask about today's prayers, e.g. how long until Maghrib?"
-                    style="flex:1;padding:0.6rem 0.75rem;border-radius:8px;border:1px solid var(--border);background:var(--bg,#0b0e14);color:var(--text);font-size:0.85rem" />
-                <button id="ai-send" style="padding:0.6rem 1.1rem;border-radius:8px;border:none;background:var(--accent-blue);color:#fff;font-weight:600;font-size:0.85rem;cursor:pointer">Ask</button>
-            </div>
-            <div id="ai-answer" style="font-size:0.85rem;color:var(--text);margin-top:0.75rem;line-height:1.5;white-space:pre-wrap"></div>
-        </div>
-
         <!-- KPI Row -->
         <div class="kpi-row" id="kpi-row">
             <div class="card">
@@ -504,76 +489,6 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
         document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
     });
 });
-
-// --- Local AI Assistant (Gemma on the Pi) ---
-// Resolve the Pi API base: ?api= query param wins (and is remembered), then
-// localStorage, else same-origin (works when the page is served by the Pi).
-(function initAiAssistant() {
-    function resolveBase() {
-        try {
-            var q = new URLSearchParams(window.location.search).get('api');
-            if (q) { localStorage.setItem('adhanApiBase', q.replace(/\/$/, '')); }
-            return (localStorage.getItem('adhanApiBase') || '').replace(/\/$/, '');
-        } catch (_) { return ''; }
-    }
-    var ASK_BASE = resolveBase();
-
-    async function loadBlurb() {
-        try {
-            var r = await fetch(ASK_BASE + '/api/blurb');
-            var j = await r.json();
-            if (j && j.text) document.getElementById('ai-blurb').textContent = j.text;
-        } catch (_) { /* blurb is optional */ }
-    }
-
-    async function ask() {
-        var input = document.getElementById('ai-input');
-        var answerEl = document.getElementById('ai-answer');
-        var btn = document.getElementById('ai-send');
-        var q = (input.value || '').trim();
-        if (!q) return;
-        btn.disabled = true; answerEl.textContent = 'Thinking…';
-        var t0 = (window.performance && performance.now) ? performance.now() : Date.now();
-        try {
-            var r = await fetch(ASK_BASE + '/api/ask', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ question: q })
-            });
-            var j = await r.json();
-            var roundTripS = ((((window.performance && performance.now) ? performance.now() : Date.now()) - t0) / 1000).toFixed(1);
-            // Prefer the server-measured time; the client round-trip is the fallback.
-            var serverS = (typeof j.latencyMs === 'number') ? (j.latencyMs / 1000).toFixed(1) : null;
-            var meta = 'answered in ' + roundTripS + 's' + (serverS ? ' (server ' + serverS + 's)' : '');
-            if (j.source === 'fallback') meta += ' · computed (AI offline)';
-            answerEl.textContent = (j.answer || j.error || 'No answer.') + '\n⏱ ' + meta;
-        } catch (e) {
-            answerEl.textContent = 'Could not reach the assistant.';
-        } finally {
-            btn.disabled = false;
-        }
-    }
-
-    async function probeAndInit() {
-        try {
-            var r = await fetch(ASK_BASE + '/api/ask/health');
-            var j = await r.json();
-            if (!j || !j.available) return; // leave the card hidden
-        } catch (_) { return; }
-        document.getElementById('ai-assistant-card').style.display = 'block';
-        document.getElementById('ai-send').addEventListener('click', ask);
-        document.getElementById('ai-input').addEventListener('keydown', function (e) {
-            if (e.key === 'Enter') ask();
-        });
-        loadBlurb();
-    }
-    probeAndInit();
-
-    // VOICE HOOK (not implemented this phase): a Google Assistant routine /
-    // webhook can POST { question } to `${ASK_BASE}/api/ask` and speak back
-    // `answer` on the Nest Hub. That path requires the cloud Assistant, so it is
-    // intentionally left as a documented extension point rather than wired here.
-})();
 
 // --- Date Display ---
 function updateDateDisplay() {

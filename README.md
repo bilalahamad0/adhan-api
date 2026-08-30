@@ -7,7 +7,7 @@
 [![Code Style: Prettier](https://img.shields.io/badge/code_style-Prettier-ff69b4?logo=prettier&logoColor=white)](https://prettier.io/)
 
 [![Platform: Raspberry Pi 4](https://img.shields.io/badge/Platform-Raspberry%20Pi%204-c51a4a?logo=raspberrypi&logoColor=white)](https://www.raspberrypi.com/)
-[![Local AI: Gemma 3 + Ollama](https://img.shields.io/badge/Local%20AI-Gemma%203%20%2B%20Ollama-0a0a0a?logo=ollama&logoColor=white)](https://ollama.com/)
+[![Local AI: Gemma 3 + Ollama (retired)](https://img.shields.io/badge/Local%20AI-Gemma%203%20%2B%20Ollama%20%28retired%29-6b7280?logo=ollama&logoColor=white)](#-deprecated-on-device-ai-layer-gemma-3--ollama)
 [![Google Cast](https://img.shields.io/badge/Google%20Cast-Nest%20Hub-4285F4?logo=googlecast&logoColor=white)](https://developers.google.com/cast)
 [![Android TV: ADB](https://img.shields.io/badge/Android%20TV-ADB-3ddc84?logo=android&logoColor=white)](https://developer.android.com/tools/adb)
 [![FFmpeg](https://img.shields.io/badge/FFmpeg-007808?logo=ffmpeg&logoColor=white)](https://ffmpeg.org/)
@@ -26,7 +26,7 @@
 
 Developed using an **Agentic AI workflow**, the system runs on a **Raspberry Pi 4 core** that commands a complex multi-device lifecycle. It bridges the gap between digital entertainment and daily ritual by orchestrating a synchronized environment: broadcasting high-fidelity prayer audio and a live dashboard to **Google Nest Hubs** while using **ADB-level protocol injection** to intelligently manage the media state of **Sony Android TVs**.
 
-It is also **local-first and AI-native at runtime**: a fully on-device **Gemma 3 (via Ollama)** model answers natural-language questions, explains failures, and advises on tuning — without any cloud dependency, API key, or data ever leaving the house, and **never touching the real-time cast path**.
+The system previously also shipped a **local-first, on-device LLM assistant** (Gemma 3 via Ollama) that answered natural-language questions, explained failures, and advised on tuning. Ollama has since been retired from the Raspberry Pi host, and that layer has been removed from the runtime — see [Deprecated: On-Device AI Layer](#-deprecated-on-device-ai-layer-gemma-3--ollama) for the design, env vars, and endpoints, kept for reference and any future re-implementation.
 
 ![Dashboard Preview](./images/screenshots/final_maghrib_success.jpg)
 
@@ -34,13 +34,7 @@ It is also **local-first and AI-native at runtime**: a fully on-device **Gemma 3
 
 ## ✨ Key Engineering Features
 
-### 🧠 **On-Device AI Layer (Gemma 3 + Ollama)**
-A local LLM runs on the Pi itself via **[Ollama](https://ollama.com/)** — no cloud, no API keys, no data leaving the network. It is **architecturally fenced off the real-time cast path**: inference is forbidden inside the critical window (5 minutes before → 8 minutes after each prayer), so the Adhan always fires on time regardless of what the model is doing.
-- **Natural-Language Status** (`POST /api/ask`): ask _"how long until Asr?"_ and get a grounded answer built strictly from the live schedule and playback log.
-- **Self-Diagnosing Failures**: when a cast fails, the event is queued and explained in plain English during the next quiet window, then attached to the dashboard history.
-- **Daily Dashboard Greeting**: a warm, cached one-liner generated once per day.
-- **Advisory Tuning Loop**: reviews rolling 14-day reliability stats and proposes env-var tuning — surfaced for a human to review, **never auto-applied**.
-- **Resilience**: single-flight serialization (a Pi 4 can't run two inferences at once), model warm-keeping, a **circuit breaker + watchdog** that restarts Ollama on repeated failure, and a deterministic fallback so `/api/ask` never hard-fails.
+> **Note:** the on-device LLM assistant (Gemma 3 via Ollama) is **deprecated and removed** from the runtime. Its design is preserved in [Deprecated: On-Device AI Layer](#-deprecated-on-device-ai-layer-gemma-3--ollama).
 
 ### 🤖 **Agentic AI Development Workflow**
 This project also serves as a flagship for **AI-native hardware development**. The entire codebase was architected using an **Agentic AI workflow**, ensuring:
@@ -70,7 +64,7 @@ This project also serves as a flagship for **AI-native hardware development**. T
 | Layer | Technologies |
 | :--- | :--- |
 | **Core Logic** | Node.js (v18+), Asynchronous Event-Loop Architecture |
-| **Edge AI** | Gemma 3 (1B) via Ollama — local inference, off the cast path |
+| **Edge AI** _(retired)_ | Gemma 3 (1B) via Ollama — local inference, off the cast path. Removed from the runtime; see [Deprecated](#-deprecated-on-device-ai-layer-gemma-3--ollama) |
 | **Hardware** | Raspberry Pi 4, Sony Android TV, Google Nest Hub Max |
 | **Protocols** | mDNS/Castv2 (Google Cast), ADB (Android Debug Bridge) |
 | **API / Server** | Express 5, REST control + metrics endpoints |
@@ -130,14 +124,6 @@ pm2 restart adhan-caster --update-env
 
 Then, if you rely on the [Operations Dashboard](https://bilalahamad0.github.io/adhan-api/dashboard.html) and Firestore metrics, trigger a sync from the Pi: `curl -sS -X POST "http://localhost:3001/api/metrics/sync"` (expect `"prayersScheduled":5` when the schedule file is current). See [DEPLOYMENT_GUIDE_PI.md](./DEPLOYMENT_GUIDE_PI.md) for full detail.
 
-### 3. Optional: Enable the On-Device AI
-The AI layer is entirely optional — the caster runs fully without it. To enable it, install [Ollama](https://ollama.com/) on the Pi, then build the resource-capped model the system expects by default (`OLLAMA_MODEL=gemma3-constrained`, `OLLAMA_URL` also configurable):
-```bash
-ollama pull gemma3:1b
-ollama create gemma3-constrained -f ./Modelfile   # Modelfile detailed in the whitepaper
-```
-If Ollama is unavailable, every AI endpoint degrades gracefully to a deterministic, computed response. See the [Edge AI Whitepaper](./docs/blog/gemma-ollama-raspberry-pi-adhan.md) for the full Modelfile and rationale.
-
 ---
 
 ## 🌐 REST API
@@ -149,10 +135,6 @@ If Ollama is unavailable, every AI endpoint degrades gracefully to a determinist
 | `GET /health` | Liveness probe + deployed build version / short SHA. |
 | `GET /api/metrics?days=N` | Rolling multi-day playback summary (success rate, latency, streaks). |
 | `GET /api/metrics/today` | Today's playback summary. |
-| `POST /api/ask` | Natural-language status query (Gemma, with computed fallback). |
-| `GET /api/ask/health` | Whether the local Gemma model is reachable. |
-| `GET /api/blurb` | Cached daily dashboard greeting. |
-| `GET /api/advisory` | Latest advisory-only tuning suggestions. |
 | `POST /api/trigger/prayer` | Manually fire a prayer cast (`fajr`…`isha`) — useful for testing. |
 | `POST /api/metrics/sync` | Push today's metrics + schedule to Firestore for the dashboard. |
 
@@ -160,7 +142,7 @@ If Ollama is unavailable, every AI endpoint degrades gracefully to a determinist
 
 ## 🧪 Testing & Quality
 
-A **Jest** suite covers the scheduler, media/hardware services, the Ollama circuit breaker, Firestore sync, and the visual generator.
+A **Jest** suite covers the scheduler, media/hardware services, Firestore sync, and the visual generator.
 
 ```bash
 npm test            # full Jest suite
@@ -188,8 +170,6 @@ npm run qa:sanity                           # config + schedule sanity
 | `media-caster/services/MediaService.js` | Audio cache, Adhan source selection, and fallback mirrors. |
 | `media-caster/services/HardwareService.js` | ADB control of the Android TV (pause/resume, ghost-power detection). |
 | `media-caster/services/DiscoveryService.js` | mDNS discovery of Google Cast / Nest devices. |
-| `media-caster/services/OllamaService.js` | Local Gemma client — circuit breaker, watchdog, and quiet-window guard. |
-| `media-caster/services/AdvisoryAgent.js` | Off-path AI — failure diagnosis, daily blurb, and tuning advisory. |
 | `media-caster/services/PlaybackLogger.js` | Durable event log + rolling metrics (success rate, latency, adaptive lead). |
 | `media-caster/services/FirestoreSync.js` | Pushes metrics + schedule to Firestore for the operations dashboard. |
 | `media-caster/visual_generator.js` | **Rendering engine** — builds HD dashboards and procedural weather via Canvas/FFmpeg. |
@@ -205,7 +185,6 @@ The platform is designed for "Set-and-Forget" reliability:
 | **Stale State Watchdog** | If a device remains `PAUSED` for >3 minutes, the system forces a cleanup to prevent "stuck" states. |
 | **Connection Watchdog** | If a device fails 3 consecutive polls, it is assumed disconnected, and the system attempts a hard reset. |
 | **ADB Retry Logic** | Automatically retries ADB commands once upon detecting `device offline` errors. |
-| **Ollama Circuit Breaker** | Trips after consecutive failures, fails fast during cooldown, and triggers an Ollama restart via watchdog. |
 | **Automated Security** | Weekly `npm audit fix` via GitHub Actions and a local fixer script to maintain dependency hygiene. |
 
 ---
@@ -216,11 +195,58 @@ The platform is designed for "Set-and-Forget" reliability:
 
 ---
 
+## 🪦 Deprecated: On-Device AI Layer (Gemma 3 + Ollama)
+
+> **Status: removed from the runtime.** Ollama was uninstalled from the Raspberry Pi host in August 2026, which made the integration permanently dead code. The implementation (service class, REST endpoints, dashboard assistant card, and scheduled jobs) has been deleted. This section is retained deliberately so the design is not lost and a future re-implementation has a starting point.
+
+**What it was.** A fully on-device LLM — **Gemma 3 (1B)** served by **[Ollama](https://ollama.com/)** on `127.0.0.1:11434` — that answered natural-language questions about the schedule, explained cast failures in plain English, wrote a daily dashboard greeting, and proposed (never applied) env-var tuning. No cloud, no API keys, no data leaving the network.
+
+**The AI fence.** Inference was architecturally forbidden inside each prayer's critical window (5 minutes before → 8 minutes after). A Pi 4 takes ~5–10 s per inference and the cast fires ~2 s before prayer, so every AI code path was gated behind a quiet-window guard and none of it could delay the Adhan.
+
+**Removed modules**
+
+| Module | Responsibility |
+| :--- | :--- |
+| `media-caster/services/OllamaService.js` | Ollama client — single-flight queue, hard timeouts, JSON-fence-stripping parser, health check, quiet-window guard, circuit breaker + watchdog, model warm-up. |
+| `media-caster/services/AdvisoryAgent.js` | Off-path intelligence — failure diagnosis, cached daily blurb, 14-day tuning advisory, persistent `ai-memory.json` / `ai-blurb.json`. |
+| `media-caster/services/aiContext.js` | Deterministic grounding context (next prayer, per-prayer countdowns, today's playback) so the 1B model never invented times. |
+| `media-caster/tests/OllamaService.test.js` | Circuit-breaker, quiet-window, JSON-parse, and grounding-context coverage. |
+
+**Removed endpoints**
+
+| Method & Path | Purpose |
+| :--- | :--- |
+| `POST /api/ask` | Natural-language status query (Gemma, with a computed deterministic fallback so it never hard-failed). |
+| `GET /api/ask/health` | Whether the local model was reachable; the dashboard used it to reveal the assistant card. |
+| `GET /api/blurb` | Cached daily dashboard greeting. |
+| `GET /api/advisory` | Latest advisory-only tuning suggestions. |
+
+**Removed dashboard UI.** `dashboard.html` carried an `#ai-assistant-card` (blurb, question input, answer pane) that stayed hidden unless `/api/ask/health` reported the daemon reachable, plus an API-base resolver (`?api=` query param, remembered in `localStorage` under `adhanApiBase`) for reaching the Pi over a VPN.
+
+**Environment variables (no longer read)**
+
+| Variable | Default | Purpose |
+| :--- | :--- | :--- |
+| `OLLAMA_URL` | `http://127.0.0.1:11434` | Base URL of the local Ollama daemon. |
+| `OLLAMA_MODEL` | `gemma3-constrained` | Resource-capped model built from a `Modelfile` on top of `gemma3:1b`. |
+| `OLLAMA_RESTART_CMD` | `sudo systemctl restart ollama` (Linux) | Watchdog restart command issued when the circuit breaker tripped. |
+
+**To re-enable it in future**, install Ollama on the Pi and rebuild the resource-capped model, then restore the modules above:
+
+```bash
+ollama pull gemma3:1b
+ollama create gemma3-constrained -f ./Modelfile   # Modelfile detailed in the whitepaper
+```
+
+The full rationale, Modelfile, prompts, and benchmark numbers live in the [Edge AI Whitepaper](./docs/blog/gemma-ollama-raspberry-pi-adhan.md).
+
+---
+
 ## 📚 Documentation
 
 - [DEPLOYMENT_GUIDE_PI.md](./DEPLOYMENT_GUIDE_PI.md) — Comprehensive Raspberry Pi setup guide.
 - [PROJECT_PLAN.md](./PROJECT_PLAN.md) — Original design, architecture evolution, and what's been retired.
-- [Edge AI Whitepaper: Gemma 3 + Ollama](./docs/blog/gemma-ollama-raspberry-pi-adhan.md) — Deep dive into the on-device AI layer.
+- [Edge AI Whitepaper: Gemma 3 + Ollama](./docs/blog/gemma-ollama-raspberry-pi-adhan.md) — Deep dive into the on-device AI layer (**historical** — the layer is [deprecated](#-deprecated-on-device-ai-layer-gemma-3--ollama)).
 - [architecture.html](./architecture.html) — Interactive, animated architecture · system design · prayer-cast workflow ([live ↗](https://bilalahamad0.github.io/adhan-api/architecture.html)).
 
 ---
