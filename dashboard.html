@@ -35,7 +35,7 @@
             --border-hover: rgba(255,255,255,0.15);
             --text: #f1f5f9;
             --text-dim: #94a3b8;
-            --text-muted: #64748b;
+            --text-muted: #8b98ad;
             --accent-blue: #38bdf8;
             --accent-green: #4ade80;
             --accent-red: #f87171;
@@ -58,7 +58,7 @@
         /* Cards */
         .card { background:var(--bg-card); border:1px solid var(--border); border-radius:1rem; padding:1.25rem; transition:all 0.25s; }
         .card:hover { border-color:var(--border-hover); background:var(--bg-card-hover); }
-        .card-title { font-size:0.7rem; text-transform:uppercase; letter-spacing:0.06em; color:var(--text-dim); margin-bottom:0.75rem; font-weight:600; }
+        .card-title { font-size:0.7rem; text-transform:uppercase; letter-spacing:0.06em; color:var(--text-dim); margin:0 0 0.75rem; font-weight:600; }
 
         /* Header */
         .header { display:flex; justify-content:space-between; align-items:center; margin-bottom:1.5rem; flex-wrap:wrap; gap:1rem; }
@@ -115,7 +115,7 @@
         .cal-month-label { font-size:0.85rem; font-weight:600; }
         .cal-grid { display:grid; grid-template-columns:repeat(7,1fr); gap:3px; }
         .cal-header { font-size:0.6rem; color:var(--text-muted); text-align:center; padding:0.2rem 0; font-weight:600; }
-        .cal-day { aspect-ratio:1; border-radius:4px; display:flex; align-items:center; justify-content:center; font-size:0.65rem; font-weight:500; position:relative; cursor:default; }
+        .cal-day { background:none; border:none; font:inherit; color:inherit; padding:0; aspect-ratio:1; border-radius:4px; display:flex; align-items:center; justify-content:center; font-size:0.65rem; font-weight:500; position:relative; cursor:pointer; }
         .cal-day.empty { background:none; }
         .cal-day.full { background:rgba(74,222,128,0.25); color:var(--accent-green); }
         .cal-day.partial { background:rgba(251,191,36,0.2); color:var(--accent-yellow); }
@@ -145,7 +145,7 @@
 
         /* System Health */
         .health-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:1rem; }
-        .health-item h4 { font-size:0.7rem; color:var(--text-muted); margin-bottom:0.2rem; text-transform:uppercase; letter-spacing:0.04em; }
+        .health-item h3 { font-size:0.7rem; color:var(--text-muted); margin-bottom:0.2rem; text-transform:uppercase; letter-spacing:0.04em; }
         .health-item p { font-size:0.9rem; font-weight:600; }
 
         /* Dev Tab (legacy) */
@@ -204,7 +204,7 @@
     </style>
 </head>
 <body>
-<div class="shell">
+<main class="shell">
     <!-- Header -->
     <div class="header">
         <div>
@@ -216,7 +216,7 @@
                 <div style="font-size:0.85rem;font-weight:600" id="gregorian-date"></div>
                 <div style="font-size:0.7rem;color:var(--text-dim)" id="hijri-date"></div>
             </div>
-            <div id="status-indicator" class="status-pill online">
+            <div id="status-indicator" class="status-pill online" aria-live="polite">
                 <div class="pulse-dot green"></div>
                 <span>CONNECTING</span>
             </div>
@@ -224,13 +224,13 @@
     </div>
 
     <!-- Tabs -->
-    <div class="tab-bar">
-        <button class="tab-btn active" data-tab="ops">Operations</button>
-        <button class="tab-btn" data-tab="dev">Development</button>
+    <div class="tab-bar" role="tablist" aria-label="Dashboard sections">
+        <button class="tab-btn active" data-tab="ops" id="tabbtn-ops" role="tab" aria-selected="true" aria-controls="tab-ops">Operations</button>
+        <button class="tab-btn" data-tab="dev" id="tabbtn-dev" role="tab" aria-selected="false" aria-controls="tab-dev">Development</button>
     </div>
 
     <!-- ===================== OPERATIONS TAB ===================== -->
-    <div id="tab-ops" class="tab-panel active">
+    <div id="tab-ops" class="tab-panel active" role="tabpanel" tabindex="0" aria-labelledby="tabbtn-ops">
 
         <!-- Build Failure Banner (hidden unless lastFailure.ts > currentDeployedAt) -->
         <div id="build-banner" style="display:none;margin-bottom:1rem;padding:0.75rem 1rem;border-radius:8px;background:rgba(245,158,11,0.12);border:1px solid var(--accent-yellow,#f59e0b);color:var(--accent-yellow,#f59e0b);font-size:0.85rem;line-height:1.4">
@@ -239,7 +239,7 @@
 
         <!-- Today's Prayer Status -->
             <div class="card" style="margin-bottom:1.5rem">
-            <div class="card-title" id="prayer-status-title">Today's Prayer Status</div>
+            <h2 class="card-title" id="prayer-status-title">Today's Prayer Status</h2>
             <div class="prayer-grid" id="prayer-grid">
                 <div class="loading">Loading prayer data...</div>
             </div>
@@ -272,10 +272,10 @@
              Same-origin when served from the Pi; over a VPN, set a base URL via
              localStorage 'adhanApiBase' or the ?api= query param. -->
         <div class="card" id="ai-assistant-card" style="display:none; margin-bottom:1.5rem">
-            <div class="card-title">Assistant <span style="font-size:0.6rem;color:var(--text-muted);font-weight:500">· local Gemma</span></div>
+            <h2 class="card-title">Assistant <span style="font-size:0.6rem;color:var(--text-muted);font-weight:500">· local Gemma</span></h2>
             <div id="ai-blurb" style="font-size:0.8rem;color:var(--text-dim);margin-bottom:0.75rem;line-height:1.5"></div>
             <div style="display:flex;gap:0.5rem">
-                <input id="ai-input" type="text" maxlength="500" placeholder="Ask about today's prayers, e.g. how long until Maghrib?"
+                <input id="ai-input" type="text" maxlength="500" aria-label="Ask the local assistant about today's prayers" placeholder="Ask about today's prayers, e.g. how long until Maghrib?"
                     style="flex:1;padding:0.6rem 0.75rem;border-radius:8px;border:1px solid var(--border);background:var(--bg,#0b0e14);color:var(--text);font-size:0.85rem" />
                 <button id="ai-send" style="padding:0.6rem 1.1rem;border-radius:8px;border:none;background:var(--accent-blue);color:#fff;font-weight:600;font-size:0.85rem;cursor:pointer">Ask</button>
             </div>
@@ -285,24 +285,24 @@
         <!-- KPI Row -->
         <div class="kpi-row" id="kpi-row">
             <div class="card">
-                <div class="card-title">Success Rate</div>
+                <h2 class="card-title">Success Rate</h2>
                 <div class="kpi-value" id="kpi-success" style="color:var(--accent-green)">--</div>
                 <div class="kpi-sub">Played + Recovered</div>
                 <div class="kpi-trend neutral" id="kpi-success-trend">--</div>
             </div>
             <div class="card">
-                <div class="card-title">Streak</div>
+                <h2 class="card-title">Streak</h2>
                 <div class="kpi-value" id="kpi-streak" style="color:var(--accent-orange)">--</div>
                 <div class="kpi-sub">Consecutive perfect days</div>
             </div>
             <div class="card">
-                <div class="card-title">Avg Latency</div>
+                <h2 class="card-title">Avg Latency</h2>
                 <div class="kpi-value" id="kpi-latency" style="color:var(--accent-blue)">--</div>
                 <div class="kpi-sub">Trigger to playback</div>
                 <div class="kpi-trend neutral" id="kpi-latency-trend">--</div>
             </div>
             <div class="card" title="Recovery rate = prayers with status RECOVERED (audit thought playback failed and a replay was attempted). Yellow Fallback on a row means a pre-built video was used because encoding was slow or the clip was too short; that still counts as PLAYED, not recovered.">
-                <div class="card-title">Recovery Rate</div>
+                <h2 class="card-title">Recovery Rate</h2>
                 <div class="kpi-value" id="kpi-recovery" style="color:var(--accent-yellow)">--</div>
                 <div class="kpi-sub" id="kpi-recovery-sub">Audit replay wins (not encode fallback)</div>
             </div>
@@ -311,17 +311,17 @@
         <!-- Chart + Calendar Row -->
         <div class="chart-section">
             <div class="card chart-card">
-                <div class="card-title">7-Day Trend</div>
+                <h2 class="card-title">7-Day Trend</h2>
                 <div class="chart-sub">Daily success rate (played + recovered). Latency is in KPIs above.</div>
                 <svg class="chart-area" id="trend-chart" viewBox="0 0 500 260" preserveAspectRatio="xMidYMid meet"></svg>
             </div>
             <div class="card cal-card">
-                <div class="card-title">Monthly Heatmap</div>
+                <h2 class="card-title">Monthly Heatmap</h2>
                 <div class="cal-nav">
-                    <button id="cal-prev">&larr;</button>
+                    <button id="cal-prev" aria-label="Previous month">&larr;</button>
                     <span class="cal-month-label" id="cal-month-label"></span>
                     <button id="cal-today">Today</button>
-                    <button id="cal-next">&rarr;</button>
+                    <button id="cal-next" aria-label="Next month">&rarr;</button>
                 </div>
                 <div class="cal-grid" id="cal-grid"></div>
             </div>
@@ -329,14 +329,14 @@
 
         <!-- Latency Profiling Chart -->
         <div class="card" style="margin-bottom:1.5rem">
-            <div class="card-title">Latency Profiling</div>
+            <h2 class="card-title">Latency Profiling</h2>
             <div class="chart-sub">Cumulative trigger-to-playback latency by percentile (all events)</div>
             <svg class="chart-area" id="latency-chart" viewBox="0 0 1000 260" preserveAspectRatio="xMidYMid meet" style="width:100%;height:auto;max-height:300px;"></svg>
         </div>
 
         <!-- Recent Events -->
         <div class="card" style="margin-bottom:1.5rem">
-            <div class="card-title" id="events-title">Recent Playback Events</div>
+            <h2 class="card-title" id="events-title">Recent Playback Events</h2>
             <div class="events-log" id="events-log">
                 <div class="loading">Loading events...</div>
             </div>
@@ -344,14 +344,14 @@
 
         <!-- System Health -->
         <div class="card">
-            <div class="card-title">System Health</div>
+            <h2 class="card-title">System Health</h2>
             <div class="health-grid" id="health-grid">
-                <div class="health-item"><h4>Total Prayers Tracked</h4><p id="h-total">--</p></div>
-                <div class="health-item"><h4>Overall Uptime</h4><p id="h-uptime" style="color:var(--accent-green)">--</p></div>
-                <div class="health-item"><h4>Data Since</h4><p id="h-since">--</p></div>
-                <div class="health-item"><h4>Avg Encoding</h4><p id="h-encoding">--</p></div>
-                <div class="health-item"><h4>Avg Discovery</h4><p id="h-discovery">--</p></div>
-                <div class="health-item"><h4>Last Upload</h4><p id="h-last-upload" style="font-size:0.7rem;font-weight:400">--</p></div>
+                <div class="health-item"><h3>Total Prayers Tracked</h3><p id="h-total">--</p></div>
+                <div class="health-item"><h3>Overall Uptime</h3><p id="h-uptime" style="color:var(--accent-green)">--</p></div>
+                <div class="health-item"><h3>Data Since</h3><p id="h-since">--</p></div>
+                <div class="health-item"><h3>Avg Encoding</h3><p id="h-encoding">--</p></div>
+                <div class="health-item"><h3>Avg Discovery</h3><p id="h-discovery">--</p></div>
+                <div class="health-item"><h3>Last Upload</h3><p id="h-last-upload" style="font-size:0.7rem;font-weight:400">--</p></div>
             </div>
         </div>
 
@@ -359,10 +359,10 @@
     </div>
 
     <!-- ===================== DEVELOPMENT TAB ===================== -->
-    <div id="tab-dev" class="tab-panel">
+    <div id="tab-dev" class="tab-panel" role="tabpanel" tabindex="0" aria-labelledby="tabbtn-dev">
         <div class="dev-grid">
             <div class="card">
-                <div class="card-title">AI Efficiency Index</div>
+                <h2 class="card-title">AI Efficiency Index</h2>
                 <div style="display:flex;justify-content:space-between;align-items:flex-end">
                     <div>
                         <span class="kpi-value">10h</span>
@@ -378,7 +378,7 @@
                 <div class="kpi-sub">Saved 80 hours of specialized IoT engineering</div>
             </div>
             <div class="card" style="text-align:center">
-                <div class="card-title">Scheduling Logic Coverage</div>
+                <h2 class="card-title">Scheduling Logic Coverage</h2>
                 <div class="gauge-container">
                     <svg class="gauge-svg" viewBox="0 0 100 100">
                         <circle class="gauge-bg" cx="50" cy="50" r="45"></circle>
@@ -399,29 +399,29 @@
         <!-- Project Scale -->
         <div class="kpi-row" style="margin-bottom:1.5rem">
             <div class="card">
-                <div class="card-title">Total Commits</div>
+                <h2 class="card-title">Total Commits</h2>
                 <div class="kpi-value" style="color:var(--accent-blue)" id="dev-commits">182</div>
                 <div class="kpi-sub">Since Feb 2025</div>
             </div>
             <div class="card">
-                <div class="card-title">Codebase</div>
+                <h2 class="card-title">Codebase</h2>
                 <div class="kpi-value" style="color:var(--accent-purple)" id="dev-loc">8.1k</div>
                 <div class="kpi-sub">Lines of JavaScript</div>
             </div>
             <div class="card">
-                <div class="card-title">Microservices</div>
+                <h2 class="card-title">Microservices</h2>
                 <div class="kpi-value" style="color:var(--accent-orange)" id="dev-services">10</div>
                 <div class="kpi-sub">Service Architecture</div>
             </div>
             <div class="card">
-                <div class="card-title">Tests</div>
+                <h2 class="card-title">Tests</h2>
                 <div class="kpi-value" style="color:var(--accent-green)" id="dev-tests">54</div>
                 <div class="kpi-sub">Across 12 suites · 100% pass</div>
             </div>
         </div>
 
         <div class="card" style="margin-bottom:1.5rem">
-            <div class="card-title">AI Agents</div>
+            <h2 class="card-title">AI Agents</h2>
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem">
                 <div class="card" style="border-color:rgba(56,189,248,0.2)">
                     <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.5rem">
@@ -450,14 +450,14 @@
             </div>
         </div>
         <div class="card">
-            <div class="card-title">System Health</div>
+            <h2 class="card-title">System Health</h2>
             <div class="health-grid">
-                <div class="health-item"><h4>Model Mix</h4><p id="model-mix" style="font-size:0.8rem">Gemini 2.5 Flash/Pro + Claude Sonnet 4/Opus 4.6</p></div>
-                <div class="health-item"><h4>Total Tokens</h4><p id="token-count">500k+</p></div>
-                <div class="health-item"><h4>Stability Index</h4><p style="color:var(--accent-green)">99.9% Uptime</p></div>
-                <div class="health-item"><h4>Watchdogs Active</h4><p>3 Multi-tier</p></div>
-                <div class="health-item"><h4>Services</h4><p>10 Microservices</p></div>
-                <div class="health-item"><h4>Last Sync</h4><p id="last-sync" style="font-size:0.7rem;font-weight:400">--</p></div>
+                <div class="health-item"><h3>Model Mix</h3><p id="model-mix" style="font-size:0.8rem">Gemini 2.5 Flash/Pro + Claude Sonnet 4/Opus 4.6</p></div>
+                <div class="health-item"><h3>Total Tokens</h3><p id="token-count">500k+</p></div>
+                <div class="health-item"><h3>Stability Index</h3><p style="color:var(--accent-green)">99.9% Uptime</p></div>
+                <div class="health-item"><h3>Watchdogs Active</h3><p>3 Multi-tier</p></div>
+                <div class="health-item"><h3>Services</h3><p>10 Microservices</p></div>
+                <div class="health-item"><h3>Last Sync</h3><p id="last-sync" style="font-size:0.7rem;font-weight:400">--</p></div>
             </div>
         </div>
 
@@ -465,7 +465,7 @@
             Development metrics updated: Apr 27, 2026 · 173 commits · 7.8k LOC · 54 tests (12 suites, 100% pass)
         </div>
     </div>
-</div>
+</main>
 
 <!-- Firebase SDK (compat): loaded first but only used if available -->
 <script src="https://www.gstatic.com/firebasejs/11.7.1/firebase-app-compat.js"></script>
@@ -498,9 +498,9 @@ function firestoreDateToYyyyMmDd(val) {
 // --- Tab Switching ---
 document.querySelectorAll('.tab-btn').forEach(btn => {
     btn.addEventListener('click', () => {
-        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.tab-btn').forEach(b => { b.classList.remove('active'); b.setAttribute('aria-selected','false'); });
         document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
-        btn.classList.add('active');
+        btn.classList.add('active'); btn.setAttribute('aria-selected','true');
         document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
     });
 });
@@ -866,7 +866,7 @@ function renderPrayerGrid() {
             <div class="prayer-cell">
                 <div class="prayer-name">${p}</div>
                 <div class="prayer-time" style="color:${timeColor}">${timeDisp}</div>
-                <div class="prayer-status-icon pending">&#9711;</div>
+                <div aria-hidden="true" class="prayer-status-icon pending">&#9711;</div>
                 <div class="prayer-detail">${detail}</div>
             </div>`;
         }).join('');
@@ -882,7 +882,7 @@ function renderPrayerGrid() {
             <div class="prayer-cell">
                 <div class="prayer-name">${p}</div>
                 <div class="prayer-time" style="color:${timeColor}">${timeDisp}</div>
-                <div class="prayer-status-icon pending">&#9711;</div>
+                <div aria-hidden="true" class="prayer-status-icon pending">&#9711;</div>
                 <div class="prayer-detail">${timeStr ? 'Pending' : 'No data'}</div>
             </div>`;
         const st = (d.status || 'PENDING').toUpperCase();
@@ -909,7 +909,7 @@ function renderPrayerGrid() {
             <div class="prayer-cell">
                 <div class="prayer-name">${p}</div>
                 <div class="prayer-time" style="color:${timeColor}">${timeDisp}</div>
-                <div class="prayer-status-icon ${cls}">${icon}</div>
+                <div aria-hidden="true" class="prayer-status-icon ${cls}">${icon}</div>
                 ${pendingDetail ? '<div class="prayer-detail">' + pendingDetail + '</div>' : ''}
                 ${breakdownLine}
                 ${d.usedFallback ? '<div class="prayer-detail" style="color:var(--accent-yellow)">Fallback video (encode)</div>' : ''}
@@ -990,7 +990,7 @@ function renderTrendChart() {
     const todayStr = localDateStr(new Date());
     const ds = metricsData.dailyStats.filter(d => d.label <= todayStr).slice(-7);
     if (ds.length === 0) {
-        svg.innerHTML = '<text x="250" y="95" text-anchor="middle" fill="#64748b" font-size="12">No data</text>';
+        svg.innerHTML = '<text x="250" y="95" text-anchor="middle" fill="var(--text-muted)" font-size="12">No data</text>';
         return;
     }
 
@@ -1011,7 +1011,7 @@ function renderTrendChart() {
         const y = PAD_T + (chartH / 4) * i;
         html += `<line x1="${PAD_L}" y1="${y}" x2="${W - PAD_R}" y2="${y}" class="chart-gridline"/>`;
         const pctLabel = 100 - i * 25;
-        html += `<text x="${PAD_L - 6}" y="${y + 3}" font-size="8" fill="#64748b" text-anchor="end">${pctLabel}%</text>`;
+        html += `<text x="${PAD_L - 6}" y="${y + 3}" font-size="10" fill="var(--text-muted)" text-anchor="end">${pctLabel}%</text>`;
     }
 
     ds.forEach(function (d, i) {
@@ -1042,7 +1042,7 @@ function renderLatencyChart() {
     lats.sort((a, b) => a - b);
 
     if (lats.length === 0) {
-        svg.innerHTML = '<text x="500" y="130" text-anchor="middle" fill="#64748b" font-size="12">No latency data</text>';
+        svg.innerHTML = '<text x="500" y="130" text-anchor="middle" fill="var(--text-muted)" font-size="12">No latency data</text>';
         return;
     }
 
@@ -1078,7 +1078,7 @@ function renderLatencyChart() {
         const y = PAD_T + (chartH / 4) * i;
         html += `<line x1="${PAD_L}" y1="${y}" x2="${W - PAD_R}" y2="${y}" class="chart-gridline"/>`;
         const val = maxY - (maxY / 4) * i;
-        html += `<text x="${PAD_L - 8}" y="${y + 3}" font-size="10" fill="#64748b" text-anchor="end">${fmt(val)}</text>`;
+        html += `<text x="${PAD_L - 8}" y="${y + 3}" font-size="10" fill="var(--text-muted)" text-anchor="end">${fmt(val)}</text>`;
     }
 
     // Percentile (x) axis labels
@@ -1153,7 +1153,7 @@ function renderCalendar() {
             else if (sc > 0) { cls = 'partial'; tip = sc + '/' + st.total + ' played, ' + (st.failed || 0) + ' failed'; }
             else { cls = 'miss'; tip = '0/' + st.total + ' -- all failed'; }
         }
-        html += `<div class="cal-day ${cls}${isToday ? ' today' : ''}${isSelected ? ' selected' : ''}" data-date="${dateStr}">${d}<div class="cal-tooltip">${dateStr}: ${tip}</div></div>`;
+        html += `<button type="button" class="cal-day ${cls}${isToday ? ' today' : ''}${isSelected ? ' selected' : ''}" data-date="${dateStr}" aria-pressed="${isSelected}" aria-label="${dateStr}: ${tip}">${d}<span class="cal-tooltip" aria-hidden="true">${dateStr}: ${tip}</span></button>`;
     }
 
     grid.innerHTML = html;
