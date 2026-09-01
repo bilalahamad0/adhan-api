@@ -140,6 +140,37 @@ Then, if you rely on the [Operations Dashboard](https://bilalahamad0.github.io/a
 
 ---
 
+## ☁️ Vercel Build Skipping
+
+Vercel builds only the two `@vercel/node` entrypoints declared in `vercel.json`
+(`api/prayerTimes.js`, `api/project-status.js`). Everything else in this repo —
+the Pi service under `media-caster/`, the docs, and the `dashboard.html` /
+`architecture.html` pages, which are served by **GitHub Pages, not Vercel** —
+is irrelevant to that build.
+
+`vercel.json` therefore points `ignoreCommand` at
+[`scripts/vercel-ignore.sh`](scripts/vercel-ignore.sh), which cancels the
+deployment when a push changes nothing deployable. This conserves the
+account-wide daily deployment quota.
+
+**The script fails open**: any case it cannot decide — a shallow clone with no
+usable base, a first deploy on a new branch, a manual redeploy, a git error —
+results in a build. A wasted build costs a quota slot that resets daily; a
+silently skipped API deploy does not announce itself.
+
+Two consequences worth knowing:
+
+- The base commit is `VERCEL_GIT_PREVIOUS_SHA`, never `HEAD^`. Comparing
+  against `HEAD^` would cancel an `api/` fix pushed in the same batch as a docs
+  commit, with a green "canceled" badge and no alert.
+- `scripts/` is itself on the ignore list, so editing the ignore script does not
+  trigger a build. That is deliberate — it is build-control, not deployed code.
+
+Exit codes follow Vercel's convention, which is inverted from shell intuition:
+**`exit 0` cancels the build, `exit 1` proceeds.**
+
+---
+
 ## 🧪 Testing & Quality
 
 A **Jest** suite covers the scheduler, media/hardware services, Firestore sync, and the visual generator.
