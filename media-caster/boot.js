@@ -6,9 +6,6 @@ const HardwareService = require('./services/HardwareService');
 const PlaybackLogger = require('./services/PlaybackLogger');
 const FirestoreSync = require('./services/FirestoreSync');
 const PushNotifier = require('./services/PushNotifier');
-const OllamaService = require('./services/OllamaService');
-const AdvisoryAgent = require('./services/AdvisoryAgent');
-const aiContext = require('./services/aiContext');
 require('dotenv').config({ path: require('path').join(__dirname, '.env') });
 
 // --- CRASH DIAGNOSTICS (Production Stability) ---
@@ -121,29 +118,6 @@ const scheduler = new CoreScheduler(
   pushNotifier
 );
 
-// Local LLM (Gemma via Ollama) — strictly off the real-time cast path.
-const annualSchedulePath = path.join(__dirname, 'annual_schedule.json');
-const ollama = new OllamaService({
-  scheduleFilePath: annualSchedulePath,
-  timezone: CONFIG.timezone,
-});
-const advisory = new AdvisoryAgent({
-  ollama,
-  playbackLogger,
-  dataDir: playbackDataDir,
-  timezone: CONFIG.timezone,
-  scheduleFilePath: annualSchedulePath,
-});
-
-// Deterministic answer used whenever Gemma is offline/slow, so /api/ask never
-// hard-fails — it always returns at least the next-prayer countdown.
-function deterministicAnswer() {
-  const next = aiContext.getNextPrayer(annualSchedulePath, CONFIG.timezone);
-  if (!next) return 'I could not read the prayer schedule right now.';
-  const rel = aiContext.humanizeMinutes(next.minutesUntil);
-  return `The next prayer is ${next.prayer} at ${next.time}${next.tomorrow ? ' (tomorrow)' : ''}, in ${rel}. (AI assistant offline — showing computed status.)`;
-}
-
 async function bootSystem() {
   console.log('🚀 Booting Adhan System...');
   
@@ -196,63 +170,6 @@ async function bootSystem() {
     } catch (e) {
       res.status(500).json({ error: e.message });
     }
-  });
-
-  // --- Local AI (Gemma) endpoints — all off the real-time cast path ---
-
-  // Health probe; the dashboard uses it to decide whether to reveal the chat box.
-  app.get('/api/ask/health', async (req, res) => {
-    const available = await ollama.isAvailable();
-    res.status(200).json({ available });
-  });
-
-  // Natural-language status query. Read-only: builds context from the schedule +
-  // playback log and asks Gemma; falls back to a computed answer if Gemma is down.
-  app.post('/api/ask', async (req, res) => {
-    const startedAt = Date.now();
-    try {
-      const question = String(req.body?.question || '').trim();
-      if (!question) {
-        res.status(400).json({ error: 'question is required' });
-        return;
-      }
-      if (question.length > 500) {
-        res.status(400).json({ error: 'question too long (max 500 chars)' });
-        return;
-      }
-
-      const context = aiContext.buildStatusContext(annualSchedulePath, CONFIG.timezone, playbackLogger);
-      if (!(await ollama.isAvailable(1500))) {
-        res.status(200).json({ answer: deterministicAnswer(), source: 'fallback', latencyMs: Date.now() - startedAt });
-        return;
-      }
-
-      const sys =
-        'You are the assistant for a home Adhan (Islamic prayer) caster. Answer the user\'s question in 1-3 short ' +
-        'sentences using ONLY the system status below. ' +
-        'To answer how long until a specific prayer, read that prayer\'s value verbatim from the ' +
-        '"Time until each prayer" line — never reuse the "Next prayer" countdown for a different prayer, ' +
-        'and never compute or invent times yourself. ' +
-        'If the question is unrelated to prayer times or this system, politely say you can only help with Adhan/prayer status.';
-      const answer = await ollama.ask(sys, `SYSTEM STATUS:\n${context}\n\nQUESTION: ${question}`);
-      if (!answer) {
-        res.status(200).json({ answer: deterministicAnswer(), source: 'fallback', latencyMs: Date.now() - startedAt });
-        return;
-      }
-      res.status(200).json({ answer, source: 'gemma', latencyMs: Date.now() - startedAt });
-    } catch (e) {
-      res.status(500).json({ error: e.message });
-    }
-  });
-
-  // Cached daily blurb for the dashboard header.
-  app.get('/api/blurb', (req, res) => {
-    res.status(200).json({ text: advisory.getBlurb() });
-  });
-
-  // Latest advisory-only tuning notes (suggestions are never auto-applied).
-  app.get('/api/advisory', (req, res) => {
-    res.status(200).json(advisory.getLatestAdvisory() || {});
   });
 
   app.post('/api/trigger/prayer', async (req, res) => {
@@ -659,9 +576,6 @@ async function bootSystem() {
 
   // 3. Initiate Scheduler Flow
   console.log('⏳ Awaiting schedules...');
-  // Pre-load the Gemma model into Ollama's memory while we wait, so the first
-  // dashboard query gets the fast (~4s) warm path instead of a ~28s cold-load.
-  ollama.warmup();
   await new Promise(r => setTimeout(r, 5000));
 
   async function refreshScheduleAndPublishFirestore() {
@@ -739,42 +653,6 @@ async function bootSystem() {
     origFinalize(key);
     setTimeout(() => firestoreSync.syncNow(playbackLogger), 5000);
   };
-
-  // Queue failures for off-critical-path AI diagnosis. The original recordFailed
-  // (including its Firestore-synced finalize) runs first; enqueue never throws.
-  const origRecordFailed = playbackLogger.recordFailed.bind(playbackLogger);
-  playbackLogger.recordFailed = function (prayer, reason) {
-    origRecordFailed(prayer, reason);
-    try {
-      const date = DateTime.now().setZone(CONFIG.timezone).toISODate();
-      advisory.enqueueFailure(date, prayer, reason);
-    } catch { /* advisory must never break logging */ }
-  };
-
-  // AI advisory jobs — all quiet-window gated inside AdvisoryAgent; none run
-  // within a prayer's critical window, and none touch the live cast path.
-  schedule.scheduleJob('*/20 * * * *', () =>
-    advisory.drainFailures().catch((e) => console.error('[ai] drainFailures failed:', e.message)));
-
-  const blurbRule = new schedule.RecurrenceRule();
-  blurbRule.hour = 5;
-  blurbRule.minute = 30;
-  blurbRule.tz = CONFIG.timezone;
-  schedule.scheduleJob(blurbRule, () =>
-    advisory.generateDailyBlurb().catch((e) => console.error('[ai] daily blurb failed:', e.message)));
-
-  const tuningRule = new schedule.RecurrenceRule();
-  tuningRule.hour = 3;
-  tuningRule.minute = 15;
-  tuningRule.tz = CONFIG.timezone;
-  schedule.scheduleJob(tuningRule, () =>
-    advisory.runTuningAdvisory().catch((e) => console.error('[ai] tuning advisory failed:', e.message)));
-
-  // Best-effort blurb shortly after boot so the dashboard has something today
-  // (skipped automatically if booting inside a prayer window or Ollama is down).
-  setTimeout(() => {
-    advisory.generateDailyBlurb().catch((e) => console.error('[ai] boot blurb failed:', e.message));
-  }, 30000);
 
   // SYSTEM TEST MODE (hermetic): schedule resolve → image gen → audio probe
   // → encode to a temp file. Never calls device.play(). Auto-updater uses

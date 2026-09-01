@@ -437,7 +437,7 @@
     <p class="tagline">An <b>edge-AI IoT orchestration engine</b> on a Raspberry&nbsp;Pi&nbsp;4 — precision prayer-audio casting, ADB device choreography, and a fully on-device LLM that never touches the real-time path.</p>
     <div class="chips">
       <span class="chip"><b>Node.js 18+</b> · Express 5</span>
-      <span class="chip"><b>Gemma 3 (1B)</b> · Ollama</span>
+      <span class="chip"><b>Gemma 3 (1B)</b> · Ollama <i>(retired)</i></span>
       <span class="chip"><b>Google Cast</b> · mDNS/castv2</span>
       <span class="chip"><b>ADB</b> · Sony Android TV</span>
       <span class="chip"><b>FFmpeg</b> · Canvas</span>
@@ -547,6 +547,7 @@
             <svg class="ic" viewBox="0 0 24 24" width="16" height="16" fill="var(--violet)"><path d="M12 2a2 2 0 012 2v1h3a3 3 0 013 3v3h1a2 2 0 010 4h-1v3a3 3 0 01-3 3H7a3 3 0 01-3-3v-3H3a2 2 0 010-4h1V8a3 3 0 013-3h3V4a2 2 0 012-2zM9 11a1.5 1.5 0 100 3 1.5 1.5 0 000-3zm6 0a1.5 1.5 0 100 3 1.5 1.5 0 000-3z"/></svg>
             On-Device AI Layer (local-first, no cloud, no API keys)
             <span class="fence-pill">⛔ fenced off the cast path</span>
+            <span class="fence-pill">🪦 deprecated — removed Aug 2026</span>
           </div>
           <div class="cards c3">
             <div class="card">
@@ -849,6 +850,7 @@
     <div class="view-head">
       <h2>The AI Fence — keeping Gemma off the real-time path</h2>
       <p>The on-device LLM is powerful but a Pi 4 inference can take seconds. The architecture <b>forbids</b> any AI work inside each prayer's critical window, so the Adhan always fires on time — no matter what the model is doing.</p>
+      <p><b>Deprecated:</b> Ollama was retired from the Pi host in August 2026 and this layer has been removed from the runtime. The design below is kept as a record and a starting point for any future re-implementation.</p>
     </div>
 
     <div class="fence-grid">

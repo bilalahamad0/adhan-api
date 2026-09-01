@@ -10,6 +10,8 @@ canonical: "https://bilalahamad.com/blog/gemma-ollama-raspberry-pi-adhan"
 hero: "/images/blog/adhan/architecture.png"
 ---
 
+> **Update (August 2026) — this layer has been retired.** Ollama was uninstalled from the Raspberry Pi host, and the integration described below (the `OllamaService` client, the `/api/ask` endpoints, the dashboard assistant card, and the advisory jobs) has since been removed from the `adhan-api` codebase. The article is kept as-is: it documents the design, the AI fence, and the trade-offs, and is the reference for any future re-implementation.
+
 > **Related project:** [Adhan Caster](https://bilalahamad.com/projects#adhan) — a self-hosted, zero-latency Islamic prayer automation system running on a Raspberry Pi 4.
 
 ## TL;DR
