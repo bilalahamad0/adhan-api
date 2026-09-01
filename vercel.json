@@ -1,5 +1,6 @@
 {
   "version": 2,
+  "ignoreCommand": "bash scripts/vercel-ignore.sh",
   "builds": [
     {
       "src": "api/prayerTimes.js",
