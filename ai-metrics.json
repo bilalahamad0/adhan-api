@@ -1,23 +1,24 @@
 {
   "projectId": "adhan",
-  "lastUpdated": "2026-09-06",
+  "lastUpdated": "2026-09-08",
   "aiContribution": 92,
   "agents": [
     {
       "name": "Antigravity",
       "provider": "Google DeepMind",
-      "period": "Feb – Apr 2026",
+      "period": "Feb \u2013 Apr 2026, May 2026",
       "models": [
         "Gemini 2.5 Flash",
-        "Gemini 2.5 Pro"
+        "Gemini 2.5 Pro",
+        "Gemini 3 Flash"
       ],
-      "tokens": 255000,
-      "role": "v1–v2 architecture"
+      "tokens": 1306992,
+      "role": "v1\u2013v2 architecture & edge automation"
     },
     {
       "name": "Cursor",
       "provider": "Anthropic",
-      "period": "Apr 2026 – Present",
+      "period": "Apr 2026 \u2013 Present",
       "models": [
         "Claude Sonnet 4",
         "Claude Opus 4.6"
@@ -28,7 +29,7 @@
     {
       "name": "Claude Code",
       "provider": "Anthropic",
-      "period": "May 2026 – Present",
+      "period": "May 2026 \u2013 Present",
       "models": [
         "Claude Opus 4.8",
         "Claude Opus 4.7",
@@ -38,12 +39,12 @@
       "role": "Edge-AI assistant tuning & Chrome extension build"
     }
   ],
-  "totalTokens": 439427981,
+  "totalTokens": 440479973,
   "totalCommits": 295,
   "linesOfCode": 12948,
   "devCycleDays": 56,
   "manualEstimateDays": 168,
-  "impact": "Zero-touch prayer-time audio notifications with automated media-state control (Raspberry Pi + Android TV via ADB) · 10 microservices",
+  "impact": "Zero-touch prayer-time audio notifications with automated media-state control (Raspberry Pi + Android TV via ADB) \u00b7 10 microservices",
   "cycle": "56 active days",
   "beforeAI": "No automation, manual device control",
   "afterAI": "Zero-touch IoT orchestration system",
