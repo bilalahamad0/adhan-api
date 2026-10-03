@@ -19,7 +19,7 @@
 > Sections 1.1 (Google Calendar sync), 2 (Google Apps Script), 3 (Assistant
 > Relay), and parts of the roadmap below are kept as **design archaeology**
 > and do not reflect the running system. Today's prayer-time source is the
-> Pi's local `annual_schedule.json` (refreshed from api.aladhan.com), and the
+> Pi's `~/.adhan-data/annual_schedule.json` (refreshed daily from api.aladhan.com), and the
 > dashboard reads from Firestore (`adhan-79908`) written by `FirestoreSync.js`.
 
 ## Project Overview

@@ -471,8 +471,8 @@
         <div class="cards c2">
           <div class="card">
             <div class="name">Aladhan API</div>
-            <div class="file">api.aladhan.com · calendarByCity</div>
-            <div class="desc">Annual prayer-time calendar, fetched <b>once per year</b> and cached to <code>annual_schedule.json</code> (incl. Hijri dates).</div>
+            <div class="file">api.aladhan.com · timingsByCity</div>
+            <div class="desc">Today's prayer times fetched <b>daily</b> with the same request as the Adhan Focus extension, cached to <code>~/.adhan-data/annual_schedule.json</code> (incl. Hijri dates).</div>
           </div>
           <div class="card">
             <div class="name">Open-Meteo</div>
@@ -570,7 +570,7 @@
 
         <div class="layer-title" style="font-size:0.82rem; color:var(--dim); margin:14px 0 10px;">Local Data Stores (on-disk)</div>
         <div class="cards c4">
-          <div class="card"><div class="name" style="font-size:0.8rem">annual_schedule.json</div><div class="desc">Yearly prayer times</div></div>
+          <div class="card"><div class="name" style="font-size:0.8rem">annual_schedule.json</div><div class="desc">Prayer times (daily refresh)</div></div>
           <div class="card"><div class="name" style="font-size:0.8rem">playback_log.json</div><div class="desc">Event journal + archives</div></div>
           <div class="card"><div class="name" style="font-size:0.8rem">.cast-cache.json</div><div class="desc">Last-known device host:port</div></div>
           <div class="card"><div class="name" style="font-size:0.8rem">ai-memory · ai-blurb</div><div class="desc">Diagnoses, suggestions, greeting</div></div>
@@ -962,7 +962,7 @@
     },
     {
       pip: 'SCHEDULE', phase: 'Auto-Scheduler', crit: false,
-      desc: 'Read annual_schedule.json (refreshed yearly from Aladhan). Register 5 × {T−5m trigger, T+30s audit}.',
+      desc: 'Refresh today from Aladhan (same request as the extension) into annual_schedule.json. Register 5 × {T−5m trigger, T+30s audit}.',
       cd: '—', fence: { txt: 'AI: idle', cls: '' },
       tv: 'idle', hub: 'standby',
       log: { c: 'blue', tag: 'sched', msg: 'Parsed today · scheduled <b>5 prayers</b> (node-schedule jobs)' }

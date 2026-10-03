@@ -1,5 +1,5 @@
 const fs = require('fs');
-const path = require('path');
+const PrayerScheduleStore = require('./PrayerScheduleStore');
 const DEBOUNCE_MS = 30000; // Min 30s between Firestore writes to conserve Pi CPU
 const WRITE_TIMEOUT_MS = 15000;
 
@@ -51,7 +51,7 @@ class FirestoreSync {
   constructor(serviceKeyBase64, timezone, scheduleFilePath) {
     this._serviceKeyBase64 = serviceKeyBase64;
     this._timezone = timezone;
-    this._scheduleFilePath = scheduleFilePath || path.join(__dirname, '..', 'annual_schedule.json');
+    this._scheduleFilePath = scheduleFilePath || PrayerScheduleStore.resolvePath();
     this._db = null; // Lazy: firebase-admin loaded only on first write
     this._pendingTimer = null;
     this._pendingPayload = null;

@@ -3,8 +3,8 @@ const { DateTime } = require('luxon');
 const path = require('path');
 const fs = require('fs');
 const dns = require('dns');
-const axios = require('axios');
 const ChromecastAPI = require('chromecast-api');
+const PrayerScheduleStore = require('./PrayerScheduleStore');
 
 /**
  * CoreScheduler V10: THE CLEAN REVERSION
@@ -17,6 +17,12 @@ class CoreScheduler {
         this.hardware = hardwareService;
         this.media = mediaService;
         this.scheduleFilePath = scheduleFilePath;
+        this.scheduleStore = new PrayerScheduleStore({
+            location: config.location,
+            timezone: config.timezone,
+            filePath: scheduleFilePath,
+            log: (msg) => this.log(msg),
+        });
         this.playbackLogger = playbackLogger || null;
         this.pushNotifier = pushNotifier || null;
         this.log = (msg) => console.log(`[${new Date().toLocaleTimeString()}] ${msg}`);
@@ -383,26 +389,13 @@ class CoreScheduler {
         if (this._pendingRetries) this._pendingRetries.clear();
         this._restorePendingRetries();
 
-        let annualData;
-        if (fs.existsSync(this.scheduleFilePath)) {
-            try { annualData = JSON.parse(fs.readFileSync(this.scheduleFilePath)); } catch { }
-        }
-
-        const currentYear = DateTime.now().setZone(config.timezone).toFormat('yyyy');
-        if (!annualData || annualData.year !== currentYear) {
-            log(`🔄 Fetching Annual Data for ${currentYear}...`);
-            try {
-                const url = `http://api.aladhan.com/v1/calendarByCity/${currentYear}?city=${config.location.city}&country=${config.location.country}&method=${config.location.method}&annual=true`;
-                const response = await axios.get(url);
-                annualData = { year: currentYear, data: response.data.data };
-                fs.writeFileSync(this.scheduleFilePath, JSON.stringify(annualData, null, 2));
-            } catch { log("❌ Fetch Error."); return; }
-        }
-
         const today = DateTime.now().setZone(config.timezone);
-        const monthData = annualData.data[today.month.toString()];
-        const todayEntry = monthData.find(d => parseInt(d.date.gregorian.day) === today.day);
-        if (!todayEntry) return log("❌ Day missing.");
+        await this.scheduleStore.refresh(today);
+        const todayEntry = this.scheduleStore.getEntry(today);
+        if (!todayEntry) {
+            log("❌ No schedule for today (Aladhan unreachable and nothing cached).");
+            return false;
+        }
 
         log(`✅ Today's Prayer Times (${todayEntry.date.readable}):`);
         const prayers = ['Fajr', 'Dhuhr', 'Asr', 'Maghrib', 'Isha'];
@@ -446,6 +439,7 @@ class CoreScheduler {
 
         this._scheduleMorningScene(today, todayEntry, log, 'sunrise');
         this._scheduleMorningScene(today, todayEntry, log, 'ishraq');
+        return true;
     }
 
     /**

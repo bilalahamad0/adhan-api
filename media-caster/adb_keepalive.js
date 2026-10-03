@@ -2,6 +2,7 @@ const path = require('path');
 const HardwareService = require('./services/HardwareService');
 const DiscoveryService = require('./services/DiscoveryService');
 const ScheduleService = require('./services/ScheduleService');
+const PrayerScheduleStore = require('./services/PrayerScheduleStore');
 const { DateTime } = require('luxon');
 
 class AdbKeepAlive {
@@ -12,7 +13,7 @@ class AdbKeepAlive {
     // Services
     this.discovery = new DiscoveryService(targetIp);
     this.schedule = new ScheduleService(
-      path.join(__dirname, 'annual_schedule.json'),
+      PrayerScheduleStore.resolvePath(),
       process.env.TIMEZONE || 'America/Los_Angeles'
     );
 

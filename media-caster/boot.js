@@ -6,6 +6,7 @@ const HardwareService = require('./services/HardwareService');
 const PlaybackLogger = require('./services/PlaybackLogger');
 const FirestoreSync = require('./services/FirestoreSync');
 const PushNotifier = require('./services/PushNotifier');
+const PrayerScheduleStore = require('./services/PrayerScheduleStore');
 require('dotenv').config({ path: require('path').join(__dirname, '.env') });
 
 // --- CRASH DIAGNOSTICS (Production Stability) ---
@@ -35,8 +36,11 @@ const CONFIG = {
     country: process.env.LOCATION_COUNTRY || 'CountryCode',
     lat: process.env.LATITUDE || null,
     lon: process.env.LONGITUDE || null,
+    // city/state/country/method/school form the Aladhan request, which must stay
+    // identical to the Adhan Focus extension's (see PrayerScheduleStore).
+    state: process.env.LOCATION_STATE || '',
     method: parseInt(process.env.LOCATION_METHOD || 2), // ISNA
-    school: parseInt(process.env.LOCATION_SCHOOL || 1), // Hanafi
+    school: parseInt(process.env.LOCATION_SCHOOL || 0), // Standard (1 = Hanafi)
   },
   device: {
     name: process.env.DEVICE_NAME || 'Google Display',
@@ -94,10 +98,14 @@ const playbackLogger = new PlaybackLogger(
   playbackDataDir,
   CONFIG.timezone
 );
+const scheduleStore = new PrayerScheduleStore({
+  location: CONFIG.location,
+  timezone: CONFIG.timezone,
+});
 const firestoreSync = new FirestoreSync(
   process.env.FIREBASE_SERVICE_KEY,
   CONFIG.timezone,
-  path.join(__dirname, 'annual_schedule.json'),
+  scheduleStore.filePath,
 );
 
 // Prayer-time iPhone/web push (no-op unless VAPID keys + FIREBASE_SERVICE_KEY set).
@@ -113,7 +121,7 @@ const scheduler = new CoreScheduler(
   hardware,
   media,
   null, // No global cast/scanner
-  path.join(__dirname, 'annual_schedule.json'),
+  scheduleStore.filePath,
   playbackLogger,
   pushNotifier
 );
@@ -182,7 +190,7 @@ async function bootSystem() {
       }
 
       const prayerName = rawPrayer.charAt(0).toUpperCase() + rawPrayer.slice(1);
-      const schedulePath = path.join(__dirname, 'annual_schedule.json');
+      const schedulePath = scheduleStore.filePath;
       if (!require('fs').existsSync(schedulePath)) {
         res.status(500).json({ error: 'annual_schedule.json missing' });
         return;
@@ -396,8 +404,20 @@ async function bootSystem() {
     // 1. Media server running
     check('Media Server', server.listening, 'Server not started');
 
-    // 2. Annual schedule file exists and has current year
-    const schedPath = path.join(__dirname, 'annual_schedule.json');
+    // 2. Annual schedule file exists and has current year. Refresh a scratch copy of the
+    // live cache: proves this build can fetch with the current .env, without the staging
+    // run writing production state.
+    const schedPath = path.join(require('os').tmpdir(), 'adhan-smoke-schedule.json');
+    try {
+      require('fs').copyFileSync(scheduleStore.filePath, schedPath);
+    } catch {
+      require('fs').rmSync(schedPath, { force: true });
+    }
+    await new PrayerScheduleStore({
+      location: CONFIG.location,
+      timezone: CONFIG.timezone,
+      filePath: schedPath,
+    }).refresh();
     let annualData = null;
     let testScheduleEntry = null;
     try {
@@ -579,7 +599,16 @@ async function bootSystem() {
   await new Promise(r => setTimeout(r, 5000));
 
   async function refreshScheduleAndPublishFirestore() {
-    await scheduler.scheduleToday();
+    if (!(await scheduler.scheduleToday())) {
+      // Nothing cached and Aladhan unreachable: retry the whole refresh, Firestore included.
+      console.log('⏳ Retrying the schedule refresh in 10 minutes.');
+      setTimeout(() => {
+        refreshScheduleAndPublishFirestore().catch((e) => {
+          console.error('[boot] Schedule refresh retry failed:', e.message);
+        });
+      }, 10 * 60 * 1000);
+      return;
+    }
     const today = DateTime.now().setZone(CONFIG.timezone);
     const todayIso = today.toISODate();
     await firestoreSync.ensureTodayScheduleOnFirestore(todayIso);
@@ -587,7 +616,7 @@ async function bootSystem() {
     // Schedule publishing tomorrow's schedule at Maghrib + 5 minutes
     const tomorrowIso = today.plus({ days: 1 }).toISODate();
     try {
-      const schedPath = path.join(__dirname, 'annual_schedule.json');
+      const schedPath = scheduleStore.filePath;
       const annualData = JSON.parse(require('fs').readFileSync(schedPath));
       const monthData = annualData.data[today.month.toString()];
       const todayEntry = monthData ? monthData.find(d => parseInt(d.date.gregorian.day) === today.day) : null;
@@ -667,7 +696,7 @@ async function bootSystem() {
     try {
       const fs = require('fs');
       const today = DateTime.now().setZone(CONFIG.timezone);
-      const annualPath = path.join(__dirname, 'annual_schedule.json');
+      const annualPath = scheduleStore.filePath;
       const annualData = JSON.parse(fs.readFileSync(annualPath, 'utf8'));
       const monthData = annualData.data[today.month.toString()];
       const todayEntry = monthData.find(d => parseInt(d.date.gregorian.day) === today.day);

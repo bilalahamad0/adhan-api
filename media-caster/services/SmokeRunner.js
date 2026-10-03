@@ -55,8 +55,10 @@ class SmokeRunner {
   }
 
   _summarize(output, durationMs, reason, exitCode = null) {
-    const passedMatch = output.match(/(\d+)\s+passed/i);
-    const failedMatch = output.match(/(\d+)\s+failed/i);
+    // Prefer the final summary line; log lines such as "fetch failed for 2026-10-03" must not count.
+    const summary = output.match(/SMOKE TEST COMPLETE:\s*(\d+)\s+passed,\s*(\d+)\s+failed/i);
+    const passedMatch = summary ? [null, summary[1]] : output.match(/(\d+)\s+passed/i);
+    const failedMatch = summary ? [null, summary[2]] : output.match(/(\d+)\s+failed/i);
     const failedChecks = [];
     const failRegex = /❌\s+FAIL:\s+([^—\n]+?)(?:\s+—|\s*$)/gm;
     let m;

@@ -7,6 +7,7 @@ require('dotenv').config({ path: path.join(__dirname, '.env') });
 const BuildManager = require('./services/BuildManager');
 const SmokeRunner = require('./services/SmokeRunner');
 const FirestoreSync = require('./services/FirestoreSync');
+const PrayerScheduleStore = require('./services/PrayerScheduleStore');
 
 const REPO_ROOT = path.resolve(__dirname, '..');
 const STAGING_PATH = process.env.UPDATE_STAGING_PATH || '/tmp/adhan-staging';
@@ -14,7 +15,7 @@ const DATA_DIR = process.env.PLAYBACK_DATA_DIR
   || path.join(process.env.HOME || __dirname, '.adhan-data');
 const BRANCH = process.env.UPDATE_TRACK_BRANCH || 'main';
 const TIMEZONE = process.env.TIMEZONE || 'America/Los_Angeles';
-const SCHEDULE_FILE = path.join(__dirname, 'annual_schedule.json');
+const SCHEDULE_FILE = PrayerScheduleStore.resolvePath();
 const PER_PRAYER_LEAD_MIN = parseInt(process.env.UPDATE_LEAD_MIN || '20', 10);
 
 const PRAYERS = ['Fajr', 'Dhuhr', 'Asr', 'Maghrib', 'Isha'];
@@ -104,6 +105,9 @@ async function runUpdateCycle(triggerLabel, opts = {}) {
     return null;
   }
   log(`▶ update cycle [${triggerLabel}]`);
+  // The smoke test inherits this process's env; re-read .env so an edited LOCATION_* is
+  // used without restarting the auto-updater.
+  require('dotenv').config({ path: path.join(__dirname, '.env'), override: true, quiet: true });
   const result = await buildManager.attemptUpdate(opts);
   log(`◀ update cycle [${triggerLabel}] → success=${result.success} stage=${result.stage} reason=${result.reason || 'n/a'}`);
   return result;

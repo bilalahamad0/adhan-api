@@ -111,11 +111,13 @@ SERVER_PORT=3001
 TV_IP=192.168.1.TV_IP            <-- Your Android TV IP
 DEVICE_NAME=Google Display <-- Exact name of your Nest Hub
 
-# Location
+# Location: sent to Aladhan as-is. Keep identical to the Adhan Focus
+# extension's location so both show the same prayer times.
 LOCATION_CITY=Sunnyvale
-LOCATION_COUNTRY=US
+LOCATION_STATE=California
+LOCATION_COUNTRY="United States"
 LOCATION_METHOD=2
-LOCATION_SCHOOL=1
+LOCATION_SCHOOL=0
 TIMEZONE=America/Los_Angeles
 ```
 
@@ -191,7 +193,7 @@ pm2 restart all --update-env
 curl -sS -X POST "http://localhost:3001/api/metrics/sync"
 ```
 
-You should see JSON like `"status":"synced"` and `"prayersScheduled":5` when today’s row in `annual_schedule.json` resolves all five prayers.
+You should see JSON like `"status":"synced"` and `"prayersScheduled":5` when today’s row in `~/.adhan-data/annual_schedule.json` resolves all five prayers.
 
 ## 6. Verification
 
@@ -239,7 +241,6 @@ cd adhan-api
 # 3. Restore Pi-only files (never in git)
 cp ../adhan-api.legacy/media-caster/.env media-caster/.env
 cp -r ../adhan-api.legacy/media-caster/audio media-caster/audio
-cp ../adhan-api.legacy/media-caster/annual_schedule.json media-caster/annual_schedule.json 2>/dev/null || true
 mkdir -p ~/.adhan-data
 cp ../adhan-api.legacy/.adhan-data/* ~/.adhan-data/ 2>/dev/null || true
 
