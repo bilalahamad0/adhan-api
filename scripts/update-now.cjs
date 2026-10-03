@@ -43,7 +43,7 @@ function runInProcess() {
   const firestoreSync = new FirestoreSync(
     process.env.FIREBASE_SERVICE_KEY,
     TIMEZONE,
-    path.join(REPO_ROOT, 'media-caster', 'annual_schedule.json'),
+    require(path.join(__dirname, '..', 'media-caster', 'services', 'PrayerScheduleStore')).resolvePath(),
   );
   const smokeRunner = new SmokeRunner();
   const bm = new BuildManager({

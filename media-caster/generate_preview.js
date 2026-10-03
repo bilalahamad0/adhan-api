@@ -9,7 +9,7 @@ const CONFIG = {
   timezone: 'America/Los_Angeles',
 };
 
-const SCHEDULE_FILE = path.join(__dirname, 'annual_schedule.json');
+const SCHEDULE_FILE = require('./services/PrayerScheduleStore').resolvePath();
 
 async function run() {
   console.log('🎨 Generating Preview Dashboard...');

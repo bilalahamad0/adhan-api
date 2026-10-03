@@ -5,3 +5,5 @@ audio/
 .env
 *.mp4
 .cast-cache.json
+# Prayer-time cache now lives in the data dir (~/.adhan-data); never commit a snapshot.
+annual_schedule.json

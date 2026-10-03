@@ -52,7 +52,7 @@ for (const key of REQUIRED_ENV) {
 //    are runtime-created on first use).
 const dataDir = process.env.PLAYBACK_DATA_DIR
   || path.join(process.env.HOME || path.join(__dirname, '..'), '.adhan-data');
-const annualPath = path.join(__dirname, '..', 'annual_schedule.json');
+const annualPath = require('../services/PrayerScheduleStore').resolvePath();
 const playbackPath = path.join(dataDir, 'playback_log.json');
 
 if (fs.existsSync(annualPath)) {
