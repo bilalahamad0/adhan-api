@@ -14,11 +14,11 @@ const ADHAN_CE_URL =
 
 const at = (iso) => DateTime.fromISO(iso, { zone: TZ });
 
-function entry(day, maghrib, { suffix = ' (PDT)', timezone = TZ } = {}) {
+function entry(day, maghrib, { suffix = ' (PDT)', timezone = TZ, asr = '16:17' } = {}) {
   const t = (v) => `${v}${suffix}`;
   return {
     timings: {
-      Fajr: t('05:53'), Sunrise: t('07:05'), Dhuhr: t('12:57'), Asr: t('16:17'),
+      Fajr: t('05:53'), Sunrise: t('07:05'), Dhuhr: t('12:57'), Asr: t(asr),
       Sunset: t(maghrib), Maghrib: t(maghrib), Isha: t('20:01'),
     },
     date: {
@@ -40,7 +40,8 @@ function calendar(year, maghrib) {
 }
 
 // Fake Aladhan: calendar says 18:49 (an old geocode), the live daily call says 18:50.
-function fakeHttp({ failCalendar = false, failDay = false, dayTimezone = TZ } = {}) {
+// `day` rewrites the live daily answer (e.g. to make it malformed).
+function fakeHttp({ failCalendar = false, failDay = false, dayTimezone = TZ, asr = '16:17', day: rewriteDay = (e) => e } = {}) {
   return {
     get: jest.fn(async (url) => {
       const cal = url.match(/\/calendarByCity\/(\d{4})\?/);
@@ -52,7 +53,7 @@ function fakeHttp({ failCalendar = false, failDay = false, dayTimezone = TZ } = 
       if (day) {
         if (failDay) throw new Error('503');
         const dt = DateTime.fromFormat(day[1], 'dd-MM-yyyy', { zone: TZ });
-        return { data: { code: 200, data: entry(dt, '18:50', { suffix: '', timezone: dayTimezone }) } };
+        return { data: { code: 200, data: rewriteDay(entry(dt, '18:50', { suffix: '', timezone: dayTimezone, asr })) } };
       }
       throw new Error(`unexpected url ${url}`);
     }),
@@ -189,6 +190,160 @@ describe('PrayerScheduleStore', () => {
     await store.refresh(at('2026-10-03T00:00:05'));
     expect(lines.length).toBeGreaterThan(0);
     expect(lines.join('\n')).not.toMatch(/\d+\s+failed/i);
+  });
+
+  test('fetchEntry re-fetches today without storing it; commitEntry stores it with its fetch time', async () => {
+    await make(fakeHttp()).refresh(at('2026-10-03T07:00:00'));
+    // 2026-10-03: the same URL answered Asr 16:17 in the morning and 16:16 at 12:38.
+    const http = fakeHttp({ asr: '16:16' });
+    const store = make(http);
+
+    await store.refresh(at('2026-10-03T12:38:00'));
+    expect(http.get).not.toHaveBeenCalled(); // a plain refresh still keeps today's entry
+
+    const fetched = await store.fetchEntry(at('2026-10-03T12:38:00'));
+    expect(http.get.mock.calls.map((c) => c[0])).toEqual([
+      'https://api.aladhan.com/v1/timingsByCity/03-10-2026?city=Sunnyvale&country=United%20States&method=2&school=0&state=California',
+    ]);
+    expect(fetched.timings.Asr).toBe('16:16');
+    // Not stored until committed: a rejected answer never reaches the file.
+    expect(store.getEntry(at('2026-10-03')).timings.Asr).toBe('16:17');
+    expect(store.lastFetchedAt(at('2026-10-03')).toISO()).toBe(at('2026-10-03T07:00:00').toISO());
+
+    expect(store.commitEntry(at('2026-10-03T12:38:05'), fetched, at('2026-10-03T12:38:00'))).toBe(true);
+    expect(store.getEntry(at('2026-10-03')).timings.Asr).toBe('16:16');
+    expect(store.lastFetchedAt(at('2026-10-03')).toISO()).toBe(at('2026-10-03T12:38:00').toISO());
+    const cache = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    expect(cache.fetchedOn).toEqual({ '2026-10-03': '2026-10-03', '2026-10-04': '2026-10-03' });
+    expect(store.getEntry(at('2026-10-04')).timings.Maghrib).toBe('18:50'); // other days untouched
+  });
+
+  test('fetchEntry failures throw and leave the cache alone', async () => {
+    await make(fakeHttp()).refresh(at('2026-10-03T07:00:00'));
+    const before = fs.readFileSync(filePath, 'utf8');
+    await expect(make(fakeHttp({ failDay: true })).fetchEntry(at('2026-10-03T12:38:00'))).rejects.toThrow('503');
+    await expect(make(fakeHttp({ dayTimezone: 'UTC' })).fetchEntry(at('2026-10-03T12:38:00'))).rejects.toThrow(/timezone/);
+    expect(fs.readFileSync(filePath, 'utf8')).toBe(before);
+  });
+
+  test('commitEntry refuses without a cache for that year', async () => {
+    const store = make(fakeHttp());
+    const fetched = await store.fetchEntry(at('2026-10-03T12:38:00'));
+    expect(store.commitEntry(at('2026-10-03T12:38:00'), fetched)).toBe(false); // no file yet
+    expect(fs.existsSync(filePath)).toBe(false);
+
+    await store.refresh(at('2026-10-03T07:00:00'));
+    const cache = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    fs.writeFileSync(filePath, JSON.stringify({ ...cache, year: '2025' }));
+    expect(store.commitEntry(at('2026-10-03T12:38:00'), fetched)).toBe(false);
+    expect(JSON.parse(fs.readFileSync(filePath, 'utf8')).year).toBe('2025');
+  });
+
+  test('lastFetchedAt: null for calendar-only days and for caches written before it existed', async () => {
+    await make(fakeHttp()).refresh(at('2026-10-02T00:00:05'));
+    const store = make(fakeHttp());
+    expect(store.lastFetchedAt(at('2026-10-04'))).toBeNull(); // calendar entry only
+
+    const cache = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    delete cache.fetchedAt;
+    fs.writeFileSync(filePath, JSON.stringify(cache));
+    expect(store.lastFetchedAt(at('2026-10-02'))).toBeNull();
+
+    const fetched = await store.fetchEntry(at('2026-10-02T09:00:00'));
+    expect(store.commitEntry(at('2026-10-02T09:00:00'), fetched, at('2026-10-02T09:00:00'))).toBe(true);
+    expect(store.lastFetchedAt(at('2026-10-02')).toISO()).toBe(at('2026-10-02T09:00:00').toISO());
+  });
+
+  test('fetchedAt is pruned with fetchedOn when the day moves on', async () => {
+    const store = make(fakeHttp());
+    await store.refresh(at('2026-10-02T00:00:05'));
+    await store.refresh(at('2026-10-03T00:00:05'));
+    expect(Object.keys(JSON.parse(fs.readFileSync(filePath, 'utf8')).fetchedAt)).toEqual([
+      '2026-10-03',
+      '2026-10-04',
+    ]);
+  });
+
+  describe('daily answer validation (shared rule v2 with adhan-ce)', () => {
+    const withTimings = (patch) => (e) => {
+      const timings = { ...e.timings, ...patch };
+      for (const k of Object.keys(timings)) if (timings[k] === undefined) delete timings[k];
+      return { ...e, timings };
+    };
+
+    test.each([
+      ['05:53', '05:53'],
+      ['5:53', '05:53'],
+      ['05:53 (PDT)', '05:53'],
+      ['23:59 (+03)', '23:59'],
+      ['0:00', '00:00'],
+    ])('parseTiming(%p) is %p', (raw, expected) => {
+      expect(PrayerScheduleStore.parseTiming(raw)).toBe(expected);
+    });
+
+    test.each([
+      '05:53am', '5:3', '053', '24:00', '05:60', ' 05:53', '05:53 ', '05:53 (PDT) x', '05:53(PDT)',
+      '05:53  (PDT)', '05:53 ()', '05:53:00', '', null, undefined, 553,
+    ])('parseTiming rejects %p', (raw) => {
+      expect(PrayerScheduleStore.parseTiming(raw)).toBeNull();
+    });
+
+    test("accepts Aladhan's real timingsByCity answer (Sunrise present, extra timings)", async () => {
+      const real = withTimings({ Imsak: '05:43', Midnight: '00:57', Firstthird: '22:55', Lastthird: '02:59' });
+      const store = make(fakeHttp({ day: real }));
+      const fetched = await store.fetchEntry(at('2026-10-02T12:00:00'));
+      expect(fetched.timings).toMatchObject({ Fajr: '05:53', Sunrise: '07:05', Isha: '20:01' });
+
+      await store.refresh(at('2026-10-02T00:00:05'));
+      expect(store.getEntry(at('2026-10-02')).timings.Sunrise).toBe('07:05');
+      expect(store.getEntry(at('2026-10-02')).timings.Maghrib).toBe('18:50');
+    });
+
+    test('Sunrise is optional: an answer without it is accepted', async () => {
+      const store = make(fakeHttp({ day: withTimings({ Sunrise: undefined }) }));
+      const fetched = await store.fetchEntry(at('2026-10-02T12:00:00'));
+      expect(fetched.timings.Sunrise).toBeUndefined();
+      expect(fetched.timings.Maghrib).toBe('18:50');
+    });
+
+    test.each([
+      ['a prayer with trailing text', withTimings({ Asr: '16:17 pm' }), /bad Asr/],
+      ['a prayer missing', withTimings({ Isha: undefined }), /bad Isha/],
+      ['an out-of-range prayer', withTimings({ Maghrib: '24:10' }), /bad Maghrib/],
+      ['a one-digit minute', withTimings({ Fajr: '5:3' }), /bad Fajr/],
+      ['a malformed Sunrise', withTimings({ Sunrise: '7:05am' }), /bad Sunrise/],
+      ['no timings at all', (e) => ({ ...e, timings: undefined }), /no timings/],
+      ['an answer for another day', (e) => ({ ...e, date: { ...e.date, gregorian: { date: '01-10-2026', day: '01' } } }), /response is for 01-10-2026/],
+    ])('a malformed answer (%s) is refused and keeps the old times', async (_, rewrite, error) => {
+      await make(fakeHttp()).refresh(at('2026-10-02T07:00:00'));
+      const before = fs.readFileSync(filePath, 'utf8');
+      const store = make(fakeHttp({ day: rewrite }));
+      await expect(store.fetchEntry(at('2026-10-02T12:00:00'))).rejects.toThrow(error);
+      expect(fs.readFileSync(filePath, 'utf8')).toBe(before);
+    });
+
+    test('the day-start refresh refuses a malformed answer and keeps the calendar entry', async () => {
+      const store = make(fakeHttp({ day: withTimings({ Dhuhr: '12:57 noon' }) }));
+      await store.refresh(at('2026-10-02T00:00:05'));
+      expect(store.getEntry(at('2026-10-02')).timings.Maghrib).toBe('18:49 (PDT)');
+      expect(store.lastFetchedAt(at('2026-10-02'))).toBeNull();
+    });
+
+    test('the year calendar keeps its own validation: Sunrise still required there', async () => {
+      const http = fakeHttp();
+      const calendarGet = http.get.getMockImplementation();
+      http.get.mockImplementation(async (url) => {
+        const res = await calendarGet(url);
+        if (url.includes('/calendarByCity/')) delete res.data.data['3'][9].timings.Sunrise;
+        return res;
+      });
+      const store = make(http);
+      await store.refresh(at('2026-10-02T00:00:05'));
+      const cache = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+      expect(cache.source).toBeNull(); // calendar refused, retried next refresh
+      expect(store.getEntry(at('2026-10-02')).timings.Maghrib).toBe('18:50'); // today still fetched
+      expect(store.getEntry(at('2026-10-05'))).toBeNull();
+    });
   });
 
   test('year rollover: no cross-year tomorrow on Dec 31, new calendar on Jan 1', async () => {

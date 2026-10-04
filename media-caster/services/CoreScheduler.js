@@ -6,13 +6,55 @@ const dns = require('dns');
 const ChromecastAPI = require('chromecast-api');
 const PrayerScheduleStore = require('./PrayerScheduleStore');
 
+const PRAYERS = ['Fajr', 'Dhuhr', 'Asr', 'Maghrib', 'Isha'];
+
+// Pre-prayer revalidation (shared rule v2, implemented the same way by adhan-ce's
+// background.js) so both apps converge on the freshest Aladhan answer. Aladhan
+// geocodes the city server-side and its answer for the same URL can move a minute
+// during a day, so each app samples today's timings at the same moment before
+// every prayer P:
+//   due when now >= P - REVALIDATE_AT_MS and now < P - REVALIDATE_WINDOW_END_MS,
+//   today was last fetched before P - REVALIDATE_FRESH_MS, and no prayer is in
+//   its REVALIDATE_QUIET_AFTER_MS quiet period.
+// The T-45 job arms exactly at P - REVALIDATE_AT_MS; a failed, malformed or held
+// answer is retried once at P - REVALIDATE_RETRY_AT_MS.
+const REVALIDATE_AT_MS = 45 * 60 * 1000; // the sampling moment, "T-45"
+// Fetched at or after T-50: fresh, no second fetch (a fetch just made, or a
+// re-armed check after the prayer itself moved by a minute or two).
+const REVALIDATE_FRESH_MS = 50 * 60 * 1000;
+const REVALIDATE_WINDOW_END_MS = 30 * 60 * 1000; // nothing revalidates at or after T-30
+const REVALIDATE_RETRY_AT_MS = 35 * 60 * 1000; // the Pi's one retry, inside [T-45, T-30)
+// A check armed after T-45 (a boot or a re-arm) catches up this long after
+// arming, or halfway to T-30 when that is sooner, so it still starts before T-30.
+const REVALIDATE_CATCH_UP_MS = 30 * 1000;
+// No revalidation from a prayer's time until this long after it (ts <= now < ts + 10min),
+// so its push, audit and window-retries never see their jobs move. Before the
+// prayer, the windows above keep every revalidation out of [T-30, T); the cast
+// itself (from T-5) and any pending window-retry block too (see _revalidationBlocker).
+const REVALIDATE_QUIET_AFTER_MS = 10 * 60 * 1000;
+// Larger moves are still applied (both apps must converge) but logged as suspect,
+// unless they move a prayer across "now": then, as in adhan-ce, the whole answer
+// is rejected (see revalidationCrossesNow).
+const LARGE_CHANGE_MS = 30 * 60 * 1000;
+// The morning re-check (PRAYER_MORNING_REFRESH) retries once this long after a
+// skipped or failed run. It does not run within [T-50, T) of any prayer: that
+// prayer's own T-45 sample covers it, so both apps sample at the same moment.
+const MORNING_REVALIDATION_RETRY_MS = 10 * 60 * 1000;
+const MORNING_REVALIDATION_DEFAULT = { hour: 8, minute: 0 };
+
 /**
  * CoreScheduler V10: THE CLEAN REVERSION
  * Structurally identical to commit 603858cf.
  * No classes or services are touched during the casting flow.
  */
 class CoreScheduler {
-    constructor(config, hardwareService, mediaService, castService, scheduleFilePath, playbackLogger, pushNotifier) {
+    /**
+     * options.onScheduleChanged(change): called after a revalidation moved
+     * today's times and the jobs were re-armed (boot.js republishes Firestore).
+     * It runs after the revalidation lock is released and is never awaited by
+     * it; calls are queued in order and their errors are logged.
+     */
+    constructor(config, hardwareService, mediaService, castService, scheduleFilePath, playbackLogger, pushNotifier, options = {}) {
         this.config = config;
         this.hardware = hardwareService;
         this.media = mediaService;
@@ -31,6 +73,9 @@ class CoreScheduler {
         this.sessionStatus = new Map();
         this.activeRuns = new Set();
         this._scheduledJobs = [];
+        // { date, times: { Fajr: 'HH:mm', ..., Sunrise } } the current jobs were armed for.
+        this._armed = null;
+        this.onScheduleChanged = (options && options.onScheduleChanged) || null;
         this._castCachePath = path.join(__dirname, '..', '.cast-cache.json');
         // Window-retry state persisted here so scheduled retries survive a
         // pm2 reload / crash / auto-updater deploy. .adhan-data/ is excluded
@@ -371,46 +416,135 @@ class CoreScheduler {
         }
     }
 
-    async scheduleToday() {
-        const config = this.config;
-        const log = this.log;
-        log("📅 Loading Schedule...");
+    /**
+     * 'HH:mm' from a cached Aladhan timing ('05:53', '05:53 (PDT)', '21:5'), or
+     * null. Deliberately lenient: it arms whatever the cache holds. A freshly
+     * fetched answer is only accepted when strict (PrayerScheduleStore.parseTiming).
+     */
+    static hhmm(raw) {
+        const m = String(raw == null ? '' : raw).trim().match(/^(\d{1,2}):(\d{1,2})/);
+        if (!m) return null;
+        const hour = Number(m[1]);
+        const minute = Number(m[2]);
+        if (hour > 23 || minute > 59) return null;
+        return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+    }
 
-        // Cancel prior day's jobs so restarts / re-schedules never double-fire triggers.
+    /** The five prayers plus Sunrise from a schedule entry, as 'HH:mm'. */
+    static extractTimes(entry) {
+        const times = {};
+        for (const key of [...PRAYERS, 'Sunrise']) {
+            const t = CoreScheduler.hhmm(entry && entry.timings && entry.timings[key]);
+            if (t) times[key] = t;
+        }
+        return times;
+    }
+
+    /** `hhmm` on `day`'s date, in `day`'s zone. */
+    static at(day, hhmm) {
+        const [hour, minute] = hhmm.split(':').map(Number);
+        return day.set({ hour, minute, second: 0, millisecond: 0 });
+    }
+
+    /**
+     * adhan-ce's revalidationCrossesNow (lib/schedule.js) on 'HH:mm' times: the
+     * prayers that replacing `prev` with `next` would flip between "already
+     * passed" and "still upcoming" at `now` (re-fire one that fired, or skip one
+     * that has not). A prayer missing from either side counts as crossing.
+     * Upcoming means `>= now`, the test _armToday arms by.
+     */
+    static revalidationCrossesNow(prev, next, now) {
+        return PRAYERS.filter((p) => {
+            if (!prev[p] || !next[p]) return true;
+            return (CoreScheduler.at(now, prev[p]) >= now) !== (CoreScheduler.at(now, next[p]) >= now);
+        });
+    }
+
+    /** Strict 24h 'H:MM' / 'HH:MM' (e.g. PRAYER_MORNING_REFRESH) to { hour, minute }, or null. */
+    static parseClockTime(raw) {
+        const m = String(raw == null ? '' : raw).trim().match(/^(\d{1,2}):(\d{2})$/);
+        if (!m) return null;
+        const hour = Number(m[1]);
+        const minute = Number(m[2]);
+        if (hour > 23 || minute > 59) return null;
+        return { hour, minute };
+    }
+
+    _cancelScheduledJobs() {
         this._scheduledJobs.forEach((job) => {
             try {
                 job.cancel();
             } catch (_) { /* ignore */ }
         });
         this._scheduledJobs = [];
-        // Reset window-retry counters so yesterday's exhausted retries don't lock today out,
-        // then re-arm any still-valid retries that were persisted before a reload/crash.
-        if (this._discoveryRetryAttempts) this._discoveryRetryAttempts.clear();
-        if (this._pendingRetries) this._pendingRetries.clear();
-        this._restorePendingRetries();
+    }
 
-        const today = DateTime.now().setZone(config.timezone);
-        await this.scheduleStore.refresh(today);
-        const todayEntry = this.scheduleStore.getEntry(today);
-        if (!todayEntry) {
-            log("❌ No schedule for today (Aladhan unreachable and nothing cached).");
-            return false;
+    async scheduleToday() {
+        const config = this.config;
+        const log = this.log;
+        log("📅 Loading Schedule...");
+        // Revalidation stands aside while this runs (see _revalidationBlocker).
+        this._schedulingToday = true;
+        try {
+            // Cancel prior day's jobs so restarts / re-schedules never double-fire triggers.
+            this._cancelScheduledJobs();
+            this._armed = null;
+            // Reset window-retry counters so yesterday's exhausted retries don't lock today out,
+            // then re-arm any still-valid retries that were persisted before a reload/crash.
+            if (this._discoveryRetryAttempts) this._discoveryRetryAttempts.clear();
+            if (this._pendingRetries) this._pendingRetries.clear();
+            this._restorePendingRetries();
+
+            const today = DateTime.now().setZone(config.timezone);
+            await this.scheduleStore.refresh(today);
+            const todayEntry = this.scheduleStore.getEntry(today);
+            if (!todayEntry) {
+                log("❌ No schedule for today (Aladhan unreachable and nothing cached).");
+                return false;
+            }
+
+            this._armToday(today, todayEntry);
+            return true;
+        } finally {
+            this._schedulingToday = false;
         }
+    }
 
-        log(`✅ Today's Prayer Times (${todayEntry.date.readable}):`);
-        const prayers = ['Fajr', 'Dhuhr', 'Asr', 'Maghrib', 'Isha'];
-        prayers.forEach(prayer => {
-            let timeStr = todayEntry.timings[prayer].split(' ')[0];
-            const [hours, minutes] = timeStr.split(':');
-            const scheduleTime = today.set({ hour: parseInt(hours), minute: parseInt(minutes), second: 0 });
+    /**
+     * Arms today's jobs from `todayEntry`: per prayer the T-5min preflight, the
+     * audit, the push at prayer time and the pre-prayer revalidation; then the
+     * morning scenes. Prayers before `now` are skipped.
+     *
+     * `previous` is set when a revalidation moved the times: the 'HH:mm' times
+     * the cancelled jobs were armed for, and `now` is the instant the new answer
+     * was checked at. revalidationCrossesNow rejected any answer that moves a
+     * prayer across that instant, so a prayer is past under the new times
+     * exactly when it fired under the old ones. Sunrise can move across it; the
+     * morning scenes handle that (see _scheduleMorningScene).
+     */
+    _armToday(today, todayEntry, { previous = null, now = DateTime.now().setZone(this.config.timezone) } = {}) {
+        const config = this.config;
+        const log = this.log;
+        const times = CoreScheduler.extractTimes(todayEntry);
+        this._armed = { date: today.toISODate(), times };
 
-            if (scheduleTime < DateTime.now().setZone(config.timezone)) return;
+        log(previous
+            ? `🔁 Re-armed today's prayer times (${todayEntry.date.readable}):`
+            : `✅ Today's Prayer Times (${todayEntry.date.readable}):`);
+        PRAYERS.forEach(prayer => {
+            const timeStr = times[prayer];
+            if (!timeStr) {
+                log(`   - ${prayer}: unparseable timing "${todayEntry.timings && todayEntry.timings[prayer]}", skipped.`);
+                return;
+            }
+            const scheduleTime = CoreScheduler.at(today, timeStr);
+            if (scheduleTime < now) return;
 
             const audioKey = prayer === 'Fajr' ? config.audio.fajrCurrent : config.audio.regularCurrent;
             const audioFile = `${audioKey}.mp3`;
             let triggerTime = scheduleTime.minus({ minutes: 5 });
-            if (triggerTime < DateTime.now().setZone(config.timezone)) {
-                triggerTime = DateTime.now().setZone(config.timezone).plus({ seconds: 2 });
+            if (triggerTime < now) {
+                triggerTime = now.plus({ seconds: 2 });
             }
 
             this._scheduledJobs.push(
@@ -434,12 +568,293 @@ class CoreScheduler {
                 }),
             );
 
-            log(`   - ${prayer}: ${timeStr} (Trigger: ${triggerTime.toFormat('h:mm:ss a')}, Audit: ${auditTime.toFormat('h:mm:ss a')})`);
+            const recheck = this._armRevalidation(today, prayer, scheduleTime, now);
+            log(`   - ${prayer}: ${timeStr} (Trigger: ${triggerTime.toFormat('h:mm:ss a')}, Audit: ${auditTime.toFormat('h:mm:ss a')}${recheck ? `, Recheck: ${recheck.toFormat('h:mm:ss a')}` : ''})`);
         });
 
-        this._scheduleMorningScene(today, todayEntry, log, 'sunrise');
-        this._scheduleMorningScene(today, todayEntry, log, 'ishraq');
-        return true;
+        const previousSunrise = previous ? previous.Sunrise || null : null;
+        this._scheduleMorningScene(today, todayEntry, log, 'sunrise', { now, previousSunrise });
+        this._scheduleMorningScene(today, todayEntry, log, 'ishraq', { now, previousSunrise });
+    }
+
+    /**
+     * The shared rule's moments for the prayer at `prayerTime` (DateTimes):
+     * at (T-45, the sample), freshSince (T-50: a fetch at or after it is fresh),
+     * end (T-30, exclusive) and retryAt (T-35, the Pi's one retry).
+     */
+    static revalidationWindow(prayerTime) {
+        return {
+            at: prayerTime.minus({ milliseconds: REVALIDATE_AT_MS }),
+            freshSince: prayerTime.minus({ milliseconds: REVALIDATE_FRESH_MS }),
+            end: prayerTime.minus({ milliseconds: REVALIDATE_WINDOW_END_MS }),
+            retryAt: prayerTime.minus({ milliseconds: REVALIDATE_RETRY_AT_MS }),
+        };
+    }
+
+    /**
+     * Arms the pre-prayer revalidation for one prayer at exactly T-45. Armed
+     * at or after T-45 but before T-30 (a boot, or a re-arm), it catches up
+     * REVALIDATE_CATCH_UP_MS later, or halfway to T-30 when that is sooner:
+     * the check is due any time before T-30. Not armed at all when today was
+     * already fetched at or after T-50: the check would only find the times
+     * fresh. That covers the re-arm after this prayer's own check moved it by
+     * a minute or two. Returns the run time, or null.
+     */
+    _armRevalidation(today, prayer, prayerTime, now) {
+        const w = CoreScheduler.revalidationWindow(prayerTime);
+        const lastFetch = this._lastFetchedAt(today);
+        if (lastFetch && lastFetch >= w.freshSince) return null;
+        let runAt = w.at;
+        if (runAt <= now) {
+            const left = w.end.toMillis() - now.toMillis();
+            if (left <= 0) return null;
+            runAt = now.plus({ milliseconds: Math.max(1, Math.min(REVALIDATE_CATCH_UP_MS, Math.floor(left / 2))) });
+        }
+        const job = schedule.scheduleJob(runAt.toJSDate(), () => this.revalidateToday(`pre-${prayer}`, {
+            prayerTime,
+            retryAt: w.retryAt,
+        }));
+        if (!job) return null; // runAt slipped into the past while arming
+        this._scheduledJobs.push(job);
+        return runAt;
+    }
+
+    _lastFetchedAt(day) {
+        try {
+            return typeof this.scheduleStore.lastFetchedAt === 'function'
+                ? this.scheduleStore.lastFetchedAt(day)
+                : null;
+        } catch (_) {
+            return null;
+        }
+    }
+
+    /**
+     * Why a revalidation must not run (or apply) right now, or null; returns
+     * { reason, noRetry } where noRetry means a retry cannot help: the
+     * pre-prayer window closed, or a prayer's own pre-prayer check covers it.
+     *
+     * Never while a full reschedule or any cast is running, a window-retry is
+     * pending, or a prayer is in its quiet period (ts <= now < ts + 10min).
+     * Then the window: a pre-prayer check (prayerTime set) only before its
+     * T-30, and only for the next upcoming prayer; any other check (the
+     * morning one) not within [T-50, T) of any prayer: [T-50, T-30) is that
+     * prayer's own sample, and nothing revalidates
+     * from T-30 on. Together these keep every prayer either fully done
+     * (preflight, push, audit) or not started, which is what lets a re-arm judge
+     * "fired".
+     */
+    _revalidationBlocker(now, { prayerTime = null } = {}) {
+        if (this._schedulingToday) return { reason: 'a full reschedule is running' };
+        if (this.activeRuns.size > 0) return { reason: `a cast is in progress (${[...this.activeRuns].join(', ')})` };
+        if (this._pendingRetries && this._pendingRetries.size > 0) {
+            return { reason: `a window-retry is pending (${[...this._pendingRetries.keys()].join(', ')})` };
+        }
+        if (!this._armed || this._armed.date !== now.toISODate()) return { reason: "today's schedule is not armed" };
+        const armedPrayers = PRAYERS
+            .filter((prayer) => this._armed.times[prayer])
+            .map((prayer) => ({ prayer, t: this._armed.times[prayer], ts: CoreScheduler.at(now, this._armed.times[prayer]) }));
+        for (const { prayer, t, ts } of armedPrayers) {
+            if (now >= ts && now < ts.plus({ milliseconds: REVALIDATE_QUIET_AFTER_MS })) {
+                return { reason: `${prayer} (${t}) was less than ${REVALIDATE_QUIET_AFTER_MS / 60000} min ago` };
+            }
+        }
+        if (prayerTime) {
+            const { end } = CoreScheduler.revalidationWindow(prayerTime);
+            if (now >= end) return { reason: `the pre-prayer window closed at ${end.toFormat('h:mm a')}`, noRetry: true };
+            // Only the next upcoming prayer is sampled (as in adhan-ce): with prayers
+            // under 45 min apart, a later prayer's T-45 can come before an earlier one.
+            const earlier = armedPrayers.find(({ ts }) => ts >= now && ts < prayerTime);
+            if (earlier) return { reason: `${earlier.prayer} (${earlier.t}) comes first`, noRetry: true };
+            return null;
+        }
+        for (const { prayer, t, ts } of armedPrayers) {
+            const w = CoreScheduler.revalidationWindow(ts);
+            if (now >= w.freshSince && now < w.end) {
+                return { reason: `${prayer} (${t}) is sampled by its own pre-prayer check`, noRetry: true };
+            }
+            if (now >= w.end && now < ts) {
+                return { reason: `${prayer} (${t}) is less than ${REVALIDATE_WINDOW_END_MS / 60000} min away`, noRetry: true };
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Re-fetches today's timings and, when Aladhan's answer moved, re-arms every
+     * job for the new times (the freshest answer wins, as in adhan-ce). Unchanged
+     * times only record the fetch; a failed or malformed fetch keeps the current
+     * times. As in adhan-ce, an answer that would move a prayer across "now" is
+     * rejected whole. A fetched answer is stored only once accepted, so a
+     * rejected or unapplied one never reaches the cache a restart arms from.
+     *
+     * prayerTime: set for a pre-prayer check (the prayer's DateTime). It runs
+     *   only before T-30 and skips the fetch (still applying any cached change)
+     *   when today was already fetched at or after T-50. Without it (the morning
+     *   check) it never runs within [T-50, T) of any prayer.
+     * retryAt: when skipped or failed, try once more at this DateTime (not when
+     *   a prayer's own pre-prayer check covers the skip).
+     *
+     * onScheduleChanged is queued once the lock is released, never awaited.
+     * Resolves { changed, changes?, skipped?, failed? }. Never throws.
+     */
+    async revalidateToday(reason = 'manual', { prayerTime = null, retryAt = null } = {}) {
+        try {
+            let result;
+            if (this._revalidating) {
+                this.log(`🔄 Revalidation (${reason}) skipped: another revalidation is running.`);
+                result = { changed: false, skipped: 'another revalidation is running' };
+            } else {
+                this._revalidating = true;
+                try {
+                    result = await this._revalidateToday(reason, prayerTime);
+                } finally {
+                    this._revalidating = false;
+                }
+            }
+            const { notify, noRetry, ...publicResult } = result;
+            if (notify) this._queueScheduleChanged(reason, notify);
+            if (retryAt && !noRetry && !result.changed && (result.skipped || result.failed)) {
+                this._armRevalidationRetry(reason, prayerTime, retryAt);
+            }
+            return publicResult;
+        } catch (e) {
+            this.log(`⚠️ Revalidation (${reason}) failed: ${e.message}; keeping the current times.`);
+            return { changed: false, failed: true };
+        }
+    }
+
+    /** Runs onScheduleChanged after the ones already queued; errors are logged, never thrown. */
+    _queueScheduleChanged(reason, change) {
+        const hook = this.onScheduleChanged;
+        if (typeof hook !== 'function') return;
+        this._scheduleChangedQueue = (this._scheduleChangedQueue || Promise.resolve())
+            .then(() => hook(change))
+            .catch((e) => this.log(`⚠️ Revalidation (${reason}): schedule-change hook failed: ${e && e.message}`));
+    }
+
+    _armRevalidationRetry(reason, prayerTime, retryAt) {
+        if (retryAt <= DateTime.now().setZone(this.config.timezone)) return;
+        this.log(`🔄 Revalidation (${reason}) will retry at ${retryAt.toFormat('h:mm:ss a')}.`);
+        this._scheduledJobs.push(
+            schedule.scheduleJob(retryAt.toJSDate(), () => this.revalidateToday(`${reason} retry`, { prayerTime })),
+        );
+    }
+
+    async _revalidateToday(reason, prayerTime) {
+        const log = this.log;
+        const tz = this.config.timezone;
+        const label = `Revalidation (${reason})`;
+        const now = DateTime.now().setZone(tz);
+        const blocker = this._revalidationBlocker(now, { prayerTime });
+        if (blocker) {
+            log(`🔄 ${label} skipped: ${blocker.reason}.`);
+            return { changed: false, skipped: blocker.reason, noRetry: !!blocker.noRetry };
+        }
+
+        const armed = this._armed;
+        const freshSince = prayerTime ? CoreScheduler.revalidationWindow(prayerTime).freshSince : null;
+        const lastFetch = this._lastFetchedAt(now);
+        let fetched = null;
+        if (freshSince && lastFetch && lastFetch >= freshSince) {
+            log(`🔄 ${label}: today's times were fetched at ${lastFetch.toFormat('HH:mm')}, already fresh for this prayer; not re-fetching.`);
+        } else {
+            log(`🔄 ${label}: re-fetching today's prayer times...`);
+            try {
+                fetched = await this.scheduleStore.fetchEntry(now);
+            } catch (e) {
+                log(`⚠️ ${label}: fetch failed (${e.message}); keeping the current times.`);
+                return { changed: false, failed: true };
+            }
+        }
+
+        // The fetch awaited the network: re-check that nothing started meanwhile.
+        // Nothing was stored yet, so the next check fetches again.
+        if (this._armed !== armed) {
+            log(`🔄 ${label}: today was rescheduled meanwhile; nothing to apply.`);
+            return { changed: false, skipped: 'rescheduled meanwhile' };
+        }
+        const applyAt = DateTime.now().setZone(tz);
+        const lateBlocker = this._revalidationBlocker(applyAt, { prayerTime });
+        if (lateBlocker) {
+            log(`🔄 ${label}: not applying now (${lateBlocker.reason}).`);
+            return { changed: false, skipped: lateBlocker.reason, noRetry: !!lateBlocker.noRetry };
+        }
+
+        // Without a fetch, the cache is compared: it can only differ from the
+        // armed times if something outside this process rewrote it.
+        const entry = fetched || this.scheduleStore.getEntry(applyAt);
+        const fresh = entry ? CoreScheduler.extractTimes(entry) : {};
+        if (!entry || PRAYERS.some((p) => !fresh[p])) {
+            log(`⚠️ ${label}: no usable entry for today; keeping the current times.`);
+            return { changed: false, failed: true };
+        }
+
+        // The five prayers and Sunrise (optional in an answer: missing on one
+        // side only is a change; it never counts as crossing now).
+        const changes = {};
+        for (const key of [...PRAYERS, 'Sunrise']) {
+            if (fresh[key] !== armed.times[key]) changes[key] = { from: armed.times[key] || null, to: fresh[key] || null };
+        }
+        const changed = Object.keys(changes).length > 0;
+        if (changed) {
+            const crossing = CoreScheduler.revalidationCrossesNow(armed.times, fresh, applyAt);
+            if (crossing.length > 0) {
+                log(`⚠️ ${label}: Aladhan's answer would move ${crossing.map((p) => `${p} ${armed.times[p] || '--'} -> ${fresh[p]}`).join(', ')} across now; keeping the current times.`);
+                return { changed: false, failed: true };
+            }
+        }
+        if (fetched && !this.scheduleStore.commitEntry(applyAt, fetched, now)) {
+            log(`⚠️ ${label}: could not store the fetched times; keeping the current times.`);
+            return { changed: false, failed: true };
+        }
+        if (!changed) {
+            log(`✅ ${label}: prayer times unchanged.`);
+            return { changed: false };
+        }
+        for (const [key, { from, to }] of Object.entries(changes)) {
+            const large = from && to
+                && Math.abs(CoreScheduler.at(applyAt, to).toMillis() - CoreScheduler.at(applyAt, from).toMillis()) > LARGE_CHANGE_MS;
+            log(`🔁 ${label}: ${key} ${from || '--'} -> ${to || '--'}${large ? ' (unusually large change)' : ''}`);
+        }
+
+        // Safe to cancel everything: the blocker guarantees no cast, audit
+        // follow-up or window-retry is pending, so every job is re-created below.
+        this._cancelScheduledJobs();
+        this._armToday(applyAt, entry, { previous: armed.times, now: applyAt });
+        return {
+            changed: true,
+            changes,
+            notify: { date: applyAt.toISODate(), reason, changes, times: fresh },
+        };
+    }
+
+    /**
+     * Arms the daily morning re-check of today's times at `raw`
+     * (PRAYER_MORNING_REFRESH: 24h 'HH:MM' in the prayer timezone; anything else
+     * falls back to 08:00). It lives outside _scheduledJobs, so scheduleToday
+     * never cancels it; calling this again replaces it. It skips (logging why)
+     * within [T-50, T) of any prayer, whose own T-45 sample covers it, and in a
+     * prayer's quiet period. Any other skipped or failed run retries once
+     * MORNING_REVALIDATION_RETRY_MS later. Returns the job.
+     */
+    armMorningRevalidation(raw) {
+        const tz = this.config.timezone;
+        let at = CoreScheduler.parseClockTime(raw || '08:00');
+        if (!at) {
+            this.log(`⚠️ PRAYER_MORNING_REFRESH="${raw}" is not HH:MM; using 08:00.`);
+            at = MORNING_REVALIDATION_DEFAULT;
+        }
+        const rule = new schedule.RecurrenceRule();
+        rule.hour = at.hour;
+        rule.minute = at.minute;
+        rule.tz = tz;
+        if (this._morningRevalidationJob) this._morningRevalidationJob.cancel();
+        this._morningRevalidationJob = schedule.scheduleJob(rule, () => this.revalidateToday('morning', {
+            retryAt: DateTime.now().setZone(tz).plus({ milliseconds: MORNING_REVALIDATION_RETRY_MS }),
+        }));
+        this.log(`🌅 Morning prayer-time re-check scheduled daily at ${String(at.hour).padStart(2, '0')}:${String(at.minute).padStart(2, '0')}.`);
+        return this._morningRevalidationJob;
     }
 
     /**
@@ -465,9 +880,13 @@ class CoreScheduler {
      * See castScene() for the Adhan-safety contract.
      *
      * Jobs go on this._scheduledJobs so the next scheduleToday() cancels them,
-     * exactly like the prayer jobs.
+     * exactly like the prayer jobs. On a re-arm after a revalidation,
+     * previousSunrise is the 'HH:mm' the cancelled jobs used: a clip whose old
+     * cast time has passed already played and is not armed again, and one whose
+     * old time is still ahead but whose new time has passed casts right away
+     * instead of being dropped.
      */
-    _scheduleMorningScene(today, todayEntry, log, sceneKey) {
+    _scheduleMorningScene(today, todayEntry, log, sceneKey, { now = DateTime.now().setZone(this.config.timezone), previousSunrise = null } = {}) {
         const cfg = (this.config && this.config[sceneKey]) || {};
         const meta = CoreScheduler.MORNING_SCENES[sceneKey];
         if (!cfg.enabled) return;
@@ -480,10 +899,18 @@ class CoreScheduler {
             return log(`   - ${meta.label}: unparseable timing "${raw}", skipped.`);
         }
 
-        const now = DateTime.now().setZone(this.config.timezone);
-        const castTime = today
+        const offset = { seconds: cfg.offsetSec || 0 };
+        let castTime = today
             .set({ hour: hours, minute: minutes, second: 0, millisecond: 0 })
-            .plus({ seconds: cfg.offsetSec || 0 });
+            .plus(offset);
+        if (previousSunrise) {
+            const oldCastTime = CoreScheduler.at(today, previousSunrise).plus(offset);
+            if (oldCastTime <= now) return; // Played at the old sunrise time; never cast twice.
+            if (castTime < now) {
+                log(`   - ${meta.label}: moved to ${castTime.toFormat('h:mm:ss a')} before it played; casting it now.`);
+                castTime = now.plus({ seconds: 2 });
+            }
+        }
         if (castTime < now) return; // Already passed today — same guard as the prayers loop.
 
         // Pre-bake ahead of the cast so encoding never overlaps the cast itself.
