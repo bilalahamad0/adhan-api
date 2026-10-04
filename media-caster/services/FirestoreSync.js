@@ -167,6 +167,59 @@ class FirestoreSync {
     }
   }
 
+  /**
+   * Publishes tomorrow's schedule (meta/prayerSchedule.nextDay) at today's
+   * Maghrib + 5 min, read from the schedule cache: right away once that has
+   * passed or when today has no Maghrib, otherwise from a job armed for it.
+   * Each call cancels the job an earlier call armed, so calling it again after
+   * a revalidation moved Maghrib re-arms the publish for the new time.
+   * Resolves the DateTime the job is armed for, or null when it published now.
+   */
+  async scheduleNextDayPublish(now) {
+    const { DateTime } = require('luxon');
+    const schedule = require('node-schedule');
+    const at = now || DateTime.now().setZone(this._timezone);
+    const tomorrowIso = at.plus({ days: 1 }).toISODate();
+    if (this._nextDayPublishJob) this._nextDayPublishJob.cancel();
+    this._nextDayPublishJob = null;
+
+    const maghrib = this._getScheduledTimesForISODate(at.toISODate()).Maghrib;
+    if (maghrib) {
+      const [hour, minute] = maghrib.split(':').map(Number);
+      const publishAt = at.set({ hour, minute, second: 0, millisecond: 0 }).plus({ minutes: 5 });
+      if (publishAt > at) {
+        const job = schedule.scheduleJob(publishAt.toJSDate(), () => {
+          if (this._nextDayPublishJob === job) this._nextDayPublishJob = null;
+          this.ensureNextDayScheduleOnFirestore(tomorrowIso).catch((e) => {
+            console.error(`[FirestoreSync] Next-day publish failed: ${e.message}`);
+          });
+        });
+        if (job) {
+          this._nextDayPublishJob = job;
+          console.log(`📅 Scheduled next-day schedule publish for ${publishAt.toFormat('HH:mm:ss')}`);
+          return publishAt;
+        }
+      }
+    }
+    await this.ensureNextDayScheduleOnFirestore(tomorrowIso);
+    return null;
+  }
+
+  /**
+   * A revalidation moved today's times: re-publish them, then re-arm the
+   * Maghrib+5 next-day publish for the new Maghrib. The today publish replaces
+   * meta/prayerSchedule wholesale, dropping the nextDay field, so nextDay is
+   * re-added right away when the new Maghrib+5 has passed. Resolves the today
+   * publish's result.
+   */
+  async republishTodaySchedule(now) {
+    const { DateTime } = require('luxon');
+    const at = now || DateTime.now().setZone(this._timezone);
+    const ok = await this.ensureTodayScheduleOnFirestore(at.toISODate());
+    await this.scheduleNextDayPublish(at);
+    return ok;
+  }
+
   _initFirestore() {
     if (this._db) return this._db;
     if (!this._serviceKeyBase64) {

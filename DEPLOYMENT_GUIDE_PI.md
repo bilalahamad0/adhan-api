@@ -119,6 +119,10 @@ LOCATION_COUNTRY="United States"
 LOCATION_METHOD=2
 LOCATION_SCHOOL=0
 TIMEZONE=America/Los_Angeles
+# Optional: today's times are re-checked 45 min before every prayer and once
+# every morning at this time (24h HH:MM in TIMEZONE). Default 08:00. The morning
+# check skips itself within 50 min before a prayer and for 10 min after one.
+# PRAYER_MORNING_REFRESH=08:00
 ```
 
 ## 4. ADB Connection (One-Time Setup)
