@@ -36,6 +36,28 @@ describe('FirestoreSync static helpers', () => {
   });
 });
 
+describe('FirestoreSync publishBuildInfo', () => {
+  test('publishes only allow-listed keys, so BuildManager-local state stays on the Pi', async () => {
+    const sync = new FirestoreSync('encoded-key', 'America/Los_Angeles', '/tmp/annual_schedule.json');
+    const set = jest.fn().mockResolvedValue(undefined);
+    const db = { collection: jest.fn(() => ({ doc: jest.fn(() => ({ set })) })) };
+    jest.spyOn(sync, '_initFirestore').mockReturnValue(db);
+
+    await sync.publishBuildInfo({
+      currentVersion: 'v2026.04.27-fix.1',
+      lastFailure: { stage: 'reload', failedChecks: ['pm2 reload adb-keeper: exit 1'] },
+      pendingReload: ['adb-keeper'],
+      sha: 'newsha8888888',
+    });
+
+    const [published] = set.mock.calls[0];
+    expect(published.currentVersion).toBe('v2026.04.27-fix.1');
+    expect(published.lastFailure.stage).toBe('reload');
+    expect(published).not.toHaveProperty('pendingReload');
+    expect(published).not.toHaveProperty('sha');
+  });
+});
+
 describe('FirestoreSync ensureTodayScheduleOnFirestore', () => {
   test('merges scheduledTimes and top-level st_* fields onto dailyMetrics', async () => {
     const sync = new FirestoreSync('encoded-key', 'America/Los_Angeles', '/tmp/annual_schedule.json');
