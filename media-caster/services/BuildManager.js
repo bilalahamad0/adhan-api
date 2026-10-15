@@ -18,6 +18,12 @@ const PRIORITY_BY_TYPE = {
   ci: 'low',
 };
 const KNOWN_TYPES = Object.keys(PRIORITY_BY_TYPE);
+// pm2 apps a deploy reloads, in order (names from ecosystem.config.cjs).
+const PM2_APPS = ['adhan-caster', 'adb-keeper', 'auto-updater'];
+// Right after the deploy's npm ci writes, the pm2 CLI on the Pi took 54-144s
+// just to reach the daemon; the old 30s limit killed every reload from
+// 2026-10-06 on.
+const PM2_RELOAD_TIMEOUT_MS = 5 * 60_000;
 
 function defaultRunExec(cmd, opts = {}) {
   return new Promise((resolve, reject) => {
@@ -47,6 +53,8 @@ class BuildManager {
     nowFn = () => DateTime.now(),
     prayerWindowProvider = null,
     timezone = 'America/Los_Angeles',
+    pm2Apps = PM2_APPS,
+    selfPm2App = null,
   } = {}) {
     if (!repoRoot) throw new Error('BuildManager requires repoRoot');
     if (!stagingPath) throw new Error('BuildManager requires stagingPath');
@@ -65,6 +73,8 @@ class BuildManager {
     this.nowFn = nowFn;
     this.prayerWindowProvider = prayerWindowProvider;
     this.timezone = timezone;
+    this.pm2Apps = pm2Apps;
+    this.selfPm2App = selfPm2App;
     this._inProgress = false;
     this._fileModeApplied = false;
     this._buildInfoPath = path.join(dataDir, 'build-info.json');
@@ -245,11 +255,21 @@ class BuildManager {
       }
 
       result.stage = 'reload';
-      await this._reloadCaster();
+      result.version = versionInfo.version;
+      const reload = await this._reloadApps();
+      result.restartSelf = reload.restartSelf;
+      if (reload.failed.length > 0) {
+        // The new code is on disk but some app is still running the old code.
+        // This counts as a failed deploy, and it is published to meta/build
+        // so it shows on the dashboard instead of only in a pm2 log.
+        result.reloadFailures = reload.failed;
+        result.reason = `reload-failed: ${reload.failed.map((f) => `${f.app} (${f.error})`).join(', ')}`;
+        await this._writeFailure(result);
+        return result;
+      }
 
       result.success = true;
       result.reason = 'deployed';
-      result.version = versionInfo.version;
       return result;
     } catch (e) {
       result.reason = `${result.stage}-error: ${e.message}`;
@@ -379,10 +399,47 @@ class BuildManager {
     }
   }
 
-  async _reloadCaster() {
-    await this.runExec(`pm2 reload adhan-caster adb-keeper auto-updater`, { timeoutMs: 30_000 }).catch((e) => {
-      this.log(`[BuildManager] pm2 reload warning: ${e.message}`);
-    });
+  /**
+   * Reload each pm2 app onto the new code with its own `pm2 reload <name>`.
+   * pm2's `reload` takes exactly one name: `pm2 reload a b c` reloads `a` and
+   * silently ignores the rest, which left adb-keeper and auto-updater on stale
+   * code after every deploy.
+   *
+   * `exec` hands the shell's PID to the pm2 CLI. On Debian 13, dash keeps
+   * `sh -c` as the parent, so a timeout killed only the shell and left the
+   * CLI running orphaned, after the deploy had already been reported.
+   *
+   * Skips selfPm2App, the app this code is running in. pm2 kills a reloading
+   * app's whole process tree (treekill), which would also kill the CLI that
+   * asked for the reload. The caller restarts that app itself once the cycle
+   * is recorded (result.restartSelf).
+   */
+  async _reloadApps() {
+    const failed = [];
+    for (const app of this.pm2Apps) {
+      if (app === this.selfPm2App) continue;
+      const startedMs = Date.now();
+      try {
+        await this.runExec(`exec pm2 reload ${app}`, { timeoutMs: PM2_RELOAD_TIMEOUT_MS });
+        this.log(`[BuildManager] pm2 reload ${app} ok (${((Date.now() - startedMs) / 1000).toFixed(1)}s)`);
+      } catch (e) {
+        const error = BuildManager.describeExecFailure(e, PM2_RELOAD_TIMEOUT_MS);
+        failed.push({ app, error });
+        // The CLI output stays in the local log. It can carry paths and env
+        // values, so it never goes into the published failure.
+        const output = String(e.stderr || e.stdout || '').trim().slice(0, 500);
+        this.log(`[BuildManager] pm2 reload ${app} FAILED: ${error}${output ? ` | ${output}` : ''}`);
+      }
+    }
+    return { failed, restartSelf: this.pm2Apps.includes(this.selfPm2App) };
+  }
+
+  /** A short cause for a runExec rejection, safe to publish; never its output. */
+  static describeExecFailure(e, timeoutMs) {
+    if (e?.killed) return `timed out after ${Math.round(timeoutMs / 1000)}s`;
+    if (Number.isInteger(e?.code)) return `exit ${e.code}`;
+    if (e?.signal) return `killed by ${e.signal}`;
+    return 'failed';
   }
 
   async _cleanupStaging() {
@@ -492,11 +549,15 @@ class BuildManager {
   async _writeFailure(result) {
     const existing = this.readBuildInfo() || {};
     const failure = {
-      version: result.sha ? `pending-${result.sha.slice(0, 7)}` : (existing.currentVersion || null),
+      version: result.version
+        || (result.sha ? `pending-${result.sha.slice(0, 7)}` : (existing.currentVersion || null)),
       shortSha: result.sha ? result.sha.slice(0, 7) : null,
       ts: this.nowFn().toISO(),
       stage: result.stage,
-      failedChecks: result.smokeResult?.failedChecks || [],
+      // The dashboard banner lists these, so a failed reload names its apps.
+      failedChecks: result.reloadFailures
+        ? result.reloadFailures.map((f) => `pm2 reload ${f.app}: ${f.error}`)
+        : (result.smokeResult?.failedChecks || []),
     };
     const merged = { ...existing, lastFailure: failure };
     if (this.fs.existsSync(this.dataDir) === false) this.fs.mkdirSync(this.dataDir, { recursive: true });
@@ -545,3 +606,5 @@ class BuildManager {
 module.exports = BuildManager;
 module.exports.PRIORITY_BY_TYPE = PRIORITY_BY_TYPE;
 module.exports.SAFE_PRAYER_GAP_MIN = SAFE_PRAYER_GAP_MIN;
+module.exports.PM2_APPS = PM2_APPS;
+module.exports.PM2_RELOAD_TIMEOUT_MS = PM2_RELOAD_TIMEOUT_MS;
