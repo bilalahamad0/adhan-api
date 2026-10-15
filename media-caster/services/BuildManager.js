@@ -161,6 +161,12 @@ class BuildManager {
       if (!newSha) {
         const upd = await this.checkForUpdate();
         if (!upd.newSha) {
+          // After a swap, HEAD already equals origin, so an app whose reload
+          // failed would stay on old code until the next commit. Retry it here.
+          const pending = this.readBuildInfo()?.pendingReload;
+          if (!dryRun && Array.isArray(pending) && pending.length > 0) {
+            return await this._retryPendingReload(pending, result);
+          }
           result.success = true;
           result.reason = 'no-update';
           await this._publishCurrentState(upd.currentSha);
@@ -414,9 +420,9 @@ class BuildManager {
    * asked for the reload. The caller restarts that app itself once the cycle
    * is recorded (result.restartSelf).
    */
-  async _reloadApps() {
+  async _reloadApps(apps = this.pm2Apps) {
     const failed = [];
-    for (const app of this.pm2Apps) {
+    for (const app of apps) {
       if (app === this.selfPm2App) continue;
       const startedMs = Date.now();
       try {
@@ -431,7 +437,38 @@ class BuildManager {
         this.log(`[BuildManager] pm2 reload ${app} FAILED: ${error}${output ? ` | ${output}` : ''}`);
       }
     }
-    return { failed, restartSelf: this.pm2Apps.includes(this.selfPm2App) };
+    return { failed, restartSelf: apps.includes(this.selfPm2App) };
+  }
+
+  /**
+   * Reload the apps a previous deploy failed to reload. On success, move
+   * currentDeployedAt to now. That marks when every app actually got the
+   * code, and it clears the dashboard banner (shown while lastFailure.ts >
+   * currentDeployedAt). On failure, refresh lastFailure and keep whichever
+   * apps are still pending.
+   */
+  async _retryPendingReload(pending, result) {
+    result.stage = 'reload-retry';
+    this.log(`[BuildManager] retrying pm2 reload left pending by the last deploy: ${pending.join(', ')}`);
+    const reload = await this._reloadApps(pending);
+    result.restartSelf = reload.restartSelf;
+    if (reload.failed.length > 0) {
+      result.reloadFailures = reload.failed;
+      result.reason = `reload-failed: ${reload.failed.map((f) => `${f.app} (${f.error})`).join(', ')}`;
+      await this._writeFailure(result);
+      return result;
+    }
+
+    const record = { ...(this.readBuildInfo() || {}), currentDeployedAt: this.nowFn().toISO() };
+    delete record.pendingReload;
+    await this.writeBuildInfo(record);
+    if (this.firestoreSync && typeof this.firestoreSync.publishBuildInfo === 'function') {
+      try { await this.firestoreSync.publishBuildInfo(record); }
+      catch (e) { this.log(`[BuildManager] publishBuildInfo failed: ${e.message}`); }
+    }
+    result.success = true;
+    result.reason = 'reload-retried';
+    return result;
   }
 
   /** A short cause for a runExec rejection, safe to publish; never its output. */
@@ -560,6 +597,9 @@ class BuildManager {
         : (result.smokeResult?.failedChecks || []),
     };
     const merged = { ...existing, lastFailure: failure };
+    // Local-only (publishBuildInfo's allow-list drops it): the apps the next
+    // no-update cycle retries.
+    if (result.reloadFailures) merged.pendingReload = result.reloadFailures.map((f) => f.app);
     if (this.fs.existsSync(this.dataDir) === false) this.fs.mkdirSync(this.dataDir, { recursive: true });
     this.fs.writeFileSync(this._buildInfoPath, JSON.stringify(merged, null, 2));
     if (this.firestoreSync && typeof this.firestoreSync.publishBuildInfo === 'function') {
