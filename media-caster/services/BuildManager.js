@@ -18,6 +18,11 @@ const PRIORITY_BY_TYPE = {
   ci: 'low',
 };
 const KNOWN_TYPES = Object.keys(PRIORITY_BY_TYPE);
+// SecurityService's commit identity; SECURITY_GIT_EMAIL overrides it in both.
+const SECURITY_BOT_EMAIL = 'security-bot@adhan-api.local';
+// The only files a SecurityService commit stages.
+const MANIFEST_PATH = /(^|\/)(package(-lock)?\.json|ip-patch\/.+)$/;
+const SHA = /^[0-9a-f]{7,40}$/i;
 
 function defaultRunExec(cmd, opts = {}) {
   return new Promise((resolve, reject) => {
@@ -47,6 +52,7 @@ class BuildManager {
     nowFn = () => DateTime.now(),
     prayerWindowProvider = null,
     timezone = 'America/Los_Angeles',
+    securityBotEmail = process.env.SECURITY_GIT_EMAIL || SECURITY_BOT_EMAIL,
   } = {}) {
     if (!repoRoot) throw new Error('BuildManager requires repoRoot');
     if (!stagingPath) throw new Error('BuildManager requires stagingPath');
@@ -65,6 +71,7 @@ class BuildManager {
     this.nowFn = nowFn;
     this.prayerWindowProvider = prayerWindowProvider;
     this.timezone = timezone;
+    this.securityBotEmail = securityBotEmail;
     this._inProgress = false;
     this._fileModeApplied = false;
     this._buildInfoPath = path.join(dataDir, 'build-info.json');
@@ -81,7 +88,42 @@ class BuildManager {
     const newSha = remote.trim();
     if (!newSha || !currentSha) throw new Error('git rev-parse returned empty SHA');
     if (currentSha === newSha) return { currentSha, newSha: null };
+    const localOnly = await this._unpushedSecurityCommits(currentSha, newSha);
+    if (localOnly > 0) {
+      this.log(`[BuildManager] HEAD is the deployed origin/${this.branch} plus ${localOnly} unpushed security-bot commit(s); nothing to deploy`);
+      return { currentSha, newSha: null, localOnly };
+    }
     return { currentSha, newSha };
+  }
+
+  /**
+   * How many commits HEAD carries on top of origin when every one of them is a
+   * SecurityService commit that never reached origin; 0 otherwise. Redeploying
+   * origin over those only resets them away: the Pi ran that loop nightly, a
+   * 00:01 security commit followed by a 02:00 reset and full redeploy.
+   *
+   * Only applies when build-info.json says origin's tip is what is deployed,
+   * since a security rebase can move the files on disk to a newer origin
+   * without a deploy, and that still needs one. Any doubt returns 0, which
+   * deploys as before.
+   */
+  async _unpushedSecurityCommits(currentSha, remoteSha) {
+    const deployed = this.readBuildInfo();
+    if (!deployed || deployed.sha !== remoteSha) return 0;
+    if (!SHA.test(currentSha) || !SHA.test(remoteSha)) return 0;
+    const git = `git -C ${this.repoRoot}`;
+    try {
+      const { stdout: behind } = await this.runExec(`${git} rev-list --count ${currentSha}..${remoteSha}`);
+      if (behind.trim() !== '0') return 0;
+      const { stdout: authors } = await this.runExec(`${git} log --format=%ae ${remoteSha}..${currentSha}`);
+      const commits = authors.split('\n').map((a) => a.trim()).filter(Boolean);
+      if (!commits.length || !commits.every((a) => a === this.securityBotEmail)) return 0;
+      const { stdout: files } = await this.runExec(`${git} diff --name-only ${remoteSha} ${currentSha}`);
+      if (!files.split('\n').filter(Boolean).every((f) => MANIFEST_PATH.test(f.trim()))) return 0;
+      return commits.length;
+    } catch {
+      return 0;
+    }
   }
 
   async safeToApply() {
@@ -545,3 +587,4 @@ class BuildManager {
 module.exports = BuildManager;
 module.exports.PRIORITY_BY_TYPE = PRIORITY_BY_TYPE;
 module.exports.SAFE_PRAYER_GAP_MIN = SAFE_PRAYER_GAP_MIN;
+module.exports.SECURITY_BOT_EMAIL = SECURITY_BOT_EMAIL;

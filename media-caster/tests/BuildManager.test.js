@@ -139,6 +139,91 @@ describe('BuildManager.checkForUpdate', () => {
   });
 });
 
+// The Pi's nightly loop: SecurityService committed at 00:01 and could not push,
+// then the 02:00 cycle read HEAD != origin as an update, reset the commit away
+// and redeployed the sha that was already running.
+describe('BuildManager.checkForUpdate with unpushed security commits', () => {
+  const ORIGIN = '3298b3d7fc23500aaaf3953ee86625cd0d8ac698';
+  const BOT_COMMIT = 'c0a99be95efe71648fdeb8115192e386d9459007';
+  const MANIFESTS = 'media-caster/package-lock.json\nmedia-caster/package.json\npackage-lock.json\npackage.json\n';
+
+  function setup({ deployedSha = ORIGIN, overrides = {} } = {}) {
+    const { runExec, calls } = makeRunExecRecorder({
+      'rev-parse HEAD': { stdout: `${BOT_COMMIT}\n`, stderr: '' },
+      'rev-parse origin/main': { stdout: `${ORIGIN}\n`, stderr: '' },
+      'rev-list --count': { stdout: '0\n', stderr: '' },
+      'log --format=%ae': { stdout: `${BuildManager.SECURITY_BOT_EMAIL}\n`, stderr: '' },
+      'diff --name-only': { stdout: MANIFESTS, stderr: '' },
+      'log -1 --pretty=%s': { stdout: 'chore: weekly AI metrics update\n', stderr: '' },
+      ...overrides,
+    });
+    const fsApi = makeFakeFs({
+      [path.join(DATA, 'build-info.json')]: JSON.stringify({ currentVersion: 'v2026.10.15-chore.1', sha: deployedSha }),
+    });
+    const bm = new BuildManager({
+      repoRoot: REPO, stagingPath: STAGING, dataDir: DATA,
+      smokeRunner: makeSmoke({ ok: true, passed: 1, failed: 0, failedChecks: [], reason: 'OK', durationMs: 10 }),
+      runExec, fsApi, log: jest.fn(), nowFn: () => FIXED_NOW,
+      securityBotEmail: BuildManager.SECURITY_BOT_EMAIL,
+    });
+    return { bm, calls };
+  }
+
+  test('does not treat them as an update', async () => {
+    const { bm } = setup();
+    expect(await bm.checkForUpdate()).toEqual({ currentSha: BOT_COMMIT, newSha: null, localOnly: 1 });
+    expect(bm.log).toHaveBeenCalledWith(expect.stringContaining('1 unpushed security-bot commit'));
+  });
+
+  test('so the update cycle neither resets nor redeploys', async () => {
+    const { bm, calls } = setup();
+    const result = await bm.attemptUpdate();
+    expect(result).toMatchObject({ success: true, reason: 'no-update' });
+    const cmds = calls.join('\n');
+    expect(cmds).not.toMatch(/worktree add/);
+    expect(cmds).not.toMatch(/reset --hard/);
+    expect(cmds).not.toMatch(/pm2 reload/);
+  });
+
+  test('deploys when origin has moved on as well', async () => {
+    const { bm } = setup({ overrides: { 'rev-list --count': { stdout: '1\n', stderr: '' } } });
+    expect((await bm.checkForUpdate()).newSha).toBe(ORIGIN);
+  });
+
+  test('deploys when a local commit is not the security bot\'s', async () => {
+    const { bm } = setup({
+      overrides: { 'log --format=%ae': { stdout: `${BuildManager.SECURITY_BOT_EMAIL}\nsomeone@example.com\n`, stderr: '' } },
+    });
+    expect((await bm.checkForUpdate()).newSha).toBe(ORIGIN);
+  });
+
+  test('deploys when the local commits touch more than dependency manifests', async () => {
+    const { bm } = setup({
+      overrides: { 'diff --name-only': { stdout: `${MANIFESTS}media-caster/boot.js\n`, stderr: '' } },
+    });
+    expect((await bm.checkForUpdate()).newSha).toBe(ORIGIN);
+  });
+
+  // A security rebase can move the files on disk to a newer origin without a
+  // deploy; the running code is still the old one and needs the deploy.
+  test('deploys when origin\'s tip is not what build-info says is deployed', async () => {
+    const { bm, calls } = setup({ deployedSha: '1cfe4e65d1539540823cb300661dae29b857bf9f' });
+    expect((await bm.checkForUpdate()).newSha).toBe(ORIGIN);
+    expect(calls.join('\n')).not.toMatch(/rev-list/);
+  });
+
+  test('falls back to deploying when git cannot answer', async () => {
+    const { bm } = setup({ overrides: { 'rev-list --count': new Error('bad revision') } });
+    expect((await bm.checkForUpdate()).newSha).toBe(ORIGIN);
+  });
+
+  test('matches the identity SecurityService commits under', () => {
+    const SecurityService = require('../services/SecurityService');
+    const bm = new BuildManager({ repoRoot: REPO, stagingPath: STAGING, dataDir: DATA, smokeRunner: makeSmoke({}) });
+    expect(bm.securityBotEmail).toBe(new SecurityService({ runExec: jest.fn() }).gitEmail);
+  });
+});
+
 describe('BuildManager.attemptUpdate happy path', () => {
   test('passes smoke, swaps, publishes meta/build, reloads', async () => {
     const { runExec, calls } = makeRunExecRecorder({
