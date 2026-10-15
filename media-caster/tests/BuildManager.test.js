@@ -184,7 +184,137 @@ describe('BuildManager.attemptUpdate happy path', () => {
     expect(cmdJoined).toMatch(/git -C \/srv\/repo worktree add --detach \/tmp\/staging newsha8888888/);
     expect(cmdJoined).toMatch(/npm ci --omit=dev/);
     expect(cmdJoined).toMatch(/rsync -a --delete-after/);
-    expect(cmdJoined).toMatch(/pm2 reload adhan-caster adb-keeper auto-updater/);
+    expect(calls.filter((c) => c.includes('pm2 reload'))).toEqual([
+      'exec pm2 reload adhan-caster',
+      'exec pm2 reload adb-keeper',
+      'exec pm2 reload auto-updater',
+    ]);
+    expect(result.restartSelf).toBe(false);
+  });
+});
+
+describe('BuildManager pm2 reload', () => {
+  const SHA_RESPONSES = {
+    'rev-parse HEAD': { stdout: 'oldsha7777777\n', stderr: '' },
+    'rev-parse origin/main': { stdout: 'newsha8888888\n', stderr: '' },
+    'log -1 --pretty=%s': { stdout: 'fix(scheduler): correct DST drift\n', stderr: '' },
+  };
+
+  function makeManager(responses, extra = {}) {
+    const { runExec, calls } = makeRunExecRecorder({ ...responses, ...SHA_RESPONSES });
+    const fsApi = makeFakeFs();
+    const firestoreSync = { publishBuildInfo: jest.fn().mockResolvedValue(true) };
+    const logs = [];
+    const bm = new BuildManager({
+      repoRoot: REPO, stagingPath: STAGING, dataDir: DATA,
+      smokeRunner: makeSmoke({ ok: true, passed: 25, failed: 0, failedChecks: [], reason: 'OK', durationMs: 9000 }),
+      runExec, fsApi, firestoreSync,
+      nowFn: () => FIXED_NOW,
+      log: (msg) => logs.push(msg),
+      ...extra,
+    });
+    const reloads = () => calls.filter((c) => c.includes('pm2 reload'));
+    return { bm, runExec, fsApi, firestoreSync, logs, reloads };
+  }
+
+  // pm2's `reload <id|name|namespace|all>` takes one name. The old single
+  // `pm2 reload adhan-caster adb-keeper auto-updater` reloaded adhan-caster
+  // and silently ignored the other two, every night.
+  test('names exactly one app per pm2 reload', async () => {
+    const { bm, reloads } = makeManager({});
+    await bm.attemptUpdate();
+    expect(reloads().length).toBe(BuildManager.PM2_APPS.length);
+    for (const cmd of reloads()) {
+      expect(cmd).toMatch(/^exec pm2 reload [\w-]+$/);
+    }
+  });
+
+  // On the Pi the CLI took 54-144s to reach the daemon after npm ci, so the old
+  // 30s limit timed out every night.
+  test('gives each reload minutes, not 30s', async () => {
+    const { bm, runExec } = makeManager({});
+    await bm.attemptUpdate();
+    const reloadCalls = runExec.mock.calls.filter(([cmd]) => cmd.includes('pm2 reload'));
+    expect(reloadCalls.length).toBeGreaterThan(0);
+    for (const [, opts] of reloadCalls) {
+      expect(opts.timeoutMs).toBe(BuildManager.PM2_RELOAD_TIMEOUT_MS);
+    }
+    expect(BuildManager.PM2_RELOAD_TIMEOUT_MS).toBeGreaterThanOrEqual(3 * 60_000);
+  });
+
+  // pm2 kills a reloading app's process tree. Reloading the auto-updater from
+  // inside it would kill the CLI doing the reload, and the cycle with it.
+  test('leaves its own app to the caller and asks for a restart', async () => {
+    const { bm, reloads } = makeManager({}, { selfPm2App: 'auto-updater' });
+    const result = await bm.attemptUpdate();
+    expect(result.success).toBe(true);
+    expect(result.reason).toBe('deployed');
+    expect(reloads()).toEqual(['exec pm2 reload adhan-caster', 'exec pm2 reload adb-keeper']);
+    expect(result.restartSelf).toBe(true);
+  });
+
+  test('a timed-out reload fails the deploy and is published to meta/build', async () => {
+    const timeout = Object.assign(new Error('Command failed: exec pm2 reload adb-keeper\n'), {
+      killed: true, signal: 'SIGTERM', code: null, stdout: '', stderr: '',
+    });
+    const { bm, fsApi, firestoreSync, reloads } = makeManager(
+      { 'pm2 reload adb-keeper': timeout },
+      { selfPm2App: 'auto-updater' },
+    );
+
+    const result = await bm.attemptUpdate();
+
+    expect(result.success).toBe(false);
+    expect(result.stage).toBe('reload');
+    expect(result.reason).toBe('reload-failed: adb-keeper (timed out after 300s)');
+    expect(result.reloadFailures).toEqual([{ app: 'adb-keeper', error: 'timed out after 300s' }]);
+    // The new code is on disk either way, so the auto-updater still restarts onto it.
+    expect(result.restartSelf).toBe(true);
+    expect(reloads()).toEqual(['exec pm2 reload adhan-caster', 'exec pm2 reload adb-keeper']);
+
+    const persisted = JSON.parse(fsApi._store.get(path.join(DATA, 'build-info.json')));
+    expect(persisted.lastFailure).toMatchObject({
+      version: 'v2026.04.27-fix.1',
+      shortSha: 'newsha8',
+      stage: 'reload',
+      failedChecks: ['pm2 reload adb-keeper: timed out after 300s'],
+    });
+    const lastPublish = firestoreSync.publishBuildInfo.mock.calls.at(-1)[0];
+    expect(lastPublish.lastFailure.stage).toBe('reload');
+    expect(lastPublish.lastFailure.failedChecks).toEqual(['pm2 reload adb-keeper: timed out after 300s']);
+  });
+
+  test('keeps reloading the other apps after one fails, and reports each failure', async () => {
+    const missing = Object.assign(new Error('Command failed: exec pm2 reload adhan-caster\n'), {
+      killed: false, signal: null, code: 1,
+      stdout: '', stderr: '[PM2][ERROR] Process or Namespace adhan-caster not found\n',
+    });
+    const { bm, firestoreSync, logs, reloads } = makeManager({ 'pm2 reload adhan-caster': missing });
+
+    const result = await bm.attemptUpdate();
+
+    expect(reloads()).toEqual([
+      'exec pm2 reload adhan-caster',
+      'exec pm2 reload adb-keeper',
+      'exec pm2 reload auto-updater',
+    ]);
+    expect(result.success).toBe(false);
+    expect(result.reason).toBe('reload-failed: adhan-caster (exit 1)');
+    // The CLI's own words go to the local log only, never to the published record.
+    expect(logs.some((l) => l.includes('pm2 reload adhan-caster FAILED: exit 1') && l.includes('not found'))).toBe(true);
+    expect(logs.some((l) => l.includes('pm2 reload adb-keeper ok'))).toBe(true);
+    const published = JSON.stringify(firestoreSync.publishBuildInfo.mock.calls.at(-1)[0]);
+    expect(published).toContain('pm2 reload adhan-caster: exit 1');
+    expect(published).not.toContain('[PM2][ERROR]');
+  });
+});
+
+describe('BuildManager.describeExecFailure', () => {
+  test('names the cause without the command output', () => {
+    expect(BuildManager.describeExecFailure({ killed: true, signal: 'SIGTERM' }, 300_000)).toBe('timed out after 300s');
+    expect(BuildManager.describeExecFailure({ killed: false, code: 1, stderr: 'secret path' }, 300_000)).toBe('exit 1');
+    expect(BuildManager.describeExecFailure({ killed: false, code: null, signal: 'SIGKILL' }, 300_000)).toBe('killed by SIGKILL');
+    expect(BuildManager.describeExecFailure(new Error('spawn failed'), 300_000)).toBe('failed');
   });
 });
 
