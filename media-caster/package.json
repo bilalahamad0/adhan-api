@@ -24,21 +24,14 @@
     "ip": "file:./ip-patch",
     "luxon": "^3.7.2",
     "node-schedule": "^2.1.1",
-    "pm2": "^7.0.1",
     "semver": "^7.7.2",
     "web-push": "^3.6.7"
   },
   "overrides": {
-    "systeminformation": "^5.31.3",
     "ip": "file:./ip-patch",
     "xml2js": "^0.6.2",
-    "basic-ftp": "^6.2.1",
     "protobufjs": "^7.5.6",
     "@tootallnate/once": "^3.0.1",
-    "pm2": {
-      "js-yaml": "4.3.2",
-      "chokidar": "^4.0.3"
-    },
     "qs": "6.16.1",
     "uuid": "11.1.1"
   }

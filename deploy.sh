@@ -12,6 +12,9 @@ REPO_ROOT="$HOME/adhan-api"
 PROJECT_DIR="$REPO_ROOT/media-caster"
 ENV_FILE="$PROJECT_DIR/.env"
 BRANCH="main"
+# pm2 is a global install, not a repo dependency, so nothing in package.json
+# keeps it current. Bump this on purpose; see "Managing pm2" in DEPLOYMENT_GUIDE_PI.md.
+PM2_VERSION="7.0.4"
 
 echo "Starting Adhan Media Caster manual deployment..."
 
@@ -56,7 +59,23 @@ cd "$REPO_ROOT"
 git status --short -uall || true
 echo "-------------------------------"
 
-# 8. Restart Services
+# 8. Check the global pm2 against PM2_VERSION. Warn only: upgrading restarts
+# every app, so it is an operator step outside a prayer window, not a deploy step.
+PM2_PATH="$(command -v pm2 || true)"
+PM2_INSTALLED="unknown"
+if [ -n "$PM2_PATH" ]; then
+    PM2_INSTALLED="$(node -p "require('$(dirname "$(readlink -f "$PM2_PATH")")/../package.json').version" 2>/dev/null || echo unknown)"
+fi
+if [ "$PM2_INSTALLED" != "$PM2_VERSION" ]; then
+    echo ""
+    echo "WARNING: global pm2 is $PM2_INSTALLED but deploy.sh pins $PM2_VERSION."
+    echo "Upgrade outside a prayer window (all apps restart):"
+    echo "  npm install -g pm2@$PM2_VERSION && pm2 save && sudo systemctl restart pm2-$(whoami)"
+    echo "Use systemctl, not 'pm2 update': see \"Managing pm2\" in DEPLOYMENT_GUIDE_PI.md."
+    echo ""
+fi
+
+# 9. Restart Services
 echo "Restarting orchestration engine via PM2..."
 pm2 delete all 2>/dev/null || true
 pm2 start ecosystem.config.cjs
