@@ -7,8 +7,11 @@ const MC = '/srv/repo/media-caster';
 function makeFakeFs(initial = {}) {
   const store = new Map(Object.entries(initial));
   const removed = [];
+  // Directories created through the fake, by path, with their mtime.
+  const dirs = new Map();
+  const missing = (p) => Object.assign(new Error(`ENOENT: ${p}`), { code: 'ENOENT' });
   return {
-    existsSync: (p) => store.has(p),
+    existsSync: (p) => store.has(p) || dirs.has(p),
     readFileSync: (p) => {
       if (!store.has(p)) {
         const e = new Error(`ENOENT: ${p}`);
@@ -18,12 +21,23 @@ function makeFakeFs(initial = {}) {
       return store.get(p);
     },
     writeFileSync: (p, contents) => store.set(p, contents),
-    mkdtempSync: (prefix) => `${prefix}TEST`,
+    mkdtempSync: (prefix) => {
+      dirs.set(`${prefix}TEST`, Date.now());
+      return `${prefix}TEST`;
+    },
+    mkdirSync: (p) => dirs.set(p, Date.now()),
+    readdirSync: (p) => [...dirs.keys()].filter((d) => path.dirname(d) === p).map((d) => path.basename(d)),
+    statSync: (p) => {
+      if (!dirs.has(p)) throw missing(p);
+      return { mtimeMs: dirs.get(p) };
+    },
     rmSync: (p) => {
       removed.push(p);
-      for (const key of [...store.keys()]) if (key === p || key.startsWith(`${p}/`)) store.delete(key);
+      for (const map of [store, dirs])
+        for (const key of [...map.keys()]) if (key === p || key.startsWith(`${p}/`)) map.delete(key);
     },
     _store: store,
+    _dirs: dirs,
     _removed: removed,
     _json: (p) => JSON.parse(store.get(p)),
   };
@@ -50,15 +64,18 @@ function makeRunExec(responses = {}) {
 const pkgFile = (dir) => path.join(dir, 'package.json');
 const lockFile = (dir) => path.join(dir, 'package-lock.json');
 
-// Fix mode's throwaway copy of the manifests (the fake mkdtemp appends TEST).
+// Fix mode's throwaway copy of the manifests: a mkdtemp dir (the fake appends
+// TEST) holding a folder named after the live checkout, "repo" for ROOT.
 const SCRATCH_PARENT = '/tmp/sec';
-const SCRATCH = '/tmp/sec/adhan-security-TEST';
+const SCRATCH_ROOT = '/tmp/sec/adhan-security-TEST';
+const SCRATCH = `${SCRATCH_ROOT}/repo`;
 const SCRATCH_MC = `${SCRATCH}/media-caster`;
 const BASE = '3298b3d7fc23500aaaf3953ee86625cd0d8ac698';
 const TREE = '1111111111111111111111111111111111111111';
 const COMMIT = 'c0ffee0000000000000000000000000000000000';
 const SAME_BLOB = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 const NEW_BLOB = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+const SCRATCH_COPY = { root: SCRATCH_ROOT, dir: SCRATCH, base: BASE };
 
 function manifests(root, mc, { pkg = { overrides: {} } } = {}) {
   return {
@@ -402,7 +419,13 @@ describe('SecurityService scratch copy', () => {
 
     const scratch = await service._prepareScratch();
 
-    expect(scratch).toEqual({ ok: true, dir: SCRATCH, base: BASE, workspaces: [SCRATCH, SCRATCH_MC] });
+    expect(scratch).toEqual({
+      ok: true,
+      root: SCRATCH_ROOT,
+      dir: SCRATCH,
+      base: BASE,
+      workspaces: [SCRATCH, SCRATCH_MC],
+    });
     const order = calls.map((c) => c.cmd);
     expect(order.slice(0, 2)).toEqual(['git fetch origin main', 'git rev-parse origin/main']);
     expect(order).toContain(`${ARCHIVE} media-caster/ip-patch | tar -x -C '${SCRATCH}'`);
@@ -424,7 +447,7 @@ describe('SecurityService scratch copy', () => {
     const { service, fsApi } = makeService({ responses: plumbing() });
 
     expect(await service._prepareScratch()).toMatchObject({ ok: false, failureReason: 'scratch-failed' });
-    expect(fsApi._removed).toEqual([SCRATCH]);
+    expect(fsApi._removed).toEqual([SCRATCH_ROOT]);
   });
 
   it('reports a failed fetch before creating anything', async () => {
@@ -442,22 +465,66 @@ describe('SecurityService scratch copy', () => {
     const { service, fsApi } = makeService();
     service._removeScratch(ROOT);
     service._removeScratch('/tmp/sec/something-else');
-    service._removeScratch(SCRATCH);
-    expect(fsApi._removed).toEqual([SCRATCH]);
+    service._removeScratch(SCRATCH_ROOT);
+    expect(fsApi._removed).toEqual([SCRATCH_ROOT]);
+  });
+
+  // npm names a lockfile after its folder when package.json has no "name".
+  it('extracts under the live checkout\'s folder name, not the random mkdtemp one', async () => {
+    const { service, fsApi } = makeService({
+      files: manifests('/tmp/sec/adhan-security-TEST/adhan-api', '/tmp/sec/adhan-security-TEST/adhan-api/media-caster'),
+      responses: plumbing(),
+      repoRoot: '/home/pi/adhan-api/',
+      mediaCasterDir: '/home/pi/adhan-api/media-caster',
+    });
+
+    const scratch = await service._prepareScratch();
+
+    expect(scratch.dir).toBe('/tmp/sec/adhan-security-TEST/adhan-api');
+    expect(fsApi._dirs.has(scratch.dir)).toBe(true);
+  });
+
+  it('removes the dir when anything throws after it was created', async () => {
+    const { service, fsApi } = makeService({
+      responses: {
+        ...plumbing(),
+        'ls-tree': () => {
+          throw new Error('git crashed');
+        },
+      },
+    });
+
+    expect(await service._prepareScratch()).toMatchObject({ ok: false, failureReason: 'scratch-failed' });
+    expect(fsApi._removed).toEqual([SCRATCH_ROOT]);
+  });
+
+  // A run killed mid-way (pm2 restart, reboot of the process) leaves its dir.
+  it('sweeps scratch dirs older than a day before making a new one', async () => {
+    const { service, fsApi } = makeService({ files: manifests(SCRATCH, SCRATCH_MC), responses: plumbing() });
+    const day = 24 * 60 * 60_000;
+    fsApi._dirs.set('/tmp/sec/adhan-security-old', Date.now() - 2 * day);
+    fsApi._dirs.set('/tmp/sec/adhan-security-recent', Date.now() - 60_000);
+    fsApi._dirs.set('/tmp/sec/unrelated-old', Date.now() - 2 * day);
+
+    await service._prepareScratch();
+
+    expect(fsApi._removed).toEqual(['/tmp/sec/adhan-security-old']);
+    expect(fsApi._dirs.has('/tmp/sec/adhan-security-recent')).toBe(true);
+    expect(fsApi._dirs.has('/tmp/sec/unrelated-old')).toBe(true);
   });
 });
 
 describe('SecurityService commit from objects', () => {
   const run = (opts) => {
     const svc = makeService({ responses: plumbing(opts) });
-    return { ...svc, result: svc.service._commitAndPush(SCRATCH, BASE) };
+    return { ...svc, result: svc.service._commitAndPush(SCRATCH_COPY) };
   };
 
   it('builds the commit on the origin tip with a temporary index, and pushes that sha', async () => {
     const { calls, result } = run();
     expect(await result).toMatchObject({ changed: true, committed: true, pushed: true, failureReason: null });
 
-    const index = `GIT_INDEX_FILE='${SCRATCH}/.git-index'`;
+    const index = `GIT_INDEX_FILE='${SCRATCH_ROOT}/git-index'`;
     const cmds = calls.map((c) => c.cmd);
     expect(cmds).toEqual(
       expect.arrayContaining([
@@ -501,7 +568,7 @@ describe('SecurityService commit from objects', () => {
 
   it('stops before pushing when the commit cannot be built', async () => {
     const svc = makeService({ responses: { ...plumbing(), 'write-tree': { code: 128, stdout: '' } } });
-    expect(await svc.service._commitAndPush(SCRATCH, BASE)).toMatchObject({
+    expect(await svc.service._commitAndPush(SCRATCH_COPY)).toMatchObject({
       committed: false,
       failureReason: 'commit-failed',
     });
@@ -687,14 +754,14 @@ describe('SecurityService fix mode', () => {
     stdout: JSON.stringify({ vulnerabilities: {}, metadata: { vulnerabilities: { critical: 0, high: 0 } } }),
   };
 
-  function fixRun({ extra = {}, git = {} } = {}) {
+  function fixRun({ extra = {}, git = {}, audit = CLEAN_AUDIT } = {}) {
     const run = makeService({
       files: { ...manifests(ROOT, MC), ...manifests(SCRATCH, SCRATCH_MC) },
-      responses: { ...extra, 'npm audit --json': CLEAN_AUDIT, ...plumbing(git) },
+      responses: { ...extra, 'npm audit --json': audit, ...plumbing(git) },
     });
     run.publishSecurityInfo = jest.fn().mockResolvedValue(true);
     run.service.firestoreSync = { publishSecurityInfo: run.publishSecurityInfo };
-    run.live = () => [...run.fsApi._store].filter(([p]) => !p.startsWith(SCRATCH));
+    run.live = () => [...run.fsApi._store].filter(([p]) => !p.startsWith(SCRATCH_ROOT));
     run.liveBefore = run.live();
     return run;
   }
@@ -717,7 +784,7 @@ describe('SecurityService fix mode', () => {
     );
     expect(calls.filter((c) => LIVE_WRITE.test(c.cmd))).toEqual([]);
     expect(live()).toEqual(liveBefore);
-    expect(fsApi._removed).toEqual([SCRATCH]);
+    expect(fsApi._removed).toEqual([SCRATCH_ROOT]);
   });
 
   it('writes edited manifests into the scratch copy only', async () => {
@@ -754,7 +821,7 @@ describe('SecurityService fix mode', () => {
     const summary = await service.autoFixVulnerabilities();
 
     expect(summary).toMatchObject({ ok: false, failureReason: 'exception: npm exploded' });
-    expect(fsApi._removed).toEqual([SCRATCH]);
+    expect(fsApi._removed).toEqual([SCRATCH_ROOT]);
     expect(live()).toEqual(liveBefore);
   });
 
@@ -766,7 +833,7 @@ describe('SecurityService fix mode', () => {
     const summary = await service.autoFixVulnerabilities();
 
     expect(summary).toMatchObject({ committed: true, pushed: false, failureReason: 'protected' });
-    expect(fsApi._removed).toEqual([SCRATCH]);
+    expect(fsApi._removed).toEqual([SCRATCH_ROOT]);
     expect(live()).toEqual(liveBefore);
     expect(calls.filter((c) => LIVE_WRITE.test(c.cmd))).toEqual([]);
     const [published] = publishSecurityInfo.mock.calls[0];
@@ -784,6 +851,47 @@ describe('SecurityService fix mode', () => {
 
     expect(summary).toMatchObject({ mode: 'fix', ok: false, failureReason: 'scratch-failed' });
     expect(calls.some((c) => c.cmd.startsWith('npm '))).toBe(false);
+  });
+
+  // npm prints a JSON error document when the registry is unreachable. Fix mode
+  // used to read that as "no remaining vulnerabilities", report ok, and commit.
+  it('does not commit, or call the run clean, when an audit is unreadable', async () => {
+    const { service, calls, fsApi } = fixRun({
+      audit: { code: 1, stdout: JSON.stringify({ error: { code: 'ENOTFOUND', summary: 'registry unreachable' } }) },
+    });
+
+    const summary = await service.autoFixVulnerabilities();
+
+    expect(summary).toMatchObject({ mode: 'fix', ok: false, committed: false, failureReason: 'audit-unreadable' });
+    expect(calls.some((c) => /commit-tree|git push origin|npm audit fix/.test(c.cmd))).toBe(false);
+    expect(service.log.log).not.toHaveBeenCalledWith(expect.stringContaining('No remaining vulnerabilities'));
+    expect(fsApi._removed).toEqual([SCRATCH_ROOT]);
+  });
+
+  it('does not commit when a later audit in the pipeline is unreadable', async () => {
+    let audits = 0;
+    const { service, calls } = fixRun({
+      audit: () => (++audits === 2 ? { code: 1, stdout: '' } : CLEAN_AUDIT),
+    });
+
+    const summary = await service.autoFixVulnerabilities();
+
+    expect(summary).toMatchObject({ ok: false, committed: false, failureReason: 'audit-unreadable' });
+    expect(calls.some((c) => c.cmd.includes('commit-tree'))).toBe(false);
+  });
+
+  // Overrides rewritten in package.json without a regenerated lockfile would
+  // land on main and fail `npm ci` in BuildManager's staging deploy.
+  it('does not commit overrides whose lockfile install failed', async () => {
+    const { service, calls } = fixRun({
+      extra: { 'npm install --package-lock-only': { code: 1, stderr: 'ERESOLVE could not resolve' } },
+    });
+    service._pruneStaleOverrides = jest.fn().mockResolvedValue({ changed: true, pruned: ['ws@8.20.0'], repaired: [] });
+
+    const summary = await service.autoFixVulnerabilities();
+
+    expect(summary).toMatchObject({ ok: false, committed: false, failureReason: 'install-failed' });
+    expect(calls.some((c) => c.cmd.includes('commit-tree'))).toBe(false);
   });
 });
 
@@ -887,7 +995,7 @@ describe('SecurityService run reporting', () => {
     const summary = await service.autoFixVulnerabilities();
     expect(summary.ok).toBe(false);
     expect(summary.failureReason).toContain('npm exploded');
-    expect(fsApi._removed).toEqual([SCRATCH]);
+    expect(fsApi._removed).toEqual([SCRATCH_ROOT]);
   });
 
   it('keeps the original new SecurityService(console) signature working', () => {

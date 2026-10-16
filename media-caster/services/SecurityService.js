@@ -14,6 +14,8 @@ const PROBE_TIMEOUT_MS = 60_000;
 const SHA = /^[0-9a-f]{7,40}$/i;
 // Paths that are interpolated into shell commands; os.tmpdir() always fits.
 const SAFE_PATH = /^\/[\w./-]+$/;
+const SCRATCH_PREFIX = 'adhan-security-';
+const STALE_SCRATCH_MS = 24 * 60 * 60_000;
 
 // Never rewrite these. `ip` resolves to a local file patch (media-caster/ip-patch);
 // any version override would quietly undo it.
@@ -111,6 +113,18 @@ class SecurityService {
       this._warn(`⚠️ [SecurityService] Unreadable npm audit output in ${dir}; skipping overrides.`);
       return null;
     }
+  }
+
+  /**
+   * The severity counts of an audit, or null when it has none. npm prints a
+   * JSON error document when the registry is unreachable; that parses fine but
+   * carries no counts, and must not read as "zero found".
+   */
+  _auditCounts(audit, dir) {
+    const counts = audit && audit.metadata && audit.metadata.vulnerabilities;
+    if (counts) return counts;
+    this._warn(`⚠️ [SecurityService] npm audit in ${dir} returned no vulnerability counts.`);
+    return null;
   }
 
   _readJson(file) {
@@ -412,27 +426,56 @@ class SecurityService {
     return code === 0;
   }
 
+  /**
+   * Prune, audit fix, pin, re-audit. Stops at the first audit without counts
+   * (auditReadable: false) or failed lockfile install (installFailed: true);
+   * either one means the run must not commit, because the manifests may be
+   * half-updated or the decisions were made blind.
+   */
   async _processWorkspace(dir) {
-    const summary = { dir, pruned: [], repaired: [], applied: [], unresolved: [], remainingHighCritical: 0 };
+    const summary = {
+      dir,
+      pruned: [],
+      repaired: [],
+      applied: [],
+      unresolved: [],
+      remainingHighCritical: 0,
+      auditReadable: true,
+      installFailed: false,
+    };
+    const audited = async () => {
+      const audit = await this._audit(dir);
+      if (!this._auditCounts(audit, dir)) summary.auditReadable = false;
+      return audit;
+    };
 
-    const prune = await this._pruneStaleOverrides(dir, await this._audit(dir), this._readLock(dir));
+    const first = await audited();
+    if (!summary.auditReadable) return summary;
+    const prune = await this._pruneStaleOverrides(dir, first, this._readLock(dir));
     summary.pruned = prune.pruned;
     summary.repaired = prune.repaired;
-    if (prune.changed) await this._install(dir);
+    if (prune.changed && !(await this._install(dir))) {
+      summary.installFailed = true;
+      return summary;
+    }
 
     await this._runAuditFix(dir);
 
-    const enforce = await this._enforceOverridesForRemainingVulnerabilities(
-      dir,
-      await this._audit(dir),
-      this._readLock(dir)
-    );
+    const second = await audited();
+    if (!summary.auditReadable) return summary;
+    const enforce = await this._enforceOverridesForRemainingVulnerabilities(dir, second, this._readLock(dir));
     summary.applied = enforce.applied;
     summary.unresolved = enforce.unresolved;
-    if (enforce.changed) await this._install(dir);
+    if (enforce.changed && !(await this._install(dir))) {
+      summary.installFailed = true;
+      return summary;
+    }
 
-    const finalAudit = await this._audit(dir);
-    const counts = (finalAudit && finalAudit.metadata && finalAudit.metadata.vulnerabilities) || {};
+    const counts = this._auditCounts(await this._audit(dir), dir);
+    if (!counts) {
+      summary.auditReadable = false;
+      return summary;
+    }
     summary.remainingHighCritical = (counts.high || 0) + (counts.critical || 0);
     return summary;
   }
@@ -544,30 +587,60 @@ class SecurityService {
     const base = (await this._git(`rev-parse origin/${this.branch}`)).stdout.trim();
     if (!SHA.test(base)) return fail('scratch-failed', `origin/${this.branch} did not resolve`);
 
-    const dir = this.fs.mkdtempSync(path.join(this.scratchParent, 'adhan-security-'));
-    if (!SAFE_PATH.test(dir)) {
-      this._removeScratch(dir);
-      return fail('scratch-failed', `unsafe scratch path ${dir}`);
-    }
+    this._sweepStaleScratch();
+    const root = this.fs.mkdtempSync(path.join(this.scratchParent, SCRATCH_PREFIX));
+    try {
+      if (!SAFE_PATH.test(root)) throw new Error(`unsafe scratch path ${root}`);
+      // Extract under the live checkout's own folder name. npm names a lockfile
+      // after its folder when package.json has no "name"; under mkdtemp's random
+      // name every run would rewrite package-lock.json and push the change.
+      const dir = path.join(root, this._checkoutName());
+      this.fs.mkdirSync(dir);
 
-    const extras = [];
-    const patch = `${this._mediaCasterRel()}/ip-patch`;
-    const listed = await this._git(`ls-tree --name-only ${base} -- ${patch}`);
-    if (listed.stdout.trim()) extras.push(patch);
-    const paths = [...this._manifestPaths(), ...extras].join(' ');
-    await this._git(`archive --format=tar ${base} ${paths} | tar -x -C '${dir}'`);
+      const extras = [];
+      const patch = `${this._mediaCasterRel()}/ip-patch`;
+      const listed = await this._git(`ls-tree --name-only ${base} -- ${patch}`);
+      if (listed.stdout.trim()) extras.push(patch);
+      const paths = [...this._manifestPaths(), ...extras].join(' ');
+      await this._git(`archive --format=tar ${base} ${paths} | tar -x -C '${dir}'`);
 
-    // /bin/sh has no pipefail, so check the result rather than the exit code.
-    const missing = this._manifestPaths().filter((rel) => !this.fs.existsSync(path.join(dir, rel)));
-    if (missing.length) {
-      this._removeScratch(dir);
-      return fail('scratch-failed', `manifests missing after extract: ${missing.join(', ')}`);
+      // /bin/sh has no pipefail, so check the result rather than the exit code.
+      const missing = this._manifestPaths().filter((rel) => !this.fs.existsSync(path.join(dir, rel)));
+      if (missing.length) throw new Error(`manifests missing after extract: ${missing.join(', ')}`);
+      return { ok: true, root, dir, base, workspaces: [dir, path.join(dir, this._mediaCasterRel())] };
+    } catch (e) {
+      this._removeScratch(root);
+      return fail('scratch-failed', e.message);
     }
-    return { ok: true, dir, base, workspaces: [dir, path.join(dir, this._mediaCasterRel())] };
+  }
+
+  /** The live checkout's folder name, e.g. "adhan-api". */
+  _checkoutName() {
+    const name = path.basename(path.resolve(this.repoRoot));
+    return /^[\w.-]+$/.test(name) ? name : 'adhan-api';
+  }
+
+  /** Remove scratch dirs a killed run left behind. A day old is never in use. */
+  _sweepStaleScratch(now = Date.now()) {
+    let names;
+    try {
+      names = this.fs.readdirSync(this.scratchParent);
+    } catch {
+      return;
+    }
+    for (const name of names) {
+      if (!name.startsWith(SCRATCH_PREFIX)) continue;
+      const dir = path.join(this.scratchParent, name);
+      try {
+        if (now - this.fs.statSync(dir).mtimeMs > STALE_SCRATCH_MS) this._removeScratch(dir);
+      } catch {
+        /* already gone */
+      }
+    }
   }
 
   _removeScratch(dir) {
-    if (!dir || !dir.startsWith(path.join(this.scratchParent, 'adhan-security-'))) return;
+    if (!dir || !dir.startsWith(path.join(this.scratchParent, SCRATCH_PREFIX))) return;
     try {
       this.fs.rmSync(dir, { recursive: true, force: true });
     } catch (e) {
@@ -587,7 +660,7 @@ class SecurityService {
    * non-fast-forward and tomorrow's run starts from the new tip; replaying
    * manifests computed from the old tip could undo someone's dependency change.
    */
-  async _commitAndPush(dir, base) {
+  async _commitAndPush({ root, dir, base }) {
     const result = { changed: false, committed: false, pushed: false, failureReason: null, detail: null };
     const fail = (failureReason, detail, label) => {
       result.failureReason = failureReason;
@@ -609,7 +682,8 @@ class SecurityService {
     }
     result.changed = true;
 
-    const index = `GIT_INDEX_FILE='${path.join(dir, '.git-index')}'`;
+    // Outside the extracted tree, so npm never sees it.
+    const index = `GIT_INDEX_FILE='${path.join(root, 'git-index')}'`;
     const steps = [
       `read-tree ${base}`,
       ...changed.map(({ rel, blob }) => `update-index --add --cacheinfo 100644,${blob},${rel}`),
@@ -727,12 +801,23 @@ class SecurityService {
             for (const dir of scratch.workspaces) {
               summary.workspaces.push(await this._processWorkspace(dir));
             }
-            const push = await this._commitAndPush(scratch.dir, scratch.base);
-            summary.committed = push.committed;
-            summary.pushed = push.pushed;
-            summary.failureReason = push.failureReason;
+            // Only a pipeline that fully succeeded may commit.
+            const blocked = summary.workspaces.some((w) => !w.auditReadable)
+              ? 'audit-unreadable'
+              : summary.workspaces.some((w) => w.installFailed)
+                ? 'install-failed'
+                : null;
+            if (blocked) {
+              summary.failureReason = blocked;
+              this._warn(`❌ [SecurityService] Not committing: ${blocked}.`);
+            } else {
+              const push = await this._commitAndPush(scratch);
+              summary.committed = push.committed;
+              summary.pushed = push.pushed;
+              summary.failureReason = push.failureReason;
+            }
           } finally {
-            this._removeScratch(scratch.dir);
+            this._removeScratch(scratch.root);
           }
         }
       } else {
