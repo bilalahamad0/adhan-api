@@ -389,6 +389,16 @@ describe('SecurityService commit and push', () => {
     });
   });
 
+  // A dry-run probe cannot see branch protection, so this only surfaces on the
+  // real push; it should not read as 'unknown'.
+  it('classifies a server-side refusal as protected', () => {
+    const classify = SecurityService.classifyPushFailure;
+    expect(classify('remote: error: GH006: Protected branch update failed for refs/heads/main.')).toBe('protected');
+    expect(classify(' ! [remote rejected] HEAD -> main (pre-receive hook declined)')).toBe('protected');
+    expect(classify(' ! [rejected]        HEAD -> main (non-fast-forward)')).toBe('non-fast-forward');
+    expect(classify("fatal: could not read Username for 'https://github.com'")).toBe('credentials');
+  });
+
   it('does not call a push "landed" when origin never moved', async () => {
     const { service } = makeService({
       responses: {
@@ -426,6 +436,233 @@ describe('SecurityService commit and push', () => {
     expect(result).toMatchObject({ changed: false, committed: false, pushed: false });
     expect(calls.some((c) => c.cmd.includes('commit'))).toBe(false);
   });
+
+  // A local commit that never lands is what BuildManager read as an update and
+  // reset away with a full redeploy, every night.
+  it('rolls an unlanded commit back to the pre-run HEAD', async () => {
+    const { service, calls } = makeService({
+      responses: {
+        'git status --porcelain': dirty,
+        'rev-parse HEAD': { stdout: '3298b3d7fc23500aaaf3953ee86625cd0d8ac698\n' },
+        'git push': { code: 1, stderr: '! [rejected] main -> main (fetch first)' },
+      },
+    });
+
+    const result = await service._commitAndPushChanges(ROOT);
+    expect(result).toMatchObject({ committed: true, pushed: false, rolledBack: true });
+    expect(result.failureReason).toBe('non-fast-forward');
+
+    const order = calls.map((c) => c.cmd);
+    const preRunAt = order.indexOf('git rev-parse HEAD');
+    const commitAt = order.findIndex((c) => c.includes(' commit -m'));
+    expect(preRunAt).toBeGreaterThan(-1);
+    expect(preRunAt).toBeLessThan(commitAt);
+    expect(order[order.length - 1]).toBe('git reset --keep 3298b3d7fc23500aaaf3953ee86625cd0d8ac698');
+  });
+
+  it('rolls back after a conflicted rebase too', async () => {
+    const { service, calls } = makeService({
+      responses: {
+        'git status --porcelain': dirty,
+        'rev-parse HEAD': { stdout: 'abc1234\n' },
+        'rebase --autostash': { code: 1, stderr: 'CONFLICT (content): package-lock.json' },
+      },
+    });
+
+    const result = await service._commitAndPushChanges(ROOT);
+    expect(result).toMatchObject({ failureReason: 'rebase-conflict', rolledBack: true });
+    const order = calls.map((c) => c.cmd);
+    expect(order.indexOf('git rebase --abort')).toBeLessThan(order.indexOf('git reset --keep abc1234'));
+  });
+
+  it('does not roll back a commit that landed', async () => {
+    const { service, calls } = makeService({
+      responses: {
+        'git status --porcelain': dirty,
+        'rev-parse HEAD': { stdout: 'abc1234\n' },
+        'rev-parse origin/main': { stdout: 'abc1234\n' },
+      },
+    });
+
+    const result = await service._commitAndPushChanges(ROOT);
+    expect(result).toMatchObject({ pushed: true, rolledBack: false });
+    expect(calls.some((c) => c.cmd.includes('reset'))).toBe(false);
+  });
+
+  it('says so when the rollback itself is refused', async () => {
+    const { service } = makeService({
+      responses: {
+        'git status --porcelain': dirty,
+        'rev-parse HEAD': { stdout: 'abc1234\n' },
+        'git push': { code: 128, stderr: 'Permission denied (publickey).' },
+        'reset --keep': { code: 128, stderr: 'error: Entry package.json would be overwritten' },
+      },
+    });
+
+    const result = await service._commitAndPushChanges(ROOT);
+    expect(result).toMatchObject({ committed: true, pushed: false, rolledBack: false });
+    expect(service.log.error).toHaveBeenCalledWith(expect.stringContaining('Could not roll back'));
+  });
+});
+
+describe('SecurityService push-access probe', () => {
+  it('uses a non-interactive dry-run push, which writes nothing', async () => {
+    const { service, calls } = makeService();
+    expect(await service._probePushAccess(ROOT)).toEqual({ ok: true, reason: null });
+    expect(calls).toEqual([
+      { cmd: 'GIT_TERMINAL_PROMPT=0 git push --dry-run origin HEAD:refs/heads/main', cwd: ROOT },
+    ]);
+  });
+
+  // The exact error the Pi printed every night.
+  it('reports missing HTTPS credentials as blocked', async () => {
+    const { service } = makeService({
+      responses: {
+        'git push --dry-run': {
+          code: 128,
+          stderr: "fatal: could not read Username for 'https://github.com': terminal prompts disabled",
+        },
+      },
+    });
+    expect(await service._probePushAccess(ROOT)).toMatchObject({ ok: false, reason: 'credentials' });
+  });
+
+  it('treats a non-fast-forward rejection as access granted, since it authenticated', async () => {
+    const { service } = makeService({
+      responses: {
+        'git push --dry-run': { code: 1, stderr: ' ! [rejected] HEAD -> main (non-fast-forward)' },
+      },
+    });
+    expect(await service._probePushAccess(ROOT)).toEqual({ ok: true, reason: null });
+  });
+
+  it('treats an unrecognised failure as blocked rather than guessing', async () => {
+    const { service } = makeService({
+      responses: { 'git push --dry-run': { code: 128, stderr: 'fatal: something odd' } },
+    });
+    expect(await service._probePushAccess(ROOT)).toMatchObject({ ok: false, reason: 'unknown' });
+  });
+});
+
+describe('SecurityService report-only mode', () => {
+  const NO_CREDENTIALS = {
+    code: 128,
+    stderr: "fatal: could not read Username for 'https://github.com': terminal prompts disabled",
+  };
+  const BASIC_FTP_AUDIT = {
+    vulnerabilities: {
+      'basic-ftp': {
+        severity: 'high',
+        range: '<6.2.0',
+        nodes: ['node_modules/basic-ftp'],
+        via: [{ name: 'basic-ftp', range: '<6.2.0', severity: 'high' }],
+        fixAvailable: { name: 'basic-ftp', version: '6.2.1', isSemVerMajor: true },
+      },
+      // Vulnerable only through basic-ftp; not a separate finding.
+      'get-uri': { severity: 'high', via: ['basic-ftp'], fixAvailable: true },
+      braces: {
+        severity: 'high',
+        range: '<3.0.4',
+        via: [{ name: 'braces', range: '<3.0.4' }],
+        fixAvailable: true,
+      },
+      'some-moderate': { severity: 'moderate', via: [{ name: 'some-moderate' }] },
+    },
+    metadata: { vulnerabilities: { critical: 0, high: 3, moderate: 1, low: 0 } },
+  };
+
+  function noPushRun(audit = BASIC_FTP_AUDIT, extra = {}) {
+    const run = makeService({
+      files: {
+        [pkgFile(ROOT)]: JSON.stringify({ overrides: { ip: '2.0.1' } }),
+        [lockFile(ROOT)]: JSON.stringify({ packages: {} }),
+        [pkgFile(MC)]: JSON.stringify({ overrides: {} }),
+        [lockFile(MC)]: JSON.stringify({ packages: {} }),
+      },
+      responses: {
+        'git push --dry-run': NO_CREDENTIALS,
+        'npm audit --json': { code: 1, stdout: JSON.stringify(audit) },
+        ...extra,
+      },
+    });
+    run.publishSecurityInfo = jest.fn().mockResolvedValue(true);
+    run.service.firestoreSync = { publishSecurityInfo: run.publishSecurityInfo };
+    run.before = new Map(run.fsApi._store);
+    return run;
+  }
+
+  it('makes no manifest edits, installs or commits when it cannot push', async () => {
+    const { service, calls, fsApi, before } = noPushRun();
+
+    const summary = await service.autoFixVulnerabilities();
+
+    expect(summary).toMatchObject({
+      mode: 'report-only',
+      pushBlocked: 'credentials',
+      committed: false,
+      pushed: false,
+      failureReason: null,
+    });
+    const cmds = calls.map((c) => c.cmd);
+    expect(cmds.filter((c) => !c.includes('git push --dry-run') && c !== 'npm audit --json')).toEqual([]);
+    expect(cmds.filter((c) => c === 'npm audit --json')).toHaveLength(2);
+    expect(new Map(fsApi._store)).toEqual(before);
+  });
+
+  it('reports what it found, per workspace, without the push noise', async () => {
+    const { service, publishSecurityInfo } = noPushRun();
+
+    const summary = await service.autoFixVulnerabilities();
+
+    expect(summary.ok).toBe(false);
+    expect(summary.remainingHighCritical).toBe(6);
+    const finding = (pkg, fix) => ({ package: pkg, severity: 'high', fix, reason: 'report-only' });
+    expect(summary.needsHuman).toEqual([
+      finding('basic-ftp', 'major-bump'),
+      finding('braces', 'audit-fix'),
+      finding('basic-ftp', 'major-bump'),
+      finding('braces', 'audit-fix'),
+    ]);
+    expect(publishSecurityInfo).toHaveBeenCalledWith(
+      expect.objectContaining({ ok: false, mode: 'report-only', pushBlocked: 'credentials', committed: false })
+    );
+
+    const errors = service.log.error.mock.calls.map(([m]) => m);
+    expect(errors.some((m) => m.includes('Push rejected'))).toBe(false);
+    expect(errors).toContainEqual(expect.stringContaining('push blocked: credentials'));
+  });
+
+  it('completes clean in report-only mode when nothing is vulnerable', async () => {
+    const { service } = noPushRun({
+      vulnerabilities: {},
+      metadata: { vulnerabilities: { critical: 0, high: 0, moderate: 0, low: 0 } },
+    });
+
+    const summary = await service.autoFixVulnerabilities();
+
+    expect(summary).toMatchObject({ ok: true, mode: 'report-only', remainingHighCritical: 0 });
+    expect(service.log.error).not.toHaveBeenCalled();
+    expect(service.log.log).toHaveBeenCalledWith(expect.stringContaining('completed clean (report-only)'));
+  });
+
+  // npm prints a JSON error document when the registry is unreachable.
+  it('does not mistake an unreadable audit for a clean one', async () => {
+    const { service } = noPushRun({ error: { code: 'ENOTFOUND', summary: 'registry unreachable' } });
+
+    const summary = await service.autoFixVulnerabilities();
+
+    expect(summary).toMatchObject({ ok: false, failureReason: 'audit-unreadable' });
+  });
+
+  it('runs the full fix when the probe passes', async () => {
+    const { service, calls } = noPushRun(undefined, { 'git push --dry-run': { code: 0 } });
+
+    const summary = await service.autoFixVulnerabilities();
+
+    expect(summary.mode).toBe('fix');
+    expect(summary.pushBlocked).toBeNull();
+    expect(calls.some((c) => c.cmd.includes('npm audit fix'))).toBe(true);
+  });
 });
 
 describe('SecurityService run reporting', () => {
@@ -451,7 +688,9 @@ describe('SecurityService run reporting', () => {
 
   it('publishes the outcome so a failed run is visible off the Pi', async () => {
     const publishSecurityInfo = jest.fn().mockResolvedValue(true);
+    // The probe passes but the real push is still refused.
     const { service } = fullRun({
+      'git push --dry-run': { code: 0 },
       'git status --porcelain': { stdout: ' M package-lock.json\n' },
       'git push': { code: 128, stderr: 'Permission denied (publickey).' },
     });
@@ -465,6 +704,30 @@ describe('SecurityService run reporting', () => {
       expect.objectContaining({ ok: false, pushed: false, failureReason: 'credentials' })
     );
     expect(service.log.error).toHaveBeenCalledWith(expect.stringContaining('UNRESOLVED'));
+  });
+
+  // committed && !pushed reads the same whether the commit was undone or left
+  // behind; only rolledBack tells them apart off the Pi.
+  it('publishes whether an unlanded commit was rolled back', async () => {
+    const run = (resetResult) => {
+      const publishSecurityInfo = jest.fn().mockResolvedValue(true);
+      const { service } = fullRun({
+        'git push --dry-run': { code: 0 },
+        'git status --porcelain': { stdout: ' M package-lock.json\n' },
+        'rev-parse HEAD': { stdout: 'abc1234\n' },
+        'git push': { code: 1, stderr: 'remote: error: GH006: Protected branch update failed' },
+        'reset --keep': resetResult,
+      });
+      service.firestoreSync = { publishSecurityInfo };
+      return service.autoFixVulnerabilities().then(() => publishSecurityInfo.mock.calls[0][0]);
+    };
+
+    expect(await run({ code: 0 })).toMatchObject({ committed: true, pushed: false, rolledBack: true, failureReason: 'protected' });
+    expect(await run({ code: 128, stderr: 'fatal: Cannot do a keep reset in the middle of a merge.' })).toMatchObject({
+      committed: true,
+      pushed: false,
+      rolledBack: false,
+    });
   });
 
   // The payload is linted on its string leaves rather than its whole JSON, so a

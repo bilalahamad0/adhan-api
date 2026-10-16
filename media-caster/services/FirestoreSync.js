@@ -426,8 +426,11 @@ class FirestoreSync {
     const ALLOWED = [
       'lastRunAt',
       'ok',
+      'mode',
+      'pushBlocked',
       'committed',
       'pushed',
+      'rolledBack',
       'failureReason',
       'remainingHighCritical',
       'needsHuman',

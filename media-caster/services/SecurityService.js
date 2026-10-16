@@ -8,6 +8,9 @@ const EXEC_TIMEOUT_MS = 10 * 60_000;
 // maxBuffer truncates silently, and a truncated document fails JSON.parse — which
 // this service used to swallow and treat as "no vulnerabilities".
 const MAX_BUFFER = 32 * 1024 * 1024;
+// The push-access probe only authenticates; a minute is generous.
+const PROBE_TIMEOUT_MS = 60_000;
+const SHA = /^[0-9a-f]{7,40}$/i;
 
 // Never rewrite these. `ip` resolves to a local file patch (media-caster/ip-patch);
 // any version override would quietly undo it.
@@ -37,9 +40,10 @@ function defaultRunExec(command, { cwd, timeoutMs = EXEC_TIMEOUT_MS } = {}) {
 
 /**
  * Nightly dependency auto-fixer: prune stale overrides, run `npm audit fix`,
- * pin whatever it could not reach, then commit and push.
+ * pin whatever it could not reach, then commit and push. On a host that cannot
+ * push it only audits and reports.
  *
- * Two rules shape the whole design:
+ * Three rules shape the whole design:
  *
  *  1. Never resolve an override to "*". That ignores major boundaries — for
  *     js-yaml it lands on 5.x while pm2 pins 4.3.x, an API break. Overrides are
@@ -49,6 +53,12 @@ function defaultRunExec(command, { cwd, timeoutMs = EXEC_TIMEOUT_MS } = {}) {
  *  2. A run that cannot land its fix must say so. The previous version logged
  *     push failures to stdout and returned; nothing else observed the result, so
  *     51 alerts accumulated while the job "ran" nightly for months.
+ *
+ *  3. Never leave a commit on this host that did not reach origin. The Pi has
+ *     no GitHub credentials, so every night it committed at 00:01, failed the
+ *     push, and BuildManager saw HEAD != origin at 02:00, reset the commit away
+ *     and ran a full redeploy. Push access is checked before anything is
+ *     written, and a commit that still fails to land is rolled back.
  */
 class SecurityService {
   constructor(options = {}) {
@@ -409,17 +419,102 @@ class SecurityService {
     return summary;
   }
 
+  /**
+   * Read-only counterpart of _processWorkspace, for a host that cannot push:
+   * one `npm audit`, no manifest writes, no installs into the live tree.
+   */
+  async _reportWorkspace(dir) {
+    const summary = {
+      dir,
+      pruned: [],
+      repaired: [],
+      applied: [],
+      unresolved: [],
+      remainingHighCritical: 0,
+      auditReadable: false,
+    };
+    const audit = await this._audit(dir);
+    // npm prints a JSON error document when the registry is unreachable; that
+    // parses fine but carries no counts, and must not read as "zero found".
+    const counts = audit && audit.metadata && audit.metadata.vulnerabilities;
+    if (!counts) {
+      this._warn(`⚠️ [SecurityService] npm audit in ${dir} returned no vulnerability counts.`);
+      return summary;
+    }
+    summary.auditReadable = true;
+    summary.remainingHighCritical = (counts.high || 0) + (counts.critical || 0);
+    for (const [name, details] of Object.entries(audit.vulnerabilities || {})) {
+      if (details.severity !== 'high' && details.severity !== 'critical') continue;
+      if (!this._hasDirectAdvisory(details)) continue;
+      const fix = !details.fixAvailable
+        ? 'none'
+        : details.fixAvailable.isSemVerMajor
+          ? 'major-bump'
+          : 'audit-fix';
+      summary.unresolved.push({ package: name, severity: details.severity, fix, reason: 'report-only' });
+    }
+    return summary;
+  }
+
   // --- landing the fix -----------------------------------------------------
 
   static classifyPushFailure(text) {
     const s = String(text || '').toLowerCase();
     if (/permission denied|publickey|authentication failed|could not read username|access rights|terminal prompts disabled|403/.test(s))
       return 'credentials';
+    // Server-side refusals (branch protection, pre-receive hooks), e.g.
+    // "GH006: Protected branch update failed" / "[remote rejected] … (… declined)".
+    if (/gh006|protected branch|remote rejected|pre-receive hook|declined/.test(s))
+      return 'protected';
     if (/non-fast-forward|fetch first|\[rejected\]|stale info|behind its remote/.test(s))
       return 'non-fast-forward';
     if (/could not resolve host|connection refused|timed out|network is unreachable/.test(s))
       return 'network';
     return 'unknown';
+  }
+
+  /**
+   * Can this host land a commit on origin at all? Asked before anything is
+   * written. A dry-run push authenticates exactly like a real one and changes
+   * nothing, locally or on the remote. A non-fast-forward rejection still
+   * proves the credentials work; _commitAndPushChanges rebases first.
+   *
+   * It cannot see server-side rules: a dry run never sends the update, so
+   * branch protection only shows up on the real push ('protected'), and that
+   * commit is rolled back like any other that does not land.
+   */
+  async _probePushAccess(projectRoot) {
+    const probe = await this.runExec(
+      `GIT_TERMINAL_PROMPT=0 git push --dry-run origin HEAD:refs/heads/${this.branch}`,
+      { cwd: projectRoot, timeoutMs: PROBE_TIMEOUT_MS }
+    );
+    if (probe.code === 0) return { ok: true, reason: null };
+    const text = `${probe.stderr}\n${probe.stdout}`;
+    const reason = SecurityService.classifyPushFailure(text);
+    if (reason === 'non-fast-forward') return { ok: true, reason: null };
+    return { ok: false, reason, detail: text.trim().slice(0, 400) };
+  }
+
+  /**
+   * Undo a commit that never reached origin, so the tree is back where the run
+   * found it. `reset --keep` also unwinds a rebase that already moved the files,
+   * and refuses rather than overwrite a local edit.
+   */
+  async _rollbackUnlandedCommit(projectRoot, preSha) {
+    if (!SHA.test(preSha || '')) {
+      this._warn(`❌ [SecurityService] Unlanded commit left in place: pre-run HEAD unknown.`);
+      return false;
+    }
+    const reset = await this.runExec(`git reset --keep ${preSha}`, { cwd: projectRoot });
+    if (reset.code !== 0) {
+      this._warn(
+        `❌ [SecurityService] Could not roll back the unlanded commit: ` +
+          `${reset.stderr || reset.stdout}`.slice(0, 400)
+      );
+      return false;
+    }
+    this._say(`↩️  [SecurityService] Rolled back the unlanded commit; HEAD is ${preSha.slice(0, 7)} again.`);
+    return true;
   }
 
   /**
@@ -434,9 +529,18 @@ class SecurityService {
    *  - Confirm origin actually moved afterwards, and classify the failure when it
    *    did not, so "credentials" and "non-fast-forward" are distinguishable
    *    without shelling into the Pi.
+   *
+   * A commit that does not land is rolled back (rule 3).
    */
   async _commitAndPushChanges(projectRoot) {
-    const result = { changed: false, committed: false, pushed: false, failureReason: null, detail: null };
+    const result = {
+      changed: false,
+      committed: false,
+      pushed: false,
+      failureReason: null,
+      detail: null,
+      rolledBack: false,
+    };
 
     const { stdout: statusOut } = await this.runExec('git status --porcelain', { cwd: projectRoot });
     const touched = statusOut
@@ -455,6 +559,8 @@ class SecurityService {
       cwd: projectRoot,
     });
 
+    const { stdout: preRun } = await this.runExec('git rev-parse HEAD', { cwd: projectRoot });
+
     // Identity stays scoped to the single command — the Pi has no global git user.
     const identity = `-c user.email="${this.gitEmail}" -c user.name="${this.gitName}"`;
     const message = 'chore(security): auto-fix dependabot vulnerabilities and enforce overrides';
@@ -466,6 +572,15 @@ class SecurityService {
       return result;
     }
     result.committed = true;
+
+    Object.assign(result, await this._landCommit(projectRoot, identity));
+    if (!result.pushed) result.rolledBack = await this._rollbackUnlandedCommit(projectRoot, preRun.trim());
+    return result;
+  }
+
+  /** Fetch, rebase, push, then verify origin moved. Never throws. */
+  async _landCommit(projectRoot, identity) {
+    const result = { pushed: false, failureReason: null, detail: null };
 
     const fetch = await this.runExec(`git fetch origin ${this.branch}`, { cwd: projectRoot });
     if (fetch.code !== 0) {
@@ -519,8 +634,12 @@ class SecurityService {
     const payload = {
       lastRunAt: summary.finishedAt,
       ok: summary.ok,
+      mode: summary.mode,
+      pushBlocked: summary.pushBlocked,
       committed: summary.committed,
       pushed: summary.pushed,
+      // committed && !pushed && !rolledBack: an unlanded commit is still on the Pi.
+      rolledBack: summary.rolledBack,
       failureReason: summary.failureReason,
       remainingHighCritical: summary.remainingHighCritical,
       needsHuman: summary.needsHuman.slice(0, 20),
@@ -550,23 +669,46 @@ class SecurityService {
       startedAt: new Date().toISOString(),
       finishedAt: null,
       ok: false,
+      // 'fix' commits and pushes; 'report-only' runs on a host that cannot push.
+      mode: null,
+      pushBlocked: null,
       workspaces: [],
       committed: false,
       pushed: false,
+      rolledBack: false,
       failureReason: null,
       needsHuman: [],
       remainingHighCritical: 0,
     };
 
     try {
-      for (const dir of [this.repoRoot, this.mediaCasterDir]) {
-        summary.workspaces.push(await this._processWorkspace(dir));
+      const access = await this._probePushAccess(this.repoRoot);
+      if (access.ok) {
+        summary.mode = 'fix';
+        for (const dir of [this.repoRoot, this.mediaCasterDir]) {
+          summary.workspaces.push(await this._processWorkspace(dir));
+        }
+
+        const push = await this._commitAndPushChanges(this.repoRoot);
+        summary.committed = push.committed;
+        summary.pushed = push.pushed;
+        summary.rolledBack = push.rolledBack;
+        summary.failureReason = push.failureReason;
+      } else {
+        // Without push access a fix can only become a local commit, which is
+        // what BuildManager then resets away with a full redeploy. Audit only.
+        summary.mode = 'report-only';
+        summary.pushBlocked = access.reason;
+        this._say(
+          `🔎 [SecurityService] No push access to origin (${access.reason}); auditing only — ` +
+            `no manifest edits, installs or commits on this host. ${access.detail}`
+        );
+        for (const dir of [this.repoRoot, this.mediaCasterDir]) {
+          summary.workspaces.push(await this._reportWorkspace(dir));
+        }
+        if (summary.workspaces.some((w) => !w.auditReadable)) summary.failureReason = 'audit-unreadable';
       }
 
-      const push = await this._commitAndPushChanges(this.repoRoot);
-      summary.committed = push.committed;
-      summary.pushed = push.pushed;
-      summary.failureReason = push.failureReason;
       summary.needsHuman = summary.workspaces.flatMap((w) => w.unresolved);
       summary.remainingHighCritical = summary.workspaces.reduce(
         (n, w) => n + w.remainingHighCritical,
@@ -582,13 +724,17 @@ class SecurityService {
     summary.finishedAt = new Date().toISOString();
     await this._publish(summary);
 
+    const reportOnly = summary.mode === 'report-only';
     if (summary.ok) {
-      this._say(`🛡️  [SecurityService] Routine completed clean.`);
+      this._say(`🛡️  [SecurityService] Routine completed clean${reportOnly ? ' (report-only)' : ''}.`);
     } else {
       this._warn(
         `❌ [SecurityService] Routine finished UNRESOLVED — ` +
           `${summary.remainingHighCritical} high/critical left, ` +
-          `pushed=${summary.pushed}, reason=${summary.failureReason || 'none'}.`
+          (reportOnly
+            ? `report-only (push blocked: ${summary.pushBlocked}; fix upstream), `
+            : `pushed=${summary.pushed}, `) +
+          `reason=${summary.failureReason || 'none'}.`
       );
     }
     return summary;
