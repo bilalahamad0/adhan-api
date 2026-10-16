@@ -269,7 +269,276 @@ describe('BuildManager.attemptUpdate happy path', () => {
     expect(cmdJoined).toMatch(/git -C \/srv\/repo worktree add --detach \/tmp\/staging newsha8888888/);
     expect(cmdJoined).toMatch(/npm ci --omit=dev/);
     expect(cmdJoined).toMatch(/rsync -a --delete-after/);
-    expect(cmdJoined).toMatch(/pm2 reload adhan-caster adb-keeper auto-updater/);
+    expect(calls.filter((c) => c.includes('pm2 reload'))).toEqual([
+      'exec pm2 reload adhan-caster',
+      'exec pm2 reload adb-keeper',
+      'exec pm2 reload auto-updater',
+    ]);
+    expect(result.restartSelf).toBe(false);
+  });
+});
+
+describe('BuildManager pm2 reload', () => {
+  const SHA_RESPONSES = {
+    'rev-parse HEAD': { stdout: 'oldsha7777777\n', stderr: '' },
+    'rev-parse origin/main': { stdout: 'newsha8888888\n', stderr: '' },
+    'log -1 --pretty=%s': { stdout: 'fix(scheduler): correct DST drift\n', stderr: '' },
+  };
+
+  function makeManager(responses, extra = {}, files = {}) {
+    const { runExec, calls } = makeRunExecRecorder({ ...SHA_RESPONSES, ...responses });
+    const fsApi = makeFakeFs(files);
+    const firestoreSync = { publishBuildInfo: jest.fn().mockResolvedValue(true) };
+    const logs = [];
+    const bm = new BuildManager({
+      repoRoot: REPO, stagingPath: STAGING, dataDir: DATA,
+      smokeRunner: makeSmoke({ ok: true, passed: 25, failed: 0, failedChecks: [], reason: 'OK', durationMs: 9000 }),
+      runExec, fsApi, firestoreSync,
+      nowFn: () => FIXED_NOW,
+      log: (msg) => logs.push(msg),
+      ...extra,
+    });
+    const reloads = () => calls.filter((c) => c.includes('pm2 reload'));
+    return { bm, runExec, fsApi, firestoreSync, logs, reloads };
+  }
+
+  // pm2's `reload <id|name|namespace|all>` takes one name. The old single
+  // `pm2 reload adhan-caster adb-keeper auto-updater` reloaded adhan-caster
+  // and silently ignored the other two, every night.
+  test('names exactly one app per pm2 reload', async () => {
+    const { bm, reloads } = makeManager({});
+    await bm.attemptUpdate();
+    expect(reloads().length).toBe(BuildManager.PM2_APPS.length);
+    for (const cmd of reloads()) {
+      expect(cmd).toMatch(/^exec pm2 reload [\w-]+$/);
+    }
+  });
+
+  // On the Pi the CLI took 54-144s to reach the daemon after npm ci, so the old
+  // 30s limit timed out every night.
+  test('gives each reload minutes, not 30s', async () => {
+    const { bm, runExec } = makeManager({});
+    await bm.attemptUpdate();
+    const reloadCalls = runExec.mock.calls.filter(([cmd]) => cmd.includes('pm2 reload'));
+    expect(reloadCalls.length).toBeGreaterThan(0);
+    for (const [, opts] of reloadCalls) {
+      expect(opts.timeoutMs).toBe(BuildManager.PM2_RELOAD_TIMEOUT_MS);
+    }
+    expect(BuildManager.PM2_RELOAD_TIMEOUT_MS).toBeGreaterThanOrEqual(3 * 60_000);
+  });
+
+  // pm2 kills a reloading app's process tree. Reloading the auto-updater from
+  // inside it would kill the CLI doing the reload, and the cycle with it.
+  test('leaves its own app to the caller and asks for a restart', async () => {
+    const { bm, reloads } = makeManager({}, { selfPm2App: 'auto-updater' });
+    const result = await bm.attemptUpdate();
+    expect(result.success).toBe(true);
+    expect(result.reason).toBe('deployed');
+    expect(reloads()).toEqual(['exec pm2 reload adhan-caster', 'exec pm2 reload adb-keeper']);
+    expect(result.restartSelf).toBe(true);
+  });
+
+  test('a timed-out reload fails the deploy and is published to meta/build', async () => {
+    const timeout = Object.assign(new Error('Command failed: exec pm2 reload adb-keeper\n'), {
+      killed: true, signal: 'SIGTERM', code: null, stdout: '', stderr: '',
+    });
+    const { bm, fsApi, firestoreSync, reloads } = makeManager(
+      { 'pm2 reload adb-keeper': timeout },
+      { selfPm2App: 'auto-updater' },
+    );
+
+    const result = await bm.attemptUpdate();
+
+    expect(result.success).toBe(false);
+    expect(result.stage).toBe('reload');
+    expect(result.reason).toBe('reload-failed: adb-keeper (timed out after 300s)');
+    expect(result.reloadFailures).toEqual([{ app: 'adb-keeper', error: 'timed out after 300s' }]);
+    // The new code is on disk either way, so the auto-updater still restarts onto it.
+    expect(result.restartSelf).toBe(true);
+    expect(reloads()).toEqual(['exec pm2 reload adhan-caster', 'exec pm2 reload adb-keeper']);
+
+    const persisted = JSON.parse(fsApi._store.get(path.join(DATA, 'build-info.json')));
+    expect(persisted.lastFailure).toMatchObject({
+      version: 'v2026.04.27-fix.1',
+      shortSha: 'newsha8',
+      stage: 'reload',
+      failedChecks: ['pm2 reload adb-keeper: timed out after 300s'],
+    });
+    const lastPublish = firestoreSync.publishBuildInfo.mock.calls.at(-1)[0];
+    expect(lastPublish.lastFailure.stage).toBe('reload');
+    expect(lastPublish.lastFailure.failedChecks).toEqual(['pm2 reload adb-keeper: timed out after 300s']);
+  });
+
+  test('keeps reloading the other apps after one fails, and reports each failure', async () => {
+    const missing = Object.assign(new Error('Command failed: exec pm2 reload adhan-caster\n'), {
+      killed: false, signal: null, code: 1,
+      stdout: '', stderr: '[PM2][ERROR] Process or Namespace adhan-caster not found\n',
+    });
+    const { bm, firestoreSync, logs, reloads } = makeManager({ 'pm2 reload adhan-caster': missing });
+
+    const result = await bm.attemptUpdate();
+
+    expect(reloads()).toEqual([
+      'exec pm2 reload adhan-caster',
+      'exec pm2 reload adb-keeper',
+      'exec pm2 reload auto-updater',
+    ]);
+    expect(result.success).toBe(false);
+    expect(result.reason).toBe('reload-failed: adhan-caster (exit 1)');
+    // The CLI's own words go to the local log only, never to the published record.
+    expect(logs.some((l) => l.includes('pm2 reload adhan-caster FAILED: exit 1') && l.includes('not found'))).toBe(true);
+    expect(logs.some((l) => l.includes('pm2 reload adb-keeper ok'))).toBe(true);
+    const published = JSON.stringify(firestoreSync.publishBuildInfo.mock.calls.at(-1)[0]);
+    expect(published).toContain('pm2 reload adhan-caster: exit 1');
+    expect(published).not.toContain('[PM2][ERROR]');
+  });
+
+  test('a failed reload leaves its apps pending in build-info.json', async () => {
+    const timeout = Object.assign(new Error('Command failed\n'), { killed: true, signal: 'SIGTERM' });
+    const { bm, fsApi } = makeManager({ 'pm2 reload adb-keeper': timeout }, { selfPm2App: 'auto-updater' });
+    await bm.attemptUpdate();
+    const persisted = JSON.parse(fsApi._store.get(path.join(DATA, 'build-info.json')));
+    expect(persisted.pendingReload).toEqual(['adb-keeper']);
+  });
+
+  test('a deploy whose reloads all succeed leaves nothing pending', async () => {
+    const { bm, fsApi } = makeManager({}, { selfPm2App: 'auto-updater' }, {
+      [path.join(DATA, 'build-info.json')]: JSON.stringify({ currentVersion: 'v2026.04.26-fix.1', pendingReload: ['adb-keeper'] }),
+    });
+    const result = await bm.attemptUpdate();
+    expect(result.reason).toBe('deployed');
+    const persisted = JSON.parse(fsApi._store.get(path.join(DATA, 'build-info.json')));
+    expect(persisted.pendingReload).toBeUndefined();
+  });
+});
+
+// After a swap HEAD == origin, so every later cycle is 'no-update'. Without a
+// retry, an app whose reload failed stays on old code until the next commit.
+describe('BuildManager pending reload retry', () => {
+  const BUILD_INFO = path.join(DATA, 'build-info.json');
+  const NO_UPDATE = {
+    'rev-parse HEAD': { stdout: 'newsha8888888\n', stderr: '' },
+    'rev-parse origin/main': { stdout: 'newsha8888888\n', stderr: '' },
+  };
+  // What a 02:00 deploy with a timed-out adb-keeper reload leaves behind.
+  const afterFailedReload = (pendingReload) => ({
+    [BUILD_INFO]: JSON.stringify({
+      currentVersion: 'v2026.04.27-fix.1',
+      currentShortSha: 'newsha8',
+      currentDeployedAt: '2026-04-27T02:02:00.000-07:00',
+      lastFailure: {
+        version: 'v2026.04.27-fix.1', shortSha: 'newsha8', ts: '2026-04-27T02:04:00.000-07:00',
+        stage: 'reload', failedChecks: ['pm2 reload adb-keeper: timed out after 300s'],
+      },
+      pendingReload,
+    }),
+  });
+
+  function makeManager(responses, extra = {}, files = {}) {
+    const { runExec, calls } = makeRunExecRecorder({ ...NO_UPDATE, ...responses });
+    const fsApi = makeFakeFs(files);
+    const firestoreSync = { publishBuildInfo: jest.fn().mockResolvedValue(true) };
+    const bm = new BuildManager({
+      repoRoot: REPO, stagingPath: STAGING, dataDir: DATA,
+      smokeRunner: makeSmoke({ ok: true, passed: 25, failed: 0, failedChecks: [], reason: 'OK', durationMs: 1 }),
+      runExec, fsApi, firestoreSync,
+      nowFn: () => FIXED_NOW,
+      log: () => {},
+      selfPm2App: 'auto-updater',
+      ...extra,
+    });
+    const reloads = () => calls.filter((c) => c.includes('pm2 reload'));
+    const persisted = () => JSON.parse(fsApi._store.get(BUILD_INFO));
+    return { bm, firestoreSync, reloads, persisted };
+  }
+
+  // dashboard.html renderBuildBanner shows the banner while this holds.
+  const bannerShown = (b) => new Date(b.lastFailure.ts) > new Date(b.currentDeployedAt);
+
+  test('reloads only the pending apps on a no-update cycle and clears the banner', async () => {
+    const { bm, firestoreSync, reloads, persisted } = makeManager({}, {}, afterFailedReload(['adb-keeper']));
+    expect(bannerShown(JSON.parse(afterFailedReload([])[BUILD_INFO]))).toBe(true);
+
+    const result = await bm.attemptUpdate();
+
+    expect(result).toMatchObject({ success: true, stage: 'reload-retry', reason: 'reload-retried', restartSelf: false });
+    expect(reloads()).toEqual(['exec pm2 reload adb-keeper']);
+    const b = persisted();
+    expect(b.pendingReload).toBeUndefined();
+    expect(b.currentDeployedAt).toBe(FIXED_NOW.toISO());
+    expect(b.currentVersion).toBe('v2026.04.27-fix.1');
+    expect(b.lastFailure.stage).toBe('reload'); // kept as history, like after any deploy
+    expect(bannerShown(b)).toBe(false);
+    const published = firestoreSync.publishBuildInfo.mock.calls.at(-1)[0];
+    expect(bannerShown(published)).toBe(false);
+  });
+
+  test('keeps the still-failing apps pending and refreshes lastFailure', async () => {
+    const stillMissing = Object.assign(new Error('Command failed\n'), { killed: false, code: 1 });
+    const { bm, firestoreSync, reloads, persisted } = makeManager(
+      { 'pm2 reload adb-keeper': stillMissing },
+      {},
+      afterFailedReload(['adhan-caster', 'adb-keeper']),
+    );
+
+    const result = await bm.attemptUpdate();
+
+    expect(result).toMatchObject({ success: false, stage: 'reload-retry', reason: 'reload-failed: adb-keeper (exit 1)' });
+    expect(reloads()).toEqual(['exec pm2 reload adhan-caster', 'exec pm2 reload adb-keeper']);
+    const b = persisted();
+    expect(b.pendingReload).toEqual(['adb-keeper']);
+    expect(b.lastFailure).toMatchObject({
+      version: 'v2026.04.27-fix.1',
+      ts: FIXED_NOW.toISO(),
+      stage: 'reload-retry',
+      failedChecks: ['pm2 reload adb-keeper: exit 1'],
+    });
+    expect(bannerShown(b)).toBe(true);
+    expect(firestoreSync.publishBuildInfo.mock.calls.at(-1)[0].lastFailure.stage).toBe('reload-retry');
+  });
+
+  // e.g. `npm run update:now` ran outside pm2 and failed to reload the auto-updater.
+  test('a pending self app is handed back to the caller to restart', async () => {
+    const { bm, reloads, persisted } = makeManager({}, {}, afterFailedReload(['auto-updater']));
+    const result = await bm.attemptUpdate();
+    expect(result).toMatchObject({ success: true, reason: 'reload-retried', restartSelf: true });
+    expect(reloads()).toEqual([]);
+    expect(persisted().pendingReload).toBeUndefined();
+  });
+
+  test('a no-update cycle with nothing pending reloads nothing', async () => {
+    const { bm, reloads } = makeManager({}, {}, {
+      [BUILD_INFO]: JSON.stringify({ currentVersion: 'v2026.04.27-fix.1', pendingReload: [] }),
+    });
+    const result = await bm.attemptUpdate();
+    expect(result.reason).toBe('no-update');
+    expect(reloads()).toEqual([]);
+  });
+
+  test('a dry run does not retry', async () => {
+    const { bm, reloads, persisted } = makeManager({}, {}, afterFailedReload(['adb-keeper']));
+    const result = await bm.attemptUpdate({ dryRun: true });
+    expect(result.reason).toBe('no-update');
+    expect(reloads()).toEqual([]);
+    expect(persisted().pendingReload).toEqual(['adb-keeper']);
+  });
+
+  test('the prayer-window guard still applies', async () => {
+    const { bm, reloads } = makeManager({}, {
+      prayerWindowProvider: async () => [{ name: 'Asr', iso: FIXED_NOW.plus({ minutes: 3 }).toISO() }],
+    }, afterFailedReload(['adb-keeper']));
+    const result = await bm.attemptUpdate();
+    expect(result.stage).toBe('guard');
+    expect(reloads()).toEqual([]);
+  });
+});
+
+describe('BuildManager.describeExecFailure', () => {
+  test('names the cause without the command output', () => {
+    expect(BuildManager.describeExecFailure({ killed: true, signal: 'SIGTERM' }, 300_000)).toBe('timed out after 300s');
+    expect(BuildManager.describeExecFailure({ killed: false, code: 1, stderr: 'secret path' }, 300_000)).toBe('exit 1');
+    expect(BuildManager.describeExecFailure({ killed: false, code: null, signal: 'SIGKILL' }, 300_000)).toBe('killed by SIGKILL');
+    expect(BuildManager.describeExecFailure(new Error('spawn failed'), 300_000)).toBe('failed');
   });
 });
 

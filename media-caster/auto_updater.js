@@ -73,6 +73,11 @@ const buildManager = new BuildManager({
   log,
   timezone: TIMEZONE,
   prayerWindowProvider: () => upcomingPrayerWindows(),
+  // This process can't pm2-reload itself: pm2 kills the reloading app's
+  // process tree, which includes the CLI that asked for the reload. So
+  // BuildManager skips this app, and runUpdateCycle exits once the cycle is
+  // logged; pm2's autorestart then starts it again on the new code.
+  selfPm2App: 'auto-updater',
 });
 
 let activeJobs = [];
@@ -110,6 +115,12 @@ async function runUpdateCycle(triggerLabel, opts = {}) {
   require('dotenv').config({ path: path.join(__dirname, '.env'), override: true, quiet: true });
   const result = await buildManager.attemptUpdate(opts);
   log(`◀ update cycle [${triggerLabel}] → success=${result.success} stage=${result.stage} reason=${result.reason || 'n/a'}`);
+  if (result.restartSelf) {
+    log('restarting so pm2 brings the auto-updater back on the new code');
+    // pm2 writes this process's stdout to its log file asynchronously; give
+    // the lines above time to land before exiting.
+    setTimeout(() => process.exit(0), 2000);
+  }
   return result;
 }
 
