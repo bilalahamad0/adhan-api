@@ -111,11 +111,13 @@ class BuildManager {
    * SecurityService commit that never reached origin; 0 otherwise. Redeploying
    * origin over those only resets them away: the Pi ran that loop nightly, a
    * 00:01 security commit followed by a 02:00 reset and full redeploy.
+   * SecurityService no longer commits in the live checkout, so this only covers
+   * a commit from an older SecurityService still loaded in adhan-caster.
    *
    * Only applies when build-info.json says origin's tip is what is deployed,
-   * since a security rebase can move the files on disk to a newer origin
-   * without a deploy, and that still needs one. Any doubt returns 0, which
-   * deploys as before.
+   * since that older code's rebase could move the files on disk to a newer
+   * origin without a deploy, and that still needs one. Any doubt returns 0,
+   * which deploys as before.
    */
   async _unpushedSecurityCommits(currentSha, remoteSha) {
     const deployed = this.readBuildInfo();

@@ -1,4 +1,5 @@
 const { exec } = require('child_process');
+const os = require('os');
 const path = require('path');
 const fs = require('fs');
 const semver = require('semver');
@@ -11,6 +12,10 @@ const MAX_BUFFER = 32 * 1024 * 1024;
 // The push-access probe only authenticates; a minute is generous.
 const PROBE_TIMEOUT_MS = 60_000;
 const SHA = /^[0-9a-f]{7,40}$/i;
+// Paths that are interpolated into shell commands; os.tmpdir() always fits.
+const SAFE_PATH = /^\/[\w./-]+$/;
+const SCRATCH_PREFIX = 'adhan-security-';
+const STALE_SCRATCH_MS = 24 * 60 * 60_000;
 
 // Never rewrite these. `ip` resolves to a local file patch (media-caster/ip-patch);
 // any version override would quietly undo it.
@@ -54,11 +59,16 @@ function defaultRunExec(command, { cwd, timeoutMs = EXEC_TIMEOUT_MS } = {}) {
  *     push failures to stdout and returned; nothing else observed the result, so
  *     51 alerts accumulated while the job "ran" nightly for months.
  *
- *  3. Never leave a commit on this host that did not reach origin. The Pi has
- *     no GitHub credentials, so every night it committed at 00:01, failed the
- *     push, and BuildManager saw HEAD != origin at 02:00, reset the commit away
- *     and ran a full redeploy. Push access is checked before anything is
- *     written, and a commit that still fails to land is rolled back.
+ *  3. Never touch the live checkout. The Pi has no GitHub credentials, so every
+ *     night it committed at 00:01, failed the push, and BuildManager saw
+ *     HEAD != origin at 02:00, reset the commit away and ran a full redeploy;
+ *     `npm audit fix` had also rewritten the live node_modules under the running
+ *     app. Now push access is checked before anything runs, and fix mode works
+ *     on a copy of just the manifests from origin, in a temp dir, with npm in
+ *     lockfile-only mode. The commit is built from git objects alone. A fix that
+ *     lands reaches the Pi through BuildManager's normal deploy (staging, smoke,
+ *     reload); one that does not is deleted with the temp dir. The working
+ *     tree, index, HEAD and node_modules of the live checkout never change.
  */
 class SecurityService {
   constructor(options = {}) {
@@ -78,6 +88,8 @@ class SecurityService {
     this.gitEmail =
       opts.gitEmail || process.env.SECURITY_GIT_EMAIL || 'security-bot@adhan-api.local';
     this.gitName = opts.gitName || process.env.SECURITY_GIT_NAME || 'Adhan Security Bot';
+    // Where fix mode makes its throwaway copy of the manifests.
+    this.scratchParent = opts.scratchParent || os.tmpdir();
     this._versionCache = new Map();
   }
 
@@ -101,6 +113,18 @@ class SecurityService {
       this._warn(`⚠️ [SecurityService] Unreadable npm audit output in ${dir}; skipping overrides.`);
       return null;
     }
+  }
+
+  /**
+   * The severity counts of an audit, or null when it has none. npm prints a
+   * JSON error document when the registry is unreachable; that parses fine but
+   * carries no counts, and must not read as "zero found".
+   */
+  _auditCounts(audit, dir) {
+    const counts = audit && audit.metadata && audit.metadata.vulnerabilities;
+    if (counts) return counts;
+    this._warn(`⚠️ [SecurityService] npm audit in ${dir} returned no vulnerability counts.`);
+    return null;
   }
 
   _readJson(file) {
@@ -380,41 +404,78 @@ class SecurityService {
   }
 
   // --- workspace pipeline --------------------------------------------------
+  // Fix mode runs these in the scratch copy only. --package-lock-only resolves
+  // the tree and rewrites package-lock.json without a node_modules (npm 10.8.2
+  // on the Pi and 11.x both verified); npm reads registry metadata but installs
+  // and builds nothing.
 
   async _runAuditFix(dir) {
     this._say(`🔒 [SecurityService] Running 'npm audit fix' in ${dir}...`);
-    const { stdout, stderr, code } = await this.runExec('npm audit fix --no-fund', { cwd: dir });
+    const { stdout, stderr, code } = await this.runExec('npm audit fix --package-lock-only --no-fund', {
+      cwd: dir,
+    });
     this._say(`🔒 [SecurityService] npm audit fix (code ${code}):\n${stdout}`);
     if (stderr) this._say(`⚠️ [SecurityService] npm audit fix stderr:\n${stderr}`);
   }
 
   async _install(dir) {
-    const { code, stderr } = await this.runExec('npm install --no-audit --no-fund', { cwd: dir });
+    const { code, stderr } = await this.runExec('npm install --package-lock-only --no-audit --no-fund', {
+      cwd: dir,
+    });
     if (code !== 0) this._warn(`❌ [SecurityService] npm install failed in ${dir}: ${stderr.slice(0, 300)}`);
     return code === 0;
   }
 
+  /**
+   * Prune, audit fix, pin, re-audit. Stops at the first audit without counts
+   * (auditReadable: false) or failed lockfile install (installFailed: true);
+   * either one means the run must not commit, because the manifests may be
+   * half-updated or the decisions were made blind.
+   */
   async _processWorkspace(dir) {
-    const summary = { dir, pruned: [], repaired: [], applied: [], unresolved: [], remainingHighCritical: 0 };
+    const summary = {
+      dir,
+      pruned: [],
+      repaired: [],
+      applied: [],
+      unresolved: [],
+      remainingHighCritical: 0,
+      auditReadable: true,
+      installFailed: false,
+    };
+    const audited = async () => {
+      const audit = await this._audit(dir);
+      if (!this._auditCounts(audit, dir)) summary.auditReadable = false;
+      return audit;
+    };
 
-    const prune = await this._pruneStaleOverrides(dir, await this._audit(dir), this._readLock(dir));
+    const first = await audited();
+    if (!summary.auditReadable) return summary;
+    const prune = await this._pruneStaleOverrides(dir, first, this._readLock(dir));
     summary.pruned = prune.pruned;
     summary.repaired = prune.repaired;
-    if (prune.changed) await this._install(dir);
+    if (prune.changed && !(await this._install(dir))) {
+      summary.installFailed = true;
+      return summary;
+    }
 
     await this._runAuditFix(dir);
 
-    const enforce = await this._enforceOverridesForRemainingVulnerabilities(
-      dir,
-      await this._audit(dir),
-      this._readLock(dir)
-    );
+    const second = await audited();
+    if (!summary.auditReadable) return summary;
+    const enforce = await this._enforceOverridesForRemainingVulnerabilities(dir, second, this._readLock(dir));
     summary.applied = enforce.applied;
     summary.unresolved = enforce.unresolved;
-    if (enforce.changed) await this._install(dir);
+    if (enforce.changed && !(await this._install(dir))) {
+      summary.installFailed = true;
+      return summary;
+    }
 
-    const finalAudit = await this._audit(dir);
-    const counts = (finalAudit && finalAudit.metadata && finalAudit.metadata.vulnerabilities) || {};
+    const counts = this._auditCounts(await this._audit(dir), dir);
+    if (!counts) {
+      summary.auditReadable = false;
+      return summary;
+    }
     summary.remainingHighCritical = (counts.high || 0) + (counts.critical || 0);
     return summary;
   }
@@ -477,11 +538,10 @@ class SecurityService {
    * Can this host land a commit on origin at all? Asked before anything is
    * written. A dry-run push authenticates exactly like a real one and changes
    * nothing, locally or on the remote. A non-fast-forward rejection still
-   * proves the credentials work; _commitAndPushChanges rebases first.
+   * proves the credentials work; fix mode builds on a freshly fetched tip.
    *
    * It cannot see server-side rules: a dry run never sends the update, so
-   * branch protection only shows up on the real push ('protected'), and that
-   * commit is rolled back like any other that does not land.
+   * branch protection only shows up on the real push ('protected').
    */
   async _probePushAccess(projectRoot) {
     const probe = await this.runExec(
@@ -495,133 +555,181 @@ class SecurityService {
     return { ok: false, reason, detail: text.trim().slice(0, 400) };
   }
 
-  /**
-   * Undo a commit that never reached origin, so the tree is back where the run
-   * found it. `reset --keep` also unwinds a rebase that already moved the files,
-   * and refuses rather than overwrite a local edit.
-   */
-  async _rollbackUnlandedCommit(projectRoot, preSha) {
-    if (!SHA.test(preSha || '')) {
-      this._warn(`❌ [SecurityService] Unlanded commit left in place: pre-run HEAD unknown.`);
-      return false;
-    }
-    const reset = await this.runExec(`git reset --keep ${preSha}`, { cwd: projectRoot });
-    if (reset.code !== 0) {
-      this._warn(
-        `❌ [SecurityService] Could not roll back the unlanded commit: ` +
-          `${reset.stderr || reset.stdout}`.slice(0, 400)
-      );
-      return false;
-    }
-    this._say(`↩️  [SecurityService] Rolled back the unlanded commit; HEAD is ${preSha.slice(0, 7)} again.`);
-    return true;
+  /** media-caster's path inside the repo, in git's "/" form. */
+  _mediaCasterRel() {
+    return path.relative(this.repoRoot, this.mediaCasterDir).split(path.sep).join('/');
+  }
+
+  /** The files a fix may change, relative to the repo root. */
+  _manifestPaths() {
+    const mc = this._mediaCasterRel();
+    return ['package.json', 'package-lock.json', `${mc}/package.json`, `${mc}/package-lock.json`];
+  }
+
+  _git(args) {
+    return this.runExec(`git ${args}`, { cwd: this.repoRoot });
   }
 
   /**
-   * Commit the manifest changes and land them on origin.
-   *
-   * The old version ran a bare `git push origin HEAD:main` and reported success
-   * on the basis of an exit code nobody read. Two things changed:
-   *
-   *  - Rebase onto the fetched remote tip first. BuildManager resets this repo to
-   *    a specific sha on every deploy, so by the time this runs the local branch
-   *    is routinely behind origin and a plain push is a guaranteed rejection.
-   *  - Confirm origin actually moved afterwards, and classify the failure when it
-   *    did not, so "credentials" and "non-fast-forward" are distinguishable
-   *    without shelling into the Pi.
-   *
-   * A commit that does not land is rolled back (rule 3).
+   * Fetch origin and copy its manifests into a fresh temp dir, along with
+   * ip-patch, which media-caster's package.json points at with file:. That is
+   * all npm needs in lockfile-only mode: a few hundred KB, where a full checkout
+   * would be ~190 MB in the Pi's RAM-backed /tmp.
    */
-  async _commitAndPushChanges(projectRoot) {
-    const result = {
-      changed: false,
-      committed: false,
-      pushed: false,
-      failureReason: null,
-      detail: null,
-      rolledBack: false,
+  async _prepareScratch() {
+    const fail = (failureReason, detail) => {
+      this._warn(`❌ [SecurityService] Could not prepare the scratch copy: ${detail}`);
+      return { ok: false, failureReason, detail: String(detail).slice(0, 400) };
     };
 
-    const { stdout: statusOut } = await this.runExec('git status --porcelain', { cwd: projectRoot });
-    const touched = statusOut
-      .split('\n')
-      .map((l) => l.trim())
-      .filter((l) => l && (/package(-lock)?\.json$/.test(l) || l.includes('ip-patch')));
+    const fetch = await this._git(`fetch origin ${this.branch}`);
+    if (fetch.code !== 0) return fail(SecurityService.classifyPushFailure(fetch.stderr), `fetch failed: ${fetch.stderr}`);
+    const base = (await this._git(`rev-parse origin/${this.branch}`)).stdout.trim();
+    if (!SHA.test(base)) return fail('scratch-failed', `origin/${this.branch} did not resolve`);
 
-    if (!touched.length) {
+    this._sweepStaleScratch();
+    const root = this.fs.mkdtempSync(path.join(this.scratchParent, SCRATCH_PREFIX));
+    try {
+      if (!SAFE_PATH.test(root)) throw new Error(`unsafe scratch path ${root}`);
+      // Extract under the live checkout's own folder name. npm names a lockfile
+      // after its folder when package.json has no "name"; under mkdtemp's random
+      // name every run would rewrite package-lock.json and push the change.
+      const dir = path.join(root, this._checkoutName());
+      this.fs.mkdirSync(dir);
+
+      const extras = [];
+      const patch = `${this._mediaCasterRel()}/ip-patch`;
+      const listed = await this._git(`ls-tree --name-only ${base} -- ${patch}`);
+      if (listed.stdout.trim()) extras.push(patch);
+      const paths = [...this._manifestPaths(), ...extras].join(' ');
+      await this._git(`archive --format=tar ${base} ${paths} | tar -x -C '${dir}'`);
+
+      // /bin/sh has no pipefail, so check the result rather than the exit code.
+      const missing = this._manifestPaths().filter((rel) => !this.fs.existsSync(path.join(dir, rel)));
+      if (missing.length) throw new Error(`manifests missing after extract: ${missing.join(', ')}`);
+      return { ok: true, root, dir, base, workspaces: [dir, path.join(dir, this._mediaCasterRel())] };
+    } catch (e) {
+      this._removeScratch(root);
+      return fail('scratch-failed', e.message);
+    }
+  }
+
+  /** The live checkout's folder name, e.g. "adhan-api". */
+  _checkoutName() {
+    const name = path.basename(path.resolve(this.repoRoot));
+    return /^[\w.-]+$/.test(name) ? name : 'adhan-api';
+  }
+
+  /** Remove scratch dirs a killed run left behind. A day old is never in use. */
+  _sweepStaleScratch(now = Date.now()) {
+    let names;
+    try {
+      names = this.fs.readdirSync(this.scratchParent);
+    } catch {
+      return;
+    }
+    for (const name of names) {
+      if (!name.startsWith(SCRATCH_PREFIX)) continue;
+      const dir = path.join(this.scratchParent, name);
+      try {
+        if (now - this.fs.statSync(dir).mtimeMs > STALE_SCRATCH_MS) this._removeScratch(dir);
+      } catch {
+        /* already gone */
+      }
+    }
+  }
+
+  _removeScratch(dir) {
+    if (!dir || !dir.startsWith(path.join(this.scratchParent, SCRATCH_PREFIX))) return;
+    try {
+      this.fs.rmSync(dir, { recursive: true, force: true });
+    } catch (e) {
+      this._warn(`⚠️ [SecurityService] Could not remove scratch dir ${dir}: ${e.message}`);
+    }
+  }
+
+  /**
+   * Commit whichever scratch manifests differ from origin's and push them.
+   *
+   * The commit is assembled from objects with a temporary index (hash-object,
+   * read-tree, update-index, write-tree, commit-tree), parented on the origin
+   * tip the scratch copy came from. The live checkout is never involved, so a
+   * failure at any step leaves nothing behind but unreferenced objects for gc.
+   *
+   * There is no rebase. If origin moved during the run the push is refused as
+   * non-fast-forward and tomorrow's run starts from the new tip; replaying
+   * manifests computed from the old tip could undo someone's dependency change.
+   */
+  async _commitAndPush({ root, dir, base }) {
+    const result = { changed: false, committed: false, pushed: false, failureReason: null, detail: null };
+    const fail = (failureReason, detail, label) => {
+      result.failureReason = failureReason;
+      result.detail = String(detail).slice(0, 400);
+      this._warn(`❌ [SecurityService] ${label}: ${result.detail}`);
+      return result;
+    };
+
+    const changed = [];
+    for (const rel of this._manifestPaths()) {
+      const blob = (await this._git(`hash-object -w '${path.join(dir, rel)}'`)).stdout.trim();
+      if (!SHA.test(blob)) return fail('commit-failed', `hash-object ${rel} failed`, 'Commit failed');
+      const current = (await this._git(`rev-parse ${base}:${rel}`)).stdout.trim();
+      if (blob !== current) changed.push({ rel, blob });
+    }
+    if (!changed.length) {
       this._say(`✅ [SecurityService] No package changes to commit.`);
       return result;
     }
     result.changed = true;
 
-    await this.runExec('git add package.json package-lock.json', { cwd: projectRoot });
-    await this.runExec('git add media-caster/package.json media-caster/package-lock.json media-caster/ip-patch', {
-      cwd: projectRoot,
-    });
-
-    const { stdout: preRun } = await this.runExec('git rev-parse HEAD', { cwd: projectRoot });
+    // Outside the extracted tree, so npm never sees it.
+    const index = `GIT_INDEX_FILE='${path.join(root, 'git-index')}'`;
+    const steps = [
+      `read-tree ${base}`,
+      ...changed.map(({ rel, blob }) => `update-index --add --cacheinfo 100644,${blob},${rel}`),
+    ];
+    for (const step of steps) {
+      const r = await this.runExec(`${index} git ${step}`, { cwd: this.repoRoot });
+      if (r.code !== 0) return fail('commit-failed', `${step}: ${r.stderr}`, 'Commit failed');
+    }
+    const tree = (await this.runExec(`${index} git write-tree`, { cwd: this.repoRoot })).stdout.trim();
+    if (!SHA.test(tree)) return fail('commit-failed', 'write-tree failed', 'Commit failed');
 
     // Identity stays scoped to the single command — the Pi has no global git user.
     const identity = `-c user.email="${this.gitEmail}" -c user.name="${this.gitName}"`;
     const message = 'chore(security): auto-fix dependabot vulnerabilities and enforce overrides';
-    const commit = await this.runExec(`git ${identity} commit -m "${message}"`, { cwd: projectRoot });
-    if (commit.code !== 0) {
-      result.failureReason = 'commit-failed';
-      result.detail = `${commit.stderr || commit.stdout}`.slice(0, 400);
-      this._warn(`❌ [SecurityService] Commit failed: ${result.detail}`);
-      return result;
+    const made = await this._git(`${identity} commit-tree ${tree} -p ${base} -m "${message}"`);
+    const commit = made.stdout.trim();
+    if (made.code !== 0 || !SHA.test(commit)) {
+      return fail('commit-failed', made.stderr || made.stdout, 'Commit failed');
     }
     result.committed = true;
+    this._say(
+      `🔒 [SecurityService] Built ${commit.slice(0, 7)} on origin/${this.branch} ${base.slice(0, 7)}: ` +
+        changed.map((c) => c.rel).join(', ')
+    );
 
-    Object.assign(result, await this._landCommit(projectRoot, identity));
-    if (!result.pushed) result.rolledBack = await this._rollbackUnlandedCommit(projectRoot, preRun.trim());
-    return result;
-  }
-
-  /** Fetch, rebase, push, then verify origin moved. Never throws. */
-  async _landCommit(projectRoot, identity) {
-    const result = { pushed: false, failureReason: null, detail: null };
-
-    const fetch = await this.runExec(`git fetch origin ${this.branch}`, { cwd: projectRoot });
-    if (fetch.code !== 0) {
-      result.failureReason = SecurityService.classifyPushFailure(fetch.stderr);
-      result.detail = `fetch failed: ${fetch.stderr}`.slice(0, 400);
-      this._warn(`❌ [SecurityService] ${result.detail}`);
-      return result;
-    }
-
-    // --autostash keeps unrelated Pi drift from aborting the rebase.
-    const rebase = await this.runExec(`git ${identity} rebase --autostash origin/${this.branch}`, {
-      cwd: projectRoot,
-    });
-    if (rebase.code !== 0) {
-      await this.runExec('git rebase --abort', { cwd: projectRoot });
-      result.failureReason = 'rebase-conflict';
-      result.detail = `${rebase.stderr || rebase.stdout}`.slice(0, 400);
-      this._warn(`❌ [SecurityService] Rebase onto origin/${this.branch} failed: ${result.detail}`);
-      return result;
-    }
-
-    const push = await this.runExec(`git push origin HEAD:${this.branch}`, { cwd: projectRoot });
+    const push = await this._git(`push origin ${commit}:refs/heads/${this.branch}`);
     if (push.code !== 0) {
-      result.failureReason = SecurityService.classifyPushFailure(`${push.stderr}\n${push.stdout}`);
-      result.detail = `${push.stderr || push.stdout}`.slice(0, 400);
-      this._warn(`❌ [SecurityService] Push rejected (${result.failureReason}): ${result.detail}`);
-      return result;
+      const reason = SecurityService.classifyPushFailure(`${push.stderr}\n${push.stdout}`);
+      return fail(reason, push.stderr || push.stdout, `Push rejected (${reason})`);
     }
 
     // A zero exit code is not proof the remote moved. Verify.
-    await this.runExec(`git fetch origin ${this.branch}`, { cwd: projectRoot });
-    const { stdout: head } = await this.runExec('git rev-parse HEAD', { cwd: projectRoot });
-    const { stdout: remote } = await this.runExec(`git rev-parse origin/${this.branch}`, { cwd: projectRoot });
-    if (head.trim() && head.trim() === remote.trim()) {
-      result.pushed = true;
-      this._say(`✅ [SecurityService] Security fixes landed on origin/${this.branch}.`);
-    } else {
-      result.failureReason = 'remote-not-updated';
-      result.detail = `local ${head.trim().slice(0, 7)} != origin ${remote.trim().slice(0, 7)}`;
-      this._warn(`❌ [SecurityService] Push reported success but origin did not move (${result.detail}).`);
+    await this._git(`fetch origin ${this.branch}`);
+    const remote = (await this._git(`rev-parse origin/${this.branch}`)).stdout.trim();
+    if (remote !== commit) {
+      return fail(
+        'remote-not-updated',
+        `pushed ${commit.slice(0, 7)} but origin is ${remote.slice(0, 7)}`,
+        'Push reported success but origin did not move'
+      );
     }
+    result.pushed = true;
+    this._say(
+      `✅ [SecurityService] Security fixes landed on origin/${this.branch} (${commit.slice(0, 7)}); ` +
+        `BuildManager deploys them on its next cycle.`
+    );
     return result;
   }
 
@@ -636,10 +744,9 @@ class SecurityService {
       ok: summary.ok,
       mode: summary.mode,
       pushBlocked: summary.pushBlocked,
+      // committed && !pushed leaves nothing on the Pi: the commit was never on a branch.
       committed: summary.committed,
       pushed: summary.pushed,
-      // committed && !pushed && !rolledBack: an unlanded commit is still on the Pi.
-      rolledBack: summary.rolledBack,
       failureReason: summary.failureReason,
       remainingHighCritical: summary.remainingHighCritical,
       needsHuman: summary.needsHuman.slice(0, 20),
@@ -675,7 +782,6 @@ class SecurityService {
       workspaces: [],
       committed: false,
       pushed: false,
-      rolledBack: false,
       failureReason: null,
       needsHuman: [],
       remainingHighCritical: 0,
@@ -685,15 +791,35 @@ class SecurityService {
       const access = await this._probePushAccess(this.repoRoot);
       if (access.ok) {
         summary.mode = 'fix';
-        for (const dir of [this.repoRoot, this.mediaCasterDir]) {
-          summary.workspaces.push(await this._processWorkspace(dir));
+        const scratch = await this._prepareScratch();
+        if (!scratch.ok) {
+          summary.failureReason = scratch.failureReason;
+        } else {
+          // Whatever happens below, including a throw mid-npm, the edited
+          // manifests go with the scratch dir.
+          try {
+            for (const dir of scratch.workspaces) {
+              summary.workspaces.push(await this._processWorkspace(dir));
+            }
+            // Only a pipeline that fully succeeded may commit.
+            const blocked = summary.workspaces.some((w) => !w.auditReadable)
+              ? 'audit-unreadable'
+              : summary.workspaces.some((w) => w.installFailed)
+                ? 'install-failed'
+                : null;
+            if (blocked) {
+              summary.failureReason = blocked;
+              this._warn(`❌ [SecurityService] Not committing: ${blocked}.`);
+            } else {
+              const push = await this._commitAndPush(scratch);
+              summary.committed = push.committed;
+              summary.pushed = push.pushed;
+              summary.failureReason = push.failureReason;
+            }
+          } finally {
+            this._removeScratch(scratch.root);
+          }
         }
-
-        const push = await this._commitAndPushChanges(this.repoRoot);
-        summary.committed = push.committed;
-        summary.pushed = push.pushed;
-        summary.rolledBack = push.rolledBack;
-        summary.failureReason = push.failureReason;
       } else {
         // Without push access a fix can only become a local commit, which is
         // what BuildManager then resets away with a full redeploy. Audit only.
