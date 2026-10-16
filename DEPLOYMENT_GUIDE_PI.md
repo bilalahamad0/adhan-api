@@ -41,10 +41,10 @@ Ensure Node.js (v18+) is installed. Since we are using a Raspberry Pi, the best 
     # Should say v18.x.x
     ```
 
-Install `pm2` globally (no `sudo` needed with nvm):
+Install `pm2` globally at the version pinned as `PM2_VERSION` in `deploy.sh` (no `sudo` needed with nvm). See [Managing pm2](#managing-pm2) for why it is not a repo dependency:
 
 ```bash
-npm install -g pm2
+npm install -g pm2@7.0.4
 ```
 
 ## 2. Transfer Code (Production Artifact Method)
@@ -176,6 +176,33 @@ pm2 save
 pm2 startup
 # Run the command it outputs!
 ```
+
+### Managing pm2
+
+pm2 is a **global** install (`~/.nvm/versions/node/<version>/lib/node_modules/pm2`), run by the systemd unit `pm2-<user>.service` that `pm2 startup` creates. It is deliberately **not** in either `package.json`. Nothing in the repo starts or `require`s pm2, and npm ignores `overrides` for global installs. A repo copy only produced lockfile alerts for a pm2 that never ran, and its overrides never reached the daemon.
+
+`PM2_VERSION` in `deploy.sh` is the pinned version, and `deploy.sh` warns when the global pm2 differs. To upgrade, run the steps below outside a prayer window, because all apps restart. Re-running the same steps at the same version is also how you pick up patched releases of pm2's own dependencies: a global install re-resolves them every time.
+
+```bash
+npm install -g pm2@7.0.4            # keep in step with PM2_VERSION
+pm2 save
+sudo systemctl restart pm2-$(whoami)
+pm2 --version && pm2 status         # expect the new version, every app online
+```
+
+Use `systemctl restart`, not `pm2 update`. `pm2 update` relaunches the daemon from your SSH shell, outside the systemd unit, so systemd loses track of it. Between the install and the restart, pm2 prints `In-memory PM2 is out-of-date, do: pm2 update`. Ignore that message.
+
+The unit hardcodes the nvm Node path. After switching Node versions, run `pm2 unstartup`, then `pm2 startup` and the command it prints, then `pm2 save`. Before bumping `PM2_VERSION`, check `npm view pm2@<version> engines` against the Pi's Node. To see the advisories a global install of that version will carry, audit it the way npm resolves a global install, with no overrides:
+
+```bash
+cd "$(mktemp -d)" && npm init -y >/dev/null && npm install --package-lock-only pm2@<version> && npm audit
+```
+
+pm2 7.0.4 carries three advisories. None of them is reachable here:
+
+- `braces`, via the `chokidar` 3.6.0 that pm2 pins. It only parses `watch` / `ignore_watch` patterns, and every app runs with `watch: false`.
+- `js-yaml` 4.3.1. It only parses `.yml` / `.yaml` ecosystem files, and ours is `ecosystem.config.cjs`.
+- `basic-ftp` 5.x. It is only reachable through the pm2.io agent's proxy support, and pm2.io is not linked (no `pm2 link`).
 
 ### After updating code (`git pull`, tarball, or `scp`)
 

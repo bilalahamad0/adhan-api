@@ -42,10 +42,9 @@ function defaultRunExec(command, { cwd, timeoutMs = EXEC_TIMEOUT_MS } = {}) {
  * Two rules shape the whole design:
  *
  *  1. Never resolve an override to "*". That ignores major boundaries — for
- *     js-yaml it lands on 5.x while pm2 pins 4.3.0 and @istanbuljs/load-nyc-config
- *     needs 3.x, an API break in both. Overrides are scoped to the consumer that
- *     pulls the vulnerable package and pinned to the first patched version inside
- *     the major already installed.
+ *     js-yaml it lands on 5.x while pm2 pins 4.3.x, an API break. Overrides are
+ *     scoped to the consumer that pulls the vulnerable package and pinned to the
+ *     first patched version inside the major already installed.
  *
  *  2. A run that cannot land its fix must say so. The previous version logged
  *     push failures to stdout and returned; nothing else observed the result, so
