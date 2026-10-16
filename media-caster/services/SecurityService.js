@@ -462,6 +462,10 @@ class SecurityService {
     const s = String(text || '').toLowerCase();
     if (/permission denied|publickey|authentication failed|could not read username|access rights|terminal prompts disabled|403/.test(s))
       return 'credentials';
+    // Server-side refusals (branch protection, pre-receive hooks), e.g.
+    // "GH006: Protected branch update failed" / "[remote rejected] … (… declined)".
+    if (/gh006|protected branch|remote rejected|pre-receive hook|declined/.test(s))
+      return 'protected';
     if (/non-fast-forward|fetch first|\[rejected\]|stale info|behind its remote/.test(s))
       return 'non-fast-forward';
     if (/could not resolve host|connection refused|timed out|network is unreachable/.test(s))
@@ -474,6 +478,10 @@ class SecurityService {
    * written. A dry-run push authenticates exactly like a real one and changes
    * nothing, locally or on the remote. A non-fast-forward rejection still
    * proves the credentials work; _commitAndPushChanges rebases first.
+   *
+   * It cannot see server-side rules: a dry run never sends the update, so
+   * branch protection only shows up on the real push ('protected'), and that
+   * commit is rolled back like any other that does not land.
    */
   async _probePushAccess(projectRoot) {
     const probe = await this.runExec(
@@ -630,6 +638,8 @@ class SecurityService {
       pushBlocked: summary.pushBlocked,
       committed: summary.committed,
       pushed: summary.pushed,
+      // committed && !pushed && !rolledBack: an unlanded commit is still on the Pi.
+      rolledBack: summary.rolledBack,
       failureReason: summary.failureReason,
       remainingHighCritical: summary.remainingHighCritical,
       needsHuman: summary.needsHuman.slice(0, 20),

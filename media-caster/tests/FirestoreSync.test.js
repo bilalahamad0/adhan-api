@@ -58,6 +58,32 @@ describe('FirestoreSync publishBuildInfo', () => {
   });
 });
 
+describe('FirestoreSync publishSecurityInfo', () => {
+  test('carries the run mode and rollback outcome to meta/security, and nothing unlisted', async () => {
+    const sync = new FirestoreSync('encoded-key', 'America/Los_Angeles', '/tmp/annual_schedule.json');
+    const set = jest.fn().mockResolvedValue(undefined);
+    const doc = jest.fn(() => ({ set }));
+    const db = { collection: jest.fn(() => ({ doc })) };
+    jest.spyOn(sync, '_initFirestore').mockReturnValue(db);
+
+    await sync.publishSecurityInfo({
+      ok: false,
+      mode: 'fix',
+      pushBlocked: null,
+      committed: true,
+      pushed: false,
+      rolledBack: false,
+      failureReason: 'protected',
+      workspaces: [{ dir: '/home/pi/adhan-api' }],
+    });
+
+    expect(doc).toHaveBeenCalledWith('security');
+    const [published] = set.mock.calls[0];
+    expect(published).toMatchObject({ mode: 'fix', pushBlocked: null, rolledBack: false, failureReason: 'protected' });
+    expect(published).not.toHaveProperty('workspaces');
+  });
+});
+
 describe('FirestoreSync ensureTodayScheduleOnFirestore', () => {
   test('merges scheduledTimes and top-level st_* fields onto dailyMetrics', async () => {
     const sync = new FirestoreSync('encoded-key', 'America/Los_Angeles', '/tmp/annual_schedule.json');

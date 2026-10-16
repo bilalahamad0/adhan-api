@@ -389,6 +389,16 @@ describe('SecurityService commit and push', () => {
     });
   });
 
+  // A dry-run probe cannot see branch protection, so this only surfaces on the
+  // real push; it should not read as 'unknown'.
+  it('classifies a server-side refusal as protected', () => {
+    const classify = SecurityService.classifyPushFailure;
+    expect(classify('remote: error: GH006: Protected branch update failed for refs/heads/main.')).toBe('protected');
+    expect(classify(' ! [remote rejected] HEAD -> main (pre-receive hook declined)')).toBe('protected');
+    expect(classify(' ! [rejected]        HEAD -> main (non-fast-forward)')).toBe('non-fast-forward');
+    expect(classify("fatal: could not read Username for 'https://github.com'")).toBe('credentials');
+  });
+
   it('does not call a push "landed" when origin never moved', async () => {
     const { service } = makeService({
       responses: {
@@ -694,6 +704,30 @@ describe('SecurityService run reporting', () => {
       expect.objectContaining({ ok: false, pushed: false, failureReason: 'credentials' })
     );
     expect(service.log.error).toHaveBeenCalledWith(expect.stringContaining('UNRESOLVED'));
+  });
+
+  // committed && !pushed reads the same whether the commit was undone or left
+  // behind; only rolledBack tells them apart off the Pi.
+  it('publishes whether an unlanded commit was rolled back', async () => {
+    const run = (resetResult) => {
+      const publishSecurityInfo = jest.fn().mockResolvedValue(true);
+      const { service } = fullRun({
+        'git push --dry-run': { code: 0 },
+        'git status --porcelain': { stdout: ' M package-lock.json\n' },
+        'rev-parse HEAD': { stdout: 'abc1234\n' },
+        'git push': { code: 1, stderr: 'remote: error: GH006: Protected branch update failed' },
+        'reset --keep': resetResult,
+      });
+      service.firestoreSync = { publishSecurityInfo };
+      return service.autoFixVulnerabilities().then(() => publishSecurityInfo.mock.calls[0][0]);
+    };
+
+    expect(await run({ code: 0 })).toMatchObject({ committed: true, pushed: false, rolledBack: true, failureReason: 'protected' });
+    expect(await run({ code: 128, stderr: 'fatal: Cannot do a keep reset in the middle of a merge.' })).toMatchObject({
+      committed: true,
+      pushed: false,
+      rolledBack: false,
+    });
   });
 
   // The payload is linted on its string leaves rather than its whole JSON, so a
