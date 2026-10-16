@@ -430,7 +430,6 @@ class FirestoreSync {
       'pushBlocked',
       'committed',
       'pushed',
-      'rolledBack',
       'failureReason',
       'remainingHighCritical',
       'needsHuman',

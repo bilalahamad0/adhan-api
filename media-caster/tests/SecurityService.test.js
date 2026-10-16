@@ -6,6 +6,7 @@ const MC = '/srv/repo/media-caster';
 
 function makeFakeFs(initial = {}) {
   const store = new Map(Object.entries(initial));
+  const removed = [];
   return {
     existsSync: (p) => store.has(p),
     readFileSync: (p) => {
@@ -17,7 +18,13 @@ function makeFakeFs(initial = {}) {
       return store.get(p);
     },
     writeFileSync: (p, contents) => store.set(p, contents),
+    mkdtempSync: (prefix) => `${prefix}TEST`,
+    rmSync: (p) => {
+      removed.push(p);
+      for (const key of [...store.keys()]) if (key === p || key.startsWith(`${p}/`)) store.delete(key);
+    },
     _store: store,
+    _removed: removed,
     _json: (p) => JSON.parse(store.get(p)),
   };
 }
@@ -42,6 +49,50 @@ function makeRunExec(responses = {}) {
 
 const pkgFile = (dir) => path.join(dir, 'package.json');
 const lockFile = (dir) => path.join(dir, 'package-lock.json');
+
+// Fix mode's throwaway copy of the manifests (the fake mkdtemp appends TEST).
+const SCRATCH_PARENT = '/tmp/sec';
+const SCRATCH = '/tmp/sec/adhan-security-TEST';
+const SCRATCH_MC = `${SCRATCH}/media-caster`;
+const BASE = '3298b3d7fc23500aaaf3953ee86625cd0d8ac698';
+const TREE = '1111111111111111111111111111111111111111';
+const COMMIT = 'c0ffee0000000000000000000000000000000000';
+const SAME_BLOB = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+const NEW_BLOB = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+
+function manifests(root, mc, { pkg = { overrides: {} } } = {}) {
+  return {
+    [pkgFile(root)]: JSON.stringify(pkg),
+    [lockFile(root)]: JSON.stringify({ packages: {} }),
+    [pkgFile(mc)]: JSON.stringify({ overrides: {} }),
+    [lockFile(mc)]: JSON.stringify({ packages: {} }),
+  };
+}
+
+/**
+ * git responses for a fix-mode run. origin/main resolves to BASE until the
+ * push lands, then to whatever originAfterPush says. Only media-caster's
+ * lockfile differs from origin's copy unless changed is false.
+ */
+function plumbing({ changed = true, push = {}, originAfterPush = COMMIT } = {}) {
+  let landed = false;
+  return {
+    'git push --dry-run': { code: 0 },
+    'git push origin': () => {
+      const result = { code: 0, ...push };
+      if (result.code === 0) landed = true;
+      return result;
+    },
+    'rev-parse origin/main': () => ({ stdout: `${landed ? originAfterPush : BASE}\n` }),
+    'ls-tree --name-only': { stdout: 'media-caster/ip-patch\n' },
+    'hash-object -w': (cmd) => ({
+      stdout: `${changed && cmd.includes(`${SCRATCH_MC}/package-lock.json`) ? NEW_BLOB : SAME_BLOB}\n`,
+    }),
+    [`rev-parse ${BASE}:`]: { stdout: `${SAME_BLOB}\n` },
+    'write-tree': { stdout: `${TREE}\n` },
+    'commit-tree': { stdout: `${COMMIT}\n` },
+  };
+}
 
 /** The real shape of the js-yaml problem: pm2 pins 4.3.0, advisory covers 4.0.0-4.3.0. */
 const JS_YAML_AUDIT = {
@@ -80,6 +131,7 @@ function makeService({ files = {}, responses = {}, ...overrides } = {}) {
     fsApi,
     repoRoot: ROOT,
     mediaCasterDir: MC,
+    scratchParent: SCRATCH_PARENT,
     ...overrides,
   });
   return { service, fsApi, runExec, calls };
@@ -340,53 +392,120 @@ describe('SecurityService stale override pruning', () => {
   });
 });
 
-describe('SecurityService commit and push', () => {
-  const dirty = { stdout: ' M package.json\n M media-caster/package-lock.json\n' };
+describe('SecurityService scratch copy', () => {
+  const ARCHIVE =
+    `git archive --format=tar ${BASE} package.json package-lock.json ` +
+    `media-caster/package.json media-caster/package-lock.json`;
 
-  it('rebases onto the fetched remote tip before pushing', async () => {
-    const { service, calls } = makeService({
-      responses: {
-        'git status --porcelain': dirty,
-        'rev-parse HEAD': { stdout: 'abc123\n' },
-        'rev-parse origin/main': { stdout: 'abc123\n' },
-      },
-    });
+  it('copies only the manifests and ip-patch from the freshly fetched origin tip', async () => {
+    const { service, calls } = makeService({ files: manifests(SCRATCH, SCRATCH_MC), responses: plumbing() });
 
-    const result = await service._commitAndPushChanges(ROOT);
-    expect(result).toMatchObject({ changed: true, committed: true, pushed: true, failureReason: null });
+    const scratch = await service._prepareScratch();
 
+    expect(scratch).toEqual({ ok: true, dir: SCRATCH, base: BASE, workspaces: [SCRATCH, SCRATCH_MC] });
     const order = calls.map((c) => c.cmd);
-    const fetchAt = order.findIndex((c) => c.includes('git fetch origin main'));
-    const rebaseAt = order.findIndex((c) => c.includes('rebase --autostash origin/main'));
-    const pushAt = order.findIndex((c) => c.includes('git push origin HEAD:main'));
-    expect(fetchAt).toBeGreaterThan(-1);
-    expect(fetchAt).toBeLessThan(rebaseAt);
-    expect(rebaseAt).toBeLessThan(pushAt);
+    expect(order.slice(0, 2)).toEqual(['git fetch origin main', 'git rev-parse origin/main']);
+    expect(order).toContain(`${ARCHIVE} media-caster/ip-patch | tar -x -C '${SCRATCH}'`);
+    expect(calls.every((c) => c.cwd === ROOT)).toBe(true);
   });
 
-  it('reports a push rejected for credentials distinctly from one behind the remote', async () => {
-    const credentials = makeService({
-      responses: {
-        'git status --porcelain': dirty,
-        'git push': { code: 128, stderr: 'git@github.com: Permission denied (publickey).' },
-      },
-    });
-    expect(await credentials.service._commitAndPushChanges(ROOT)).toMatchObject({
-      committed: true,
-      pushed: false,
-      failureReason: 'credentials',
+  it('leaves ip-patch out when origin no longer has it', async () => {
+    const { service, calls } = makeService({
+      files: manifests(SCRATCH, SCRATCH_MC),
+      responses: { ...plumbing(), 'ls-tree --name-only': { stdout: '' } },
     });
 
-    const stale = makeService({
-      responses: {
-        'git status --porcelain': dirty,
-        'git push': { code: 1, stderr: '! [rejected] main -> main (non-fast-forward)' },
-      },
+    await service._prepareScratch();
+    expect(calls.map((c) => c.cmd)).toContain(`${ARCHIVE} | tar -x -C '${SCRATCH}'`);
+  });
+
+  // /bin/sh has no pipefail: a failed `git archive` piped into tar can still exit 0.
+  it('gives up, and removes the dir, when the extract left manifests missing', async () => {
+    const { service, fsApi } = makeService({ responses: plumbing() });
+
+    expect(await service._prepareScratch()).toMatchObject({ ok: false, failureReason: 'scratch-failed' });
+    expect(fsApi._removed).toEqual([SCRATCH]);
+  });
+
+  it('reports a failed fetch before creating anything', async () => {
+    const { service, fsApi, calls } = makeService({
+      responses: { 'git fetch': { code: 128, stderr: "fatal: unable to access: Could not resolve host: github.com" } },
     });
-    expect(await stale.service._commitAndPushChanges(ROOT)).toMatchObject({
-      pushed: false,
-      failureReason: 'non-fast-forward',
+    fsApi.mkdtempSync = jest.fn();
+
+    expect(await service._prepareScratch()).toMatchObject({ ok: false, failureReason: 'network' });
+    expect(fsApi.mkdtempSync).not.toHaveBeenCalled();
+    expect(calls).toHaveLength(1);
+  });
+
+  it('only ever removes its own scratch dirs', () => {
+    const { service, fsApi } = makeService();
+    service._removeScratch(ROOT);
+    service._removeScratch('/tmp/sec/something-else');
+    service._removeScratch(SCRATCH);
+    expect(fsApi._removed).toEqual([SCRATCH]);
+  });
+});
+
+describe('SecurityService commit from objects', () => {
+  const run = (opts) => {
+    const svc = makeService({ responses: plumbing(opts) });
+    return { ...svc, result: svc.service._commitAndPush(SCRATCH, BASE) };
+  };
+
+  it('builds the commit on the origin tip with a temporary index, and pushes that sha', async () => {
+    const { calls, result } = run();
+    expect(await result).toMatchObject({ changed: true, committed: true, pushed: true, failureReason: null });
+
+    const index = `GIT_INDEX_FILE='${SCRATCH}/.git-index'`;
+    const cmds = calls.map((c) => c.cmd);
+    expect(cmds).toEqual(
+      expect.arrayContaining([
+        `${index} git read-tree ${BASE}`,
+        `${index} git update-index --add --cacheinfo 100644,${NEW_BLOB},media-caster/package-lock.json`,
+        `${index} git write-tree`,
+        `git push origin ${COMMIT}:refs/heads/main`,
+      ])
+    );
+    // Only the manifest that differs from origin's copy is staged.
+    expect(cmds.filter((c) => c.includes('update-index'))).toHaveLength(1);
+    expect(cmds.find((c) => c.includes('commit-tree'))).toMatch(
+      new RegExp(`-c user.email="security-bot@adhan-api.local" .* commit-tree ${TREE} -p ${BASE} -m "chore\\(security\\)`)
+    );
+    expect(calls.every((c) => c.cwd === ROOT)).toBe(true);
+  });
+
+  it('stays quiet when no manifest changed', async () => {
+    const { calls, result } = run({ changed: false });
+    expect(await result).toMatchObject({ changed: false, committed: false, pushed: false, failureReason: null });
+    expect(calls.some((c) => /read-tree|commit-tree|git push/.test(c.cmd))).toBe(false);
+  });
+
+  // Replaying manifests computed from the old tip could undo someone's
+  // dependency change, so a race with origin is left for tomorrow's run.
+  it('does not rebase when origin moved during the run', async () => {
+    const { calls, result } = run({ push: { code: 1, stderr: ' ! [rejected] c0ffee0 -> main (fetch first)' } });
+    expect(await result).toMatchObject({ committed: true, pushed: false, failureReason: 'non-fast-forward' });
+    expect(calls.some((c) => c.cmd.includes('rebase'))).toBe(false);
+  });
+
+  it('reports a push rejected for credentials distinctly', async () => {
+    const { result } = run({ push: { code: 128, stderr: 'git@github.com: Permission denied (publickey).' } });
+    expect(await result).toMatchObject({ committed: true, pushed: false, failureReason: 'credentials' });
+  });
+
+  it('does not call a push "landed" when origin never moved', async () => {
+    const { result } = run({ originAfterPush: BASE });
+    expect(await result).toMatchObject({ pushed: false, failureReason: 'remote-not-updated' });
+  });
+
+  it('stops before pushing when the commit cannot be built', async () => {
+    const svc = makeService({ responses: { ...plumbing(), 'write-tree': { code: 128, stdout: '' } } });
+    expect(await svc.service._commitAndPush(SCRATCH, BASE)).toMatchObject({
+      committed: false,
+      failureReason: 'commit-failed',
     });
+    expect(svc.calls.some((c) => c.cmd.includes('git push'))).toBe(false);
   });
 
   // A dry-run probe cannot see branch protection, so this only surfaces on the
@@ -397,111 +516,6 @@ describe('SecurityService commit and push', () => {
     expect(classify(' ! [remote rejected] HEAD -> main (pre-receive hook declined)')).toBe('protected');
     expect(classify(' ! [rejected]        HEAD -> main (non-fast-forward)')).toBe('non-fast-forward');
     expect(classify("fatal: could not read Username for 'https://github.com'")).toBe('credentials');
-  });
-
-  it('does not call a push "landed" when origin never moved', async () => {
-    const { service } = makeService({
-      responses: {
-        'git status --porcelain': dirty,
-        'rev-parse HEAD': { stdout: 'aaaaaaa\n' },
-        'rev-parse origin/main': { stdout: 'bbbbbbb\n' },
-      },
-    });
-
-    const result = await service._commitAndPushChanges(ROOT);
-    expect(result.pushed).toBe(false);
-    expect(result.failureReason).toBe('remote-not-updated');
-  });
-
-  it('aborts a conflicted rebase instead of leaving the repo mid-rebase', async () => {
-    const { service, calls } = makeService({
-      responses: {
-        'git status --porcelain': dirty,
-        'rebase --autostash': { code: 1, stderr: 'CONFLICT (content): package-lock.json' },
-      },
-    });
-
-    const result = await service._commitAndPushChanges(ROOT);
-    expect(result.failureReason).toBe('rebase-conflict');
-    expect(calls.some((c) => c.cmd.includes('git rebase --abort'))).toBe(true);
-    expect(calls.some((c) => c.cmd.includes('git push'))).toBe(false);
-  });
-
-  it('stays quiet when no package files changed', async () => {
-    const { service, calls } = makeService({
-      responses: { 'git status --porcelain': { stdout: ' M media-caster/boot.js\n' } },
-    });
-
-    const result = await service._commitAndPushChanges(ROOT);
-    expect(result).toMatchObject({ changed: false, committed: false, pushed: false });
-    expect(calls.some((c) => c.cmd.includes('commit'))).toBe(false);
-  });
-
-  // A local commit that never lands is what BuildManager read as an update and
-  // reset away with a full redeploy, every night.
-  it('rolls an unlanded commit back to the pre-run HEAD', async () => {
-    const { service, calls } = makeService({
-      responses: {
-        'git status --porcelain': dirty,
-        'rev-parse HEAD': { stdout: '3298b3d7fc23500aaaf3953ee86625cd0d8ac698\n' },
-        'git push': { code: 1, stderr: '! [rejected] main -> main (fetch first)' },
-      },
-    });
-
-    const result = await service._commitAndPushChanges(ROOT);
-    expect(result).toMatchObject({ committed: true, pushed: false, rolledBack: true });
-    expect(result.failureReason).toBe('non-fast-forward');
-
-    const order = calls.map((c) => c.cmd);
-    const preRunAt = order.indexOf('git rev-parse HEAD');
-    const commitAt = order.findIndex((c) => c.includes(' commit -m'));
-    expect(preRunAt).toBeGreaterThan(-1);
-    expect(preRunAt).toBeLessThan(commitAt);
-    expect(order[order.length - 1]).toBe('git reset --keep 3298b3d7fc23500aaaf3953ee86625cd0d8ac698');
-  });
-
-  it('rolls back after a conflicted rebase too', async () => {
-    const { service, calls } = makeService({
-      responses: {
-        'git status --porcelain': dirty,
-        'rev-parse HEAD': { stdout: 'abc1234\n' },
-        'rebase --autostash': { code: 1, stderr: 'CONFLICT (content): package-lock.json' },
-      },
-    });
-
-    const result = await service._commitAndPushChanges(ROOT);
-    expect(result).toMatchObject({ failureReason: 'rebase-conflict', rolledBack: true });
-    const order = calls.map((c) => c.cmd);
-    expect(order.indexOf('git rebase --abort')).toBeLessThan(order.indexOf('git reset --keep abc1234'));
-  });
-
-  it('does not roll back a commit that landed', async () => {
-    const { service, calls } = makeService({
-      responses: {
-        'git status --porcelain': dirty,
-        'rev-parse HEAD': { stdout: 'abc1234\n' },
-        'rev-parse origin/main': { stdout: 'abc1234\n' },
-      },
-    });
-
-    const result = await service._commitAndPushChanges(ROOT);
-    expect(result).toMatchObject({ pushed: true, rolledBack: false });
-    expect(calls.some((c) => c.cmd.includes('reset'))).toBe(false);
-  });
-
-  it('says so when the rollback itself is refused', async () => {
-    const { service } = makeService({
-      responses: {
-        'git status --porcelain': dirty,
-        'rev-parse HEAD': { stdout: 'abc1234\n' },
-        'git push': { code: 128, stderr: 'Permission denied (publickey).' },
-        'reset --keep': { code: 128, stderr: 'error: Entry package.json would be overwritten' },
-      },
-    });
-
-    const result = await service._commitAndPushChanges(ROOT);
-    expect(result).toMatchObject({ committed: true, pushed: false, rolledBack: false });
-    expect(service.log.error).toHaveBeenCalledWith(expect.stringContaining('Could not roll back'));
   });
 });
 
@@ -655,7 +669,8 @@ describe('SecurityService report-only mode', () => {
   });
 
   it('runs the full fix when the probe passes', async () => {
-    const { service, calls } = noPushRun(undefined, { 'git push --dry-run': { code: 0 } });
+    const { service, calls } = noPushRun(undefined, plumbing());
+    for (const [p, v] of Object.entries(manifests(SCRATCH, SCRATCH_MC))) service.fs.writeFileSync(p, v);
 
     const summary = await service.autoFixVulnerabilities();
 
@@ -665,15 +680,117 @@ describe('SecurityService report-only mode', () => {
   });
 });
 
+// The live checkout is what the running app is loaded from, and what
+// BuildManager deploys onto. Fix mode must leave all of it alone.
+describe('SecurityService fix mode', () => {
+  const CLEAN_AUDIT = {
+    stdout: JSON.stringify({ vulnerabilities: {}, metadata: { vulnerabilities: { critical: 0, high: 0 } } }),
+  };
+
+  function fixRun({ extra = {}, git = {} } = {}) {
+    const run = makeService({
+      files: { ...manifests(ROOT, MC), ...manifests(SCRATCH, SCRATCH_MC) },
+      responses: { ...extra, 'npm audit --json': CLEAN_AUDIT, ...plumbing(git) },
+    });
+    run.publishSecurityInfo = jest.fn().mockResolvedValue(true);
+    run.service.firestoreSync = { publishSecurityInfo: run.publishSecurityInfo };
+    run.live = () => [...run.fsApi._store].filter(([p]) => !p.startsWith(SCRATCH));
+    run.liveBefore = run.live();
+    return run;
+  }
+
+  // Writes git or npm could make to the live checkout's tree, index, HEAD or
+  // node_modules.
+  const LIVE_WRITE = /\b(reset|rebase|checkout|stash|status|merge|pull)\b|git add |\bcommit -m/;
+
+  it('runs npm only in the scratch copy, and nothing that writes the live checkout', async () => {
+    const { service, calls, live, liveBefore, fsApi } = fixRun();
+
+    const summary = await service.autoFixVulnerabilities();
+
+    expect(summary).toMatchObject({ mode: 'fix', committed: true, pushed: true, failureReason: null, ok: true });
+    const npm = calls.filter((c) => c.cmd.startsWith('npm '));
+    expect(npm.length).toBeGreaterThan(0);
+    expect(npm.every((c) => c.cwd === SCRATCH || c.cwd === SCRATCH_MC)).toBe(true);
+    expect(npm.filter((c) => /npm (install|audit fix)/.test(c.cmd)).every((c) => c.cmd.includes('--package-lock-only'))).toBe(
+      true
+    );
+    expect(calls.filter((c) => LIVE_WRITE.test(c.cmd))).toEqual([]);
+    expect(live()).toEqual(liveBefore);
+    expect(fsApi._removed).toEqual([SCRATCH]);
+  });
+
+  it('writes edited manifests into the scratch copy only', async () => {
+    const { service, fsApi, live, liveBefore } = fixRun({
+      extra: {
+        'npm audit fix': (cmd, opts) => {
+          fsApi.writeFileSync(lockFile(opts.cwd), JSON.stringify({ fixed: true }));
+          return { code: 0 };
+        },
+      },
+    });
+    let seenInScratch = null;
+    const realRemove = service._removeScratch.bind(service);
+    service._removeScratch = (dir) => {
+      seenInScratch = fsApi._json(lockFile(SCRATCH_MC));
+      realRemove(dir);
+    };
+
+    await service.autoFixVulnerabilities();
+
+    expect(seenInScratch).toEqual({ fixed: true });
+    expect(live()).toEqual(liveBefore);
+  });
+
+  it('removes the scratch copy even when npm throws mid-run', async () => {
+    const { service, fsApi, live, liveBefore } = fixRun({
+      extra: {
+        'npm audit fix': () => {
+          throw new Error('npm exploded');
+        },
+      },
+    });
+
+    const summary = await service.autoFixVulnerabilities();
+
+    expect(summary).toMatchObject({ ok: false, failureReason: 'exception: npm exploded' });
+    expect(fsApi._removed).toEqual([SCRATCH]);
+    expect(live()).toEqual(liveBefore);
+  });
+
+  it('reports a refused push and leaves nothing behind', async () => {
+    const { service, fsApi, calls, live, liveBefore, publishSecurityInfo } = fixRun({
+      git: { push: { code: 1, stderr: 'remote: error: GH006: Protected branch update failed for refs/heads/main.' } },
+    });
+
+    const summary = await service.autoFixVulnerabilities();
+
+    expect(summary).toMatchObject({ committed: true, pushed: false, failureReason: 'protected' });
+    expect(fsApi._removed).toEqual([SCRATCH]);
+    expect(live()).toEqual(liveBefore);
+    expect(calls.filter((c) => LIVE_WRITE.test(c.cmd))).toEqual([]);
+    const [published] = publishSecurityInfo.mock.calls[0];
+    expect(published).toMatchObject({ mode: 'fix', committed: true, pushed: false, failureReason: 'protected' });
+    expect(published).not.toHaveProperty('rolledBack');
+  });
+
+  it('reports a scratch failure without running npm', async () => {
+    const { service, calls } = makeService({
+      files: manifests(ROOT, MC),
+      responses: { ...plumbing(), 'npm audit --json': CLEAN_AUDIT },
+    });
+
+    const summary = await service.autoFixVulnerabilities();
+
+    expect(summary).toMatchObject({ mode: 'fix', ok: false, failureReason: 'scratch-failed' });
+    expect(calls.some((c) => c.cmd.startsWith('npm '))).toBe(false);
+  });
+});
+
 describe('SecurityService run reporting', () => {
   function fullRun(extraResponses = {}) {
     return makeService({
-      files: {
-        [pkgFile(ROOT)]: JSON.stringify({ overrides: {} }),
-        [lockFile(ROOT)]: JSON.stringify({ packages: {} }),
-        [pkgFile(MC)]: JSON.stringify({ overrides: {} }),
-        [lockFile(MC)]: JSON.stringify({ packages: {} }),
-      },
+      files: { ...manifests(ROOT, MC), ...manifests(SCRATCH, SCRATCH_MC) },
       responses: {
         'npm audit --json': {
           stdout: JSON.stringify({
@@ -682,6 +799,7 @@ describe('SecurityService run reporting', () => {
           }),
         },
         ...extraResponses,
+        ...plumbing({ changed: false }),
       },
     });
   }
@@ -689,10 +807,12 @@ describe('SecurityService run reporting', () => {
   it('publishes the outcome so a failed run is visible off the Pi', async () => {
     const publishSecurityInfo = jest.fn().mockResolvedValue(true);
     // The probe passes but the real push is still refused.
-    const { service } = fullRun({
-      'git push --dry-run': { code: 0 },
-      'git status --porcelain': { stdout: ' M package-lock.json\n' },
-      'git push': { code: 128, stderr: 'Permission denied (publickey).' },
+    const { service } = makeService({
+      files: { ...manifests(ROOT, MC), ...manifests(SCRATCH, SCRATCH_MC) },
+      responses: {
+        'npm audit --json': { stdout: JSON.stringify({ vulnerabilities: {}, metadata: { vulnerabilities: {} } }) },
+        ...plumbing({ push: { code: 128, stderr: 'Permission denied (publickey).' } }),
+      },
     });
     service.firestoreSync = { publishSecurityInfo };
 
@@ -704,30 +824,6 @@ describe('SecurityService run reporting', () => {
       expect.objectContaining({ ok: false, pushed: false, failureReason: 'credentials' })
     );
     expect(service.log.error).toHaveBeenCalledWith(expect.stringContaining('UNRESOLVED'));
-  });
-
-  // committed && !pushed reads the same whether the commit was undone or left
-  // behind; only rolledBack tells them apart off the Pi.
-  it('publishes whether an unlanded commit was rolled back', async () => {
-    const run = (resetResult) => {
-      const publishSecurityInfo = jest.fn().mockResolvedValue(true);
-      const { service } = fullRun({
-        'git push --dry-run': { code: 0 },
-        'git status --porcelain': { stdout: ' M package-lock.json\n' },
-        'rev-parse HEAD': { stdout: 'abc1234\n' },
-        'git push': { code: 1, stderr: 'remote: error: GH006: Protected branch update failed' },
-        'reset --keep': resetResult,
-      });
-      service.firestoreSync = { publishSecurityInfo };
-      return service.autoFixVulnerabilities().then(() => publishSecurityInfo.mock.calls[0][0]);
-    };
-
-    expect(await run({ code: 0 })).toMatchObject({ committed: true, pushed: false, rolledBack: true, failureReason: 'protected' });
-    expect(await run({ code: 128, stderr: 'fatal: Cannot do a keep reset in the middle of a merge.' })).toMatchObject({
-      committed: true,
-      pushed: false,
-      rolledBack: false,
-    });
   });
 
   // The payload is linted on its string leaves rather than its whole JSON, so a
@@ -781,16 +877,17 @@ describe('SecurityService run reporting', () => {
   it('reports a clean run when there is nothing left to fix', async () => {
     const { service } = fullRun();
     const summary = await service.autoFixVulnerabilities();
-    expect(summary).toMatchObject({ ok: true, remainingHighCritical: 0, failureReason: null });
+    expect(summary).toMatchObject({ ok: true, remainingHighCritical: 0, failureReason: null, committed: false });
     expect(summary.needsHuman).toEqual([]);
   });
 
   it('never throws out of the nightly job', async () => {
-    const { service } = fullRun();
+    const { service, fsApi } = fullRun();
     service._processWorkspace = jest.fn().mockRejectedValue(new Error('npm exploded'));
     const summary = await service.autoFixVulnerabilities();
     expect(summary.ok).toBe(false);
     expect(summary.failureReason).toContain('npm exploded');
+    expect(fsApi._removed).toEqual([SCRATCH]);
   });
 
   it('keeps the original new SecurityService(console) signature working', () => {

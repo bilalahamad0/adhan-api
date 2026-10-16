@@ -59,7 +59,7 @@ describe('FirestoreSync publishBuildInfo', () => {
 });
 
 describe('FirestoreSync publishSecurityInfo', () => {
-  test('carries the run mode and rollback outcome to meta/security, and nothing unlisted', async () => {
+  test('carries the run mode to meta/security, and nothing unlisted', async () => {
     const sync = new FirestoreSync('encoded-key', 'America/Los_Angeles', '/tmp/annual_schedule.json');
     const set = jest.fn().mockResolvedValue(undefined);
     const doc = jest.fn(() => ({ set }));
@@ -72,15 +72,17 @@ describe('FirestoreSync publishSecurityInfo', () => {
       pushBlocked: null,
       committed: true,
       pushed: false,
-      rolledBack: false,
       failureReason: 'protected',
       workspaces: [{ dir: '/home/pi/adhan-api' }],
+      // Fix mode no longer commits on the Pi, so there is nothing to roll back.
+      rolledBack: false,
     });
 
     expect(doc).toHaveBeenCalledWith('security');
     const [published] = set.mock.calls[0];
-    expect(published).toMatchObject({ mode: 'fix', pushBlocked: null, rolledBack: false, failureReason: 'protected' });
+    expect(published).toMatchObject({ mode: 'fix', pushBlocked: null, failureReason: 'protected' });
     expect(published).not.toHaveProperty('workspaces');
+    expect(published).not.toHaveProperty('rolledBack');
   });
 });
 
