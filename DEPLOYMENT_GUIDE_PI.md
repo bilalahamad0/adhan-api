@@ -187,10 +187,26 @@ pm2 is a **global** install (`~/.nvm/versions/node/<version>/lib/node_modules/pm
 npm install -g pm2@7.0.4            # keep in step with PM2_VERSION
 pm2 save
 sudo systemctl restart pm2-$(whoami)
-pm2 --version && pm2 status         # expect the new version, every app online
 ```
 
 Use `systemctl restart`, not `pm2 update`. `pm2 update` relaunches the daemon from your SSH shell, outside the systemd unit, so systemd loses track of it. Between the install and the restart, pm2 prints `In-memory PM2 is out-of-date, do: pm2 update`. Ignore that message.
+
+**Check the daemon through systemd, not with `pm2 --version`.** `pm2 --version` prints the version of the CLI on disk, not of the daemon that is running. Like every pm2 command, it also starts a daemon when none is reachable, so if the unit failed to start, it creates one outside systemd. This line runs `pm2 ls` only once systemd is running the daemon:
+
+```bash
+U=pm2-$(whoami); P=$(cat ~/.pm2/pm2.pid 2>/dev/null); systemctl is-active --quiet $U && [ "$(systemctl show -p MainPID --value $U)" = "$P" ] && ps -o args= -p "$P" && pm2 ls || echo "pm2 is not running under $U: don't run pm2 commands"
+```
+
+Expect `PM2 v7.0.4: God Daemon (...)` and every app online. `deploy.sh` runs the same check and warns if the unit isn't running the daemon, or if the daemon's version differs from the installed one.
+
+If a pm2 command has already started a daemon outside systemd, hand the apps back to the unit. This applies when the unit was down during `deploy.sh`, or after `pm2 update`.
+- The dump is copied first, because a stop that falls back to SIGTERM rewrites it.
+- `systemd-run` keeps the sequence going if the SSH session drops midway.
+- `deploy.sh` prints this same line when it needs it.
+
+```bash
+U=pm2-$(whoami); D=~/.pm2/dump.pm2; sudo systemd-run --unit=pm2-handback --collect --wait /bin/sh -c "cp -p $D $D.keep && systemctl stop $U; runuser -u $(whoami) -- env HOME='$HOME' PATH='$PATH' PM2_HOME='$HOME/.pm2' pm2 kill; cp -p $D.keep $D && systemctl start $U"
+```
 
 The unit hardcodes the nvm Node path. After switching Node versions, run `pm2 unstartup`, then `pm2 startup` and the command it prints, then `pm2 save`. Before bumping `PM2_VERSION`, check `npm view pm2@<version> engines` against the Pi's Node. To see the advisories a global install of that version will carry, audit it the way npm resolves a global install, with no overrides:
 
@@ -203,6 +219,53 @@ pm2 7.0.4 carries three advisories. None of them is reachable here:
 - `braces`, via the `chokidar` 3.6.0 that pm2 pins. It only parses `watch` / `ignore_watch` patterns, and every app runs with `watch: false`.
 - `js-yaml` 4.3.1. It only parses `.yml` / `.yaml` ecosystem files, and ours is `ecosystem.config.cjs`.
 - `basic-ftp` 5.x. It is only reachable through the pm2.io agent's proxy support, and pm2.io is not linked (no `pm2 link`).
+
+#### Upgrading with a rollback
+
+The upgrade steps above install over the live copy. If the new version won't start, rolling back then means downloading the old one while the apps are down. The safer way, used for 6.0.14 → 7.0.4, keeps the old copy next to the new one.
+
+Pick a time outside a prayer window, when nothing is deploying: `pgrep -af 'bin/pm2 |npm (ci|install)'` should print nothing, and the systemd check above should show the daemon. Then:
+
+```bash
+V=7.0.4; U=pm2-$(whoami); G=$(npm root -g)     # e.g. ~/.nvm/versions/node/v18.20.8/lib/node_modules
+# 1. Stage the new version. Production is untouched.
+npm install -g --prefix ~/pm2-$V-stage pm2@$V --no-audit --no-fund
+# 2. Save the process list and keep a copy of it.
+pm2 save && cp -p ~/.pm2/dump.pm2 ~/.pm2/dump.pm2.before-upgrade
+# 3. Swap the directories, but only if the stage exists and no old ~/pm2-previous is in the way.
+#    The bin links are relative, so they follow.
+[ -d "$G/pm2" ] && [ -f ~/pm2-$V-stage/lib/node_modules/pm2/package.json ] && [ ! -e ~/pm2-previous ] \
+  && mv -T "$G/pm2" ~/pm2-previous && mv -T ~/pm2-$V-stage/lib/node_modules/pm2 "$G/pm2" && echo swapped
+# 4. The new CLI must reach the old daemon, because ExecStop takes the same path.
+#    Expect every app online, well under 5 s. When V differs from the running version, also
+#    expect the "In-memory PM2 is out-of-date" banner naming the old one.
+time pm2 ls
+```
+
+If step 3 didn't print `swapped`, stop and look. If step 4 fails or hangs, swap back. Nothing has restarted yet:
+
+```bash
+{ [ ! -e "$G/pm2" ] || mv -T "$G/pm2" ~/pm2-$V-stage/lib/node_modules/pm2; } && mv -T ~/pm2-previous "$G/pm2"
+```
+
+Otherwise, restart under systemd. `systemd-run` runs the stop and start as a unit of its own, so closing the terminal halfway can't leave the apps stopped. A stop that falls back to SIGTERM rewrites the dump, so the saved copy is restored in between:
+
+```bash
+sudo systemd-run --unit=pm2-swap --collect --wait /bin/sh -c "systemctl stop $U && { cmp -s $HOME/.pm2/dump.pm2 $HOME/.pm2/dump.pm2.before-upgrade || cp -p $HOME/.pm2/dump.pm2.before-upgrade $HOME/.pm2/dump.pm2; } && systemctl start $U"
+```
+
+Then run the systemd check above. You can roll back as long as `~/pm2-previous` exists. Run the rollback as your user in a login shell, so nvm puts `npm` on PATH. It refuses to touch anything if `~/pm2-previous` or `G` is missing:
+
+```bash
+U=pm2-$(whoami); G=$(npm root -g); F=~/pm2-failed-$(date +%Y%m%d-%H%M)
+if [ -d "$G" ] && [ -d ~/pm2-previous ]; then
+  sudo systemd-run --unit=pm2-rollback --collect --wait /bin/sh -c "systemctl stop $U; { [ ! -e $G/pm2 ] || mv -T $G/pm2 $F; } && mv -T $HOME/pm2-previous $G/pm2 && cp -p $HOME/.pm2/dump.pm2.before-upgrade $HOME/.pm2/dump.pm2; systemctl reset-failed $U; systemctl start $U"
+else echo "Not rolling back: no ~/pm2-previous, or npm is not on PATH (G='$G')"; fi
+```
+
+Once the next 02:00 auto-update and a prayer cast have run cleanly, clean up:
+- Delete `~/pm2-previous`, the empty `~/pm2-<version>-stage` and `~/.pm2/dump.pm2.before-upgrade`.
+- After a rollback, also delete `~/pm2-failed-*`.
 
 ### After updating code (`git pull`, tarball, or `scp`)
 
