@@ -33,6 +33,7 @@
     "protobufjs": "^7.5.6",
     "@tootallnate/once": "^3.0.1",
     "qs": "6.16.1",
-    "uuid": "11.1.1"
+    "uuid": "11.1.1",
+    "follow-redirects": "^1.16.1"
   }
 }
