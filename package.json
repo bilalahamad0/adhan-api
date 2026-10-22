@@ -30,6 +30,7 @@
     "prettier": "^3.8.1"
   },
   "overrides": {
+    "follow-redirects": "^1.16.1",
     "@istanbuljs/load-nyc-config": {
       "js-yaml": "4.3.2"
     }
